@@ -1,0 +1,19 @@
+[
+  {
+    "Author": "ofnature",
+    "Name": "Charon",
+    "Description": "Auto pillion with smart seat scanning and whitelisted auto group invite. Companion to Daedalus.",
+    "InternalName": "Charon",
+    "AssemblyVersion": "0.1.0",
+    "RepoUrl": "https://github.com/ofnature/Charon",
+    "IconUrl": "https://raw.githubusercontent.com/ofnature/Charon/main/images/icon.png",
+    "IsHide": false,
+    "IsTestingExclusive": false,
+    "ApplicableVersion": "any",
+    "CategoryTags": ["utility"],
+    "DalamudApiLevel": 15,
+    "DownloadLinkInstall": "https://github.com/ofnature/Charon/releases/download/v0.1.0/latest.zip",
+    "DownloadLinkTesting": "https://github.com/ofnature/Charon/releases/download/v0.1.0/latest.zip",
+    "DownloadLinkUpdate": "https://github.com/ofnature/Charon/releases/download/v0.1.0/latest.zip"
+  }
+]

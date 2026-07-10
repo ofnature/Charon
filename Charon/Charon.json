@@ -1,0 +1,9 @@
+{
+  "Name": "Charon",
+  "Author": "ofnature",
+  "Punchline": "Auto pillion with smart seat scanning and whitelisted auto group invite.",
+  "Description": "Auto pillion with smart seat scanning and whitelisted auto group invite. Companion to Daedalus.",
+  "RepoUrl": "https://github.com/ofnature/Charon",
+  "Tags": ["utility", "multibox", "mount", "party"],
+  "DalamudApiLevel": 15
+}
