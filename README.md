@@ -44,10 +44,12 @@ Bonus for screenshots: a **Scramble** toggle swaps every character name for a se
 Add the repo URL to Dalamud (Settings → Experimental → Custom Plugin Repositories):
 
 ```
-https://raw.githubusercontent.com/ofnature/Charon/main/repo.json
+https://raw.githubusercontent.com/ofnature/Daedalus/main/repo.json
 ```
 
 Then install **Charon** from the plugin installer. `/charon` toggles the window.
+
+One URL, whole family: the same repository also serves [Daedalus](https://github.com/ofnature/Daedalus) and [SealBreaker](https://github.com/ofnature/SealBreaker).
 
 ## Building
 
