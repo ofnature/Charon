@@ -431,18 +431,49 @@ public sealed class MainWindow : Window
         }
         CharonTheme.HelpMarker("Skip toons in our own party — healing them is the rotation's job.");
 
+        var maintainHot = _config.HealMaintainHot;
+        if (ImGui.Checkbox("Maintain HoT / Shield##healwatch", ref maintainHot))
+        {
+            _config.HealMaintainHot = maintainHot;
+            _save();
+        }
+        CharonTheme.HelpMarker("Keep the job's HoT/shield on damaged toons (WHM Regen, SCH Galvanize,\n"
+                               + "AST Aspected Benefic). Recasts only when the status is about to expire —\n"
+                               + "never clips a running one.");
+
+        var raiseDead = _config.HealRaiseDead;
+        if (ImGui.Checkbox("Raise dead toons##healwatch", ref raiseDead))
+        {
+            _config.HealRaiseDead = raiseDead;
+            _save();
+        }
+        CharonTheme.HelpMarker("Hardcast raise on dead fleet toons (no swiftcast).\nSkips anyone who already has a raise pending.");
+
         ImGui.Spacing();
         ImGui.TextColored(CharonTheme.TextSecondary, ScrambleIn(_healStatus()));
 
-        if (_healWatch.HealLog.Count > 0)
+        DrawHealLog();
+    }
+
+    private void DrawHealLog()
+    {
+        if (_healWatch.HealLog.Count == 0)
+            return;
+
+        ImGui.Spacing();
+        ImGui.TextColored(CharonTheme.TextSecondary, "Recent casts");
+        foreach (var heal in _healWatch.HealLog)
         {
-            ImGui.Spacing();
-            ImGui.TextColored(CharonTheme.TextSecondary, "Recent heals");
-            foreach (var heal in _healWatch.HealLog)
+            var kind = heal.Kind switch
             {
-                ImGui.TextColored(heal.Emergency ? CharonTheme.StatusRed : CharonTheme.TextDisabled,
-                    $"{heal.TimeUtc:HH:mm:ss}  {Display(heal.Name)}{(heal.Emergency ? "  [EMERGENCY]" : "")}");
-            }
+                HealKind.Hot => "[HoT]",
+                HealKind.Raise => "[RAISE]",
+                _ => heal.Emergency ? "[EMERGENCY]" : "[heal]",
+            };
+            var color = heal.Kind == HealKind.Raise || heal.Emergency
+                ? CharonTheme.StatusRed
+                : CharonTheme.TextDisabled;
+            ImGui.TextColored(color, $"{heal.TimeUtc:HH:mm:ss}  {Display(heal.Name)}  {kind}");
         }
     }
 
@@ -590,16 +621,7 @@ public sealed class MainWindow : Window
         if (_inviteManager.AcceptPending)
             ImGui.TextColored(CharonTheme.StatusYellow, "Invite accept pending (delay running)");
 
-        if (_healWatch.HealLog.Count > 0)
-        {
-            ImGui.Spacing();
-            ImGui.TextColored(CharonTheme.TextSecondary, "Recent heals");
-            foreach (var heal in _healWatch.HealLog)
-            {
-                ImGui.TextColored(heal.Emergency ? CharonTheme.StatusRed : CharonTheme.TextDisabled,
-                    $"{heal.TimeUtc:HH:mm:ss}  {Display(heal.Name)}{(heal.Emergency ? "  [EMERGENCY]" : "")}");
-            }
-        }
+        DrawHealLog();
 
         if (_inviteManager.AcceptLog.Count > 0)
         {

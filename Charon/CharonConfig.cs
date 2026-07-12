@@ -47,6 +47,12 @@ public sealed class CharonConfig : IPluginConfiguration
     /// <summary>Only heal toons OUTSIDE our party (in-party healing is the rotation's job).</summary>
     public bool HealOutOfPartyOnly { get; set; } = true;
 
+    /// <summary>Keep the job's HoT/shield (Regen / Galvanize / Aspected Benefic) on damaged toons.</summary>
+    public bool HealMaintainHot { get; set; } = true;
+
+    /// <summary>Hardcast raise dead toons (no swiftcast — fine for parked leveling bots).</summary>
+    public bool HealRaiseDead { get; set; } = true;
+
     // Auto Accept
     public bool AutoAcceptEnabled { get; set; } = false;
 

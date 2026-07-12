@@ -256,8 +256,8 @@ public sealed class CharonPlugin : IDalamudPlugin
             return;
         }
 
-        var actionId = _healExecutor.GetLocalHealAction();
-        if (actionId == 0)
+        var kit = _healExecutor.GetLocalKit();
+        if (kit == null || kit.HealAction == 0)
         {
             _healStatus = "inert (not a healer job)";
             return;
@@ -268,26 +268,42 @@ public sealed class CharonPlugin : IDalamudPlugin
             .Where(t => t.IsOnline && !t.CharacterName.Equals(localName, StringComparison.OrdinalIgnoreCase))
             .Select(t => new HealCandidate(t.CharacterName, t.EntityId, t.Hp, IsInMyParty(t.CharacterName)));
 
-        var intents = _healWatch.Evaluate(candidates, _daedalusIpc.IsRotationEnabled, now);
+        var intents = _healWatch.Evaluate(candidates, _daedalusIpc.IsRotationEnabled,
+            canHot: kit.HotAction != 0, canRaise: kit.RaiseAction != 0, now);
         if (intents.Count == 0)
         {
             _healStatus = "watching";
             return;
         }
 
-        // One cast per pass — the manager's global cooldown paces us to roughly one GCD.
-        var intent = intents[0];
-        if (_healExecutor.TryHeal(actionId, intent.EntityId, _config.HealThreshold))
+        // One CAST per pass (global cooldown ≈ one GCD), but walk the ranked intents until one
+        // lands — the executor's live re-checks legitimately refuse stale ones (already topped
+        // up, HoT still running, raise already pending).
+        foreach (var intent in intents.Take(4))
         {
+            var cast = intent.Kind switch
+            {
+                HealKind.Heal => _healExecutor.TryHeal(kit.HealAction, intent.EntityId, _config.HealThreshold),
+                HealKind.Hot => _healExecutor.TryApplyHot(kit.HotAction, kit.HotStatusId, intent.EntityId),
+                HealKind.Raise => _healExecutor.TryRaise(kit.RaiseAction, intent.EntityId),
+                _ => false,
+            };
+
+            if (!cast)
+                continue;
+
             _healWatch.OnHealCast(intent, now);
-            _healStatus = $"healed {intent.Name}{(intent.Emergency ? " (EMERGENCY)" : "")}";
+            _healStatus = intent.Kind switch
+            {
+                HealKind.Hot => $"HoT → {intent.Name}",
+                HealKind.Raise => $"raising {intent.Name} (hardcast)",
+                _ => $"healed {intent.Name}{(intent.Emergency ? " (EMERGENCY)" : "")}",
+            };
             _log.Info("Heal Watch: {0}", _healStatus);
+            return;
         }
-        else
-        {
-            // Live re-check refused (topped up / out of zone / dead) — vitals were stale.
-            _healStatus = $"skipped {intent.Name} (stale vitals)";
-        }
+
+        _healStatus = "watching (live checks refused this pass)";
     }
 
     /// <summary>
