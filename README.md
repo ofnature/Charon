@@ -4,22 +4,22 @@
 
 # Charon
 
-**Auto pillion with smart seat scanning and whitelisted auto group invite.** A Dalamud plugin for FFXIV, companion to [Daedalus](https://github.com/ofnature/Daedalus) — named for the ferryman who carries passengers across the Styx.
+**The ferryman for your fleet.** A Dalamud plugin for FFXIV, companion to [Daedalus](https://github.com/ofnature/Daedalus) — auto pillion with smart seat scanning, whitelisted auto group invite, follow teleport, and a heal-watch babysitter for leveling alts.
 
-Built for multibox setups: get all your toons grouped and onto one multi-seat mount without touching seven other keyboards.
+Built for multibox setups: group up, mount up, teleport out, and keep the bots alive — without touching seven other keyboards.
 
 <p align="center">
-  <img src="images/ui-main.png" width="420" alt="Charon main window (mockup)">
+  <img src="images/ui-main.png" width="500" alt="Charon window — Auto Pillion (mockup)">
 </p>
 
 ## Auto Pillion
 
 Existing auto-pillion tools default everyone to seat 2 and spam it when taken. Charon scans real seat occupancy and assigns intelligently:
 
-- **Passengers board themselves** — each client detects a trusted party member mounting a multi-seat mount nearby, deterministically computes its own seat (rank-by-name over the toons actually present, k-th toon takes the k-th free seat), and boards through the game's native Ride Pillion call. No cross-client messaging needed, no seat collisions.
+- **Passengers board themselves** — each client detects a trusted party member mounting a multi-seat mount nearby, deterministically computes its own seat (rank-by-name over the toons actually present, k-th toon takes the k-th free seat), and boards through the game's native Ride Pillion call. No seat collisions, works with zero messaging.
+- **Owner-commanded seats over the LAN** — with the Daedalus LAN relay running, the mount owner broadcasts authoritative seat assignments (cross-machine included); observation-based self-boarding remains the always-working fallback.
 - **Walks to the mount first** via [vnavmesh](https://github.com/awgil/ffxiv_navmesh) when out of range (optional — works without it if the toons already stand nearby).
-- **Owner-side session tracking** — per-seat status with invite delay, per-seat timeout, and a hard rule: a declined seat is never re-invited.
-- Party-gated (pillion is a game rule: group members only), configurable invite delay and seat timeout, LAN-members-only toggle.
+- Party-gated (a game rule), configurable invite delay and seat timeout, live rider list in the window.
 
 ## Auto Accept Group Invites
 
@@ -29,13 +29,30 @@ Accepting invites on 7 toons manually gets old. Charon auto-accepts **from trust
 - Strangers are **ignored, never declined** — the dialog stays up for you to decide.
 - Small randomized accept delay; invite detection is language-independent (no dialog text parsing).
 
+## Follow Teleport
+
+When a trusted party member teleports, the rest of the group follows:
+
+- Auto-accepts the native party teleport offer ("Accept Teleport to X?") — the dialog is learned automatically the first time it appears.
+- Fallback: when a trusted member zones away without an offer, teleport to an attuned aetheryte in their new zone.
+- Same group only, small randomized delay per toon.
+
+## Heal Watch
+
+A healer toon babysits the whole fleet from Daedalus LAN vitals — **including toons outside its party**. Built for leveling low-HP alts (looking at you, 9k-HP Blue Mages):
+
 <p align="center">
-  <img src="images/ui-debug.png" width="420" alt="Debug section with scramble aliases (mockup)">
+  <img src="images/ui-debug.png" width="500" alt="Charon window — Heal Watch (mockup)">
 </p>
+
+- Heals anyone dropping below the threshold; an emergency threshold jumps the queue.
+- **Maintains the job's HoT/shield** (WHM Regen, SCH Galvanize, AST Aspected Benefic) on damaged toons — never clips a running status, recasts only inside the expiry window.
+- **Hardcast raises** dead toons (no swiftcast needed), and never double-raises anyone with a raise already pending.
+- Live HP is re-checked before every cast (LAN vitals are detection only), and Heal Watch stands down automatically whenever the Daedalus rotation is enabled.
 
 ## Daedalus Integration
 
-When [Daedalus](https://github.com/ofnature/Daedalus) is loaded, Charon consumes its LAN party roster over IPC — trusted toons appear automatically with `[LAN]` tags, reconnects survive plugin reloads, and everything degrades gracefully to the manual whitelist when Daedalus is absent.
+When [Daedalus](https://github.com/ofnature/Daedalus) is loaded, Charon consumes its LAN party roster + vitals over IPC and its LAN relay for cross-machine coordination — reconnects survive plugin reloads, and everything degrades gracefully to the manual whitelist when Daedalus is absent.
 
 Bonus for screenshots: a **Scramble** toggle swaps every character name for a session-stable underworld alias (Styx, Acheron, Lethe…) — cosmetic and draw-time only.
 
@@ -58,6 +75,6 @@ dotnet build Charon.sln -c Release
 dotnet test Charon.Tests
 ```
 
-Targets `Dalamud.NET.Sdk/15.0.0`; the test suite covers the seat state machine, deterministic seat picking, whitelist matching, and IPC fallback.
+Targets `Dalamud.NET.Sdk/15.0.0`; the test suite covers the seat state machine, deterministic seat picking, relay seat commands, whitelist matching, heal-watch triage, and IPC fallback.
 
-*Window images above are stylized mockups of the in-game UI.*
+*Window images above are stylized mockups of the in-game UI (names scrambled).*
