@@ -128,6 +128,45 @@ broadcasts, assemble-party triggers from one box for toons on another PC.
 seat assignment over the relay and boards it exactly (no rank inference), with the
 observation fallback still passing the existing 66 tests.
 
+## 8. Heal Watch (out-of-group alt healing over the LAN bus)
+
+**Goal:** A healer toon watches the HP of the WHOLE fleet — including alts NOT in its party —
+and heals whoever drops below threshold. Out-of-party healing is legal game mechanics (any
+friendly player is a valid heal target); prior art: Coppelia
+(https://github.com/McVaxius/Coppelia — "healing from outside of party for n targets").
+Ours differs by sourcing vitals from the Daedalus LAN bus instead of scanning, so it also
+covers alts on the OTHER machine the healer client can't see well.
+
+**Design**
+- Vitals source: the Daedalus roster already carries `HpPercent` per toon (CoordinationBus
+  heartbeats). Extend the `Daedalus.Party.GetRosterJson` schema with `hp` (0–1) and
+  `entityId`; Charon's `LanToonInfo`/parser gains the fields (tolerant parser already
+  ignores unknown JSON — old Daedalus keeps working).
+- `Features/HealWatch/HealWatchManager.cs` (pure, tested): input = roster vitals +
+  config snapshot; output = ordered heal intents (target, urgency). Rules:
+  - trigger threshold slider (default 80%), emergency threshold (default 40%) jumps queue
+  - trusted toons only (same LAN/whitelist trust), visible in object table (same zone,
+    resolvable by entity id), alive, not already topped by an in-flight heal (per-target
+    cooldown ~2.5s to avoid double-casting on stale heartbeats — heartbeat HP is ~1-2s old)
+  - LAN-roster HP is used for DETECTION; the live object-table HP re-check is authoritative
+    right before casting (stale-data guard).
+- Execution adapter: healer-job gate (WHM/SCH/SGE/AST + a lowbie CNJ), pick the job's
+  basic single-target heal via level (Cure/Physick/Diagnosis/Benefic — a tiny
+  ActionAvailability-style table, not a rotation), target-swap pattern from the Caduceus
+  scoping in Daedalus CLAUDE.md: store hard target → set heal target → UseAction → restore.
+- Coexistence with Daedalus: when the local Daedalus rotation is ENABLED (poll
+  `Daedalus.IsEnabled` IPC), Heal Watch stands down — the rotation owns the action queue.
+  This feature is for the idle/parked healer alt case.
+- Config: `HealWatchEnabled` (default off), thresholds, max targets per pass,
+  "out-of-party only" toggle (in-party healing is the rotation's job).
+- UI: section with per-toon HP bars from the roster (grey when stale, per LAN window
+  conventions) and a last-heals log in Debug.
+
+**Acceptance:** Healer alt parked mid-field, 7 toons across 2 machines fighting out of
+party; any toon dipping below threshold in the healer's zone gets topped up within one
+GCD, with no double-heals from stale heartbeats, and Heal Watch goes inert the moment the
+Daedalus rotation is switched on.
+
 ---
 
 ### Explicitly skipped
