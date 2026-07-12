@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Numerics;
 using Dalamud.Bindings.ImGui;
 using Dalamud.Interface.Windowing;
 using Charon.Features.AutoAccept;
@@ -11,11 +12,25 @@ using Charon.Services;
 namespace Charon.Windows;
 
 /// <summary>
-/// Charon's single window: Auto Pillion section, Auto Accept section with the trusted-character
-/// table, and a collapsed Debug section. Compact (AlwaysAutoResize), dark theme with gold accents.
+/// Charon's window, Daedalus-config style: sidebar navigation on the left (grey small-cap
+/// category headers, gold selection with a left accent bar over a faint gold wash), content
+/// page on the right. Sections: General (auto accept + follow teleport), Auto Pillion
+/// (settings + rider list + collapsible debug details), Heal Watch, Trusted Characters, Debug.
 /// </summary>
 public sealed class MainWindow : Window
 {
+    private enum Section
+    {
+        General,
+        AutoPillion,
+        HealWatch,
+        TrustedList,
+        Debug,
+    }
+
+    private const float SidebarWidth = 140f;
+    private static readonly Vector4 AccentWash = new(0.85f, 0.65f, 0.20f, 0.10f);
+
     private readonly CharonConfig _config;
     private readonly Action _save;
     private readonly WhitelistService _whitelist;
@@ -28,6 +43,7 @@ public sealed class MainWindow : Window
     private readonly Func<string> _followStatus;
     private readonly Func<string> _healStatus;
 
+    private Section _section = Section.General;
     private string _addName = string.Empty;
     private string _addWorld = string.Empty;
     private bool _addOpen;
@@ -42,6 +58,14 @@ public sealed class MainWindow : Window
 
     private readonly Dictionary<string, string> _aliases = new(StringComparer.OrdinalIgnoreCase);
 
+    /// <summary>Mock rider rows shown in the Auto Pillion section while no session is live.</summary>
+    private static readonly (int Seat, SeatStatus Status, string Name)[] MockRiders =
+    [
+        (1, SeatStatus.Filled, "Styx"),
+        (2, SeatStatus.InvitePending, "Lethe"),
+        (3, SeatStatus.Available, ""),
+    ];
+
     public MainWindow(
         CharonConfig config,
         Action save,
@@ -54,7 +78,7 @@ public sealed class MainWindow : Window
         Func<string> boardingStatus,
         Func<string> followStatus,
         Func<string> healStatus)
-        : base("Charon##CharonMain", ImGuiWindowFlags.AlwaysAutoResize)
+        : base("Charon##CharonMain")
     {
         _config = config;
         _save = save;
@@ -67,32 +91,170 @@ public sealed class MainWindow : Window
         _boardingStatus = boardingStatus;
         _followStatus = followStatus;
         _healStatus = healStatus;
+
+        Size = new Vector2(600, 440);
+        SizeCondition = ImGuiCond.FirstUseEver;
+        SizeConstraints = new WindowSizeConstraints
+        {
+            MinimumSize = new Vector2(520, 340),
+            MaximumSize = new Vector2(900, 800),
+        };
     }
 
     public override void Draw()
     {
         ImGui.PushStyleVar(ImGuiStyleVar.FrameRounding, 4f);
+        ImGui.PushStyleVar(ImGuiStyleVar.ChildRounding, 4f);
         try
         {
-            DrawAutoPillionSection();
-            ImGui.Spacing();
-            DrawFollowTeleportSection();
-            ImGui.Spacing();
-            DrawHealWatchSection();
-            ImGui.Spacing();
-            DrawAutoAcceptSection();
-            ImGui.Spacing();
-            DrawDebugSection();
+            DrawSidebar();
+            ImGui.SameLine();
+            DrawContent();
         }
         finally
         {
-            ImGui.PopStyleVar();
+            ImGui.PopStyleVar(2);
         }
     }
 
+    // --- Sidebar ---
+
+    private void DrawSidebar()
+    {
+        ImGui.BeginChild("##CharonSidebar", new Vector2(SidebarWidth, 0), true);
+
+        DrawCategoryHeader("FEATURES");
+        DrawNavItem("General", Section.General, _config.AutoAcceptEnabled || _config.FollowTeleportEnabled);
+        DrawNavItem("Auto Pillion", Section.AutoPillion, _config.AutoPillionEnabled);
+        DrawNavItem("Heal Watch", Section.HealWatch, _config.HealWatchEnabled);
+        ImGui.Spacing();
+
+        DrawCategoryHeader("FLEET");
+        DrawNavItem("Trusted List", Section.TrustedList, null);
+        ImGui.Spacing();
+
+        DrawCategoryHeader("SYSTEM");
+        DrawNavItem("Debug", Section.Debug, null);
+
+        ImGui.EndChild();
+    }
+
+    private static void DrawCategoryHeader(string label)
+    {
+        ImGui.TextColored(CharonTheme.StatusGrey, label);
+    }
+
+    /// <summary>Nav row: gold selection wash + 2px left accent bar (Daedalus sidebar identity).</summary>
+    private void DrawNavItem(string label, Section section, bool? active)
+    {
+        var isSelected = _section == section;
+
+        if (isSelected)
+        {
+            var cursorPos = ImGui.GetCursorScreenPos();
+            var regionAvail = ImGui.GetContentRegionAvail();
+            var drawList = ImGui.GetWindowDrawList();
+            var rowMax = new Vector2(cursorPos.X + regionAvail.X, cursorPos.Y + ImGui.GetTextLineHeightWithSpacing());
+            drawList.AddRectFilled(cursorPos, rowMax, ImGui.GetColorU32(AccentWash));
+            drawList.AddRectFilled(cursorPos, new Vector2(cursorPos.X + 2f, rowMax.Y), ImGui.GetColorU32(CharonTheme.AccentGold));
+        }
+
+        ImGui.Indent(10);
+        ImGui.PushStyleColor(ImGuiCol.Text, isSelected ? CharonTheme.AccentGold : CharonTheme.TextSecondary);
+        ImGui.PushStyleColor(ImGuiCol.Header, AccentWash);
+        ImGui.PushStyleColor(ImGuiCol.HeaderHovered, AccentWash);
+        ImGui.PushStyleColor(ImGuiCol.HeaderActive, AccentWash);
+
+        if (ImGui.Selectable($"  {label}##{section}", isSelected, ImGuiSelectableFlags.None,
+                new Vector2(SidebarWidth - 25, 0)))
+            _section = section;
+
+        ImGui.PopStyleColor(4);
+        ImGui.Unindent(10);
+
+        // Feature-state dot flush right on the row (green = enabled, grey = off).
+        if (active != null)
+        {
+            ImGui.SameLine(SidebarWidth - 18);
+            ImGui.TextColored(active.Value ? CharonTheme.StatusGreen : CharonTheme.TextDisabled, "●");
+        }
+    }
+
+    // --- Content ---
+
+    private void DrawContent()
+    {
+        ImGui.BeginChild("##CharonContent", new Vector2(0, 0), true);
+
+        switch (_section)
+        {
+            case Section.General: DrawGeneralSection(); break;
+            case Section.AutoPillion: DrawAutoPillionSection(); break;
+            case Section.HealWatch: DrawHealWatchSection(); break;
+            case Section.TrustedList: DrawTrustedSection(); break;
+            case Section.Debug: DrawDebugSection(); break;
+        }
+
+        ImGui.EndChild();
+    }
+
+    private static void DrawPageHeader(string title)
+    {
+        ImGui.TextColored(CharonTheme.AccentGold, title);
+        ImGui.Separator();
+        ImGui.Spacing();
+    }
+
+    // --- General: Auto Accept + Follow Teleport ---
+
+    private void DrawGeneralSection()
+    {
+        DrawPageHeader("General");
+
+        ImGui.TextColored(CharonTheme.TextSecondary, "Auto Accept Invites");
+        var acceptEnabled = _config.AutoAcceptEnabled;
+        if (ImGui.Checkbox("Enabled##accept", ref acceptEnabled))
+        {
+            _config.AutoAcceptEnabled = acceptEnabled;
+            _save();
+        }
+        CharonTheme.HelpMarker("Auto-accept group invites from trusted characters only.\n"
+                               + "Unknown inviters are ignored (never declined) — the dialog\n"
+                               + "stays up for you to decide.");
+
+        var lanTrust = _config.LanAutoWhitelist;
+        if (ImGui.Checkbox("Auto-trust LAN Party Members##accept", ref lanTrust))
+        {
+            _config.LanAutoWhitelist = lanTrust;
+            _save();
+        }
+        CharonTheme.HelpMarker("Trust every toon currently in the Daedalus LAN party roster.");
+
+        ImGui.Spacing();
+        ImGui.Separator();
+        ImGui.Spacing();
+
+        ImGui.TextColored(CharonTheme.TextSecondary, "Follow Teleport");
+        var followEnabled = _config.FollowTeleportEnabled;
+        if (ImGui.Checkbox("Enabled##follow", ref followEnabled))
+        {
+            _config.FollowTeleportEnabled = followEnabled;
+            _save();
+        }
+        CharonTheme.HelpMarker("When a trusted party member teleports to another zone, follow them\n"
+                               + "(accepts the native teleport offer; falls back to teleporting to an\n"
+                               + "unlocked aetheryte in their new zone). Same group only.");
+
+        ImGui.Spacing();
+        ImGui.TextColored(CharonTheme.TextDisabled,
+            $"Daedalus IPC: {(_roster.IsAvailable ? "connected" : "unavailable — manual whitelist only")}");
+    }
+
+    // --- Auto Pillion ---
+
     private void DrawAutoPillionSection()
     {
-        DrawSectionTitle("■ Auto Pillion", _config.AutoPillionEnabled);
+        DrawPageHeader("Auto Pillion");
 
         var enabled = _config.AutoPillionEnabled;
         if (ImGui.Checkbox("Enabled##pillion", ref enabled))
@@ -100,8 +262,16 @@ public sealed class MainWindow : Window
             _config.AutoPillionEnabled = enabled;
             _save();
         }
-        CharonTheme.HelpMarker("Scan seats when you mount a multi-passenger mount and assign\n"
-                               + "party members to open seats — no seat-2 spam.");
+        CharonTheme.HelpMarker("Scan seats when a trusted party member mounts a multi-passenger mount\n"
+                               + "and board automatically — no seat-2 spam.");
+
+        var lanOnly = _config.LanMembersOnly;
+        if (ImGui.Checkbox("LAN Members Only##pillion", ref lanOnly))
+        {
+            _config.LanMembersOnly = lanOnly;
+            _save();
+        }
+        CharonTheme.HelpMarker("Only ride with / invite Daedalus LAN party members;\nskip the manual whitelist for pillion.");
 
         var delay = _config.PillionDelay;
         ImGui.SetNextItemWidth(160f);
@@ -110,7 +280,7 @@ public sealed class MainWindow : Window
             _config.PillionDelay = delay;
             _save();
         }
-        CharonTheme.HelpMarker("Wait after mounting before the first invite,\nso the mount animation can finish.");
+        CharonTheme.HelpMarker("Wait after mounting before boarding starts,\nso the mount animation can finish.");
 
         var timeout = _config.SeatTimeout;
         ImGui.SetNextItemWidth(160f);
@@ -119,48 +289,111 @@ public sealed class MainWindow : Window
             _config.SeatTimeout = timeout;
             _save();
         }
-        CharonTheme.HelpMarker("Unanswered invites mark the seat declined after this long.\nDeclined seats are never re-invited.");
+        CharonTheme.HelpMarker("Unanswered seat assignments are marked declined after this long.\nDeclined seats are never re-invited.");
 
-        var lanOnly = _config.LanMembersOnly;
-        if (ImGui.Checkbox("LAN Members Only##pillion", ref lanOnly))
-        {
-            _config.LanMembersOnly = lanOnly;
-            _save();
-        }
-        CharonTheme.HelpMarker("Only invite Daedalus LAN party members;\nskip the manual whitelist for pillion seats.");
+        ImGui.Spacing();
+        ImGui.Separator();
+        ImGui.Spacing();
 
-        // Session status line
-        if (_pillion.SessionActive)
+        DrawRiderList();
+    }
+
+    /// <summary>
+    /// Mount rider list: live session seats when mounted, mock preview rows otherwise —
+    /// the section stays designable/inspectable without a mount. Debug internals live in
+    /// the collapsible Details tree below it.
+    /// </summary>
+    private void DrawRiderList()
+    {
+        var live = _pillion.SessionActive;
+        ImGui.TextColored(CharonTheme.TextSecondary, "Mount Riders");
+        if (live)
         {
-            ImGui.TextColored(CharonTheme.TextSecondary,
-                $"Current mount: {_pillion.PassengerSeats + 1}-person ({_pillion.SeatsAvailable} seats available)");
-            ImGui.TextColored(CharonTheme.TextSecondary,
-                $"Seats filled: {_pillion.SeatsFilled}/{_pillion.PassengerSeats}");
+            ImGui.SameLine();
+            ImGui.TextColored(CharonTheme.TextDisabled,
+                $"{_pillion.PassengerSeats + 1}-person mount · {_pillion.SeatsFilled}/{_pillion.PassengerSeats} filled");
         }
         else
         {
-            ImGui.TextColored(CharonTheme.TextDisabled, "No multi-passenger mount active");
+            ImGui.SameLine();
+            ImGui.TextColored(CharonTheme.TextDisabled, "(mock preview — mount a multi-seat mount for live data)");
         }
-    }
 
-    private void DrawFollowTeleportSection()
-    {
-        DrawSectionTitle("■ Follow Teleport", _config.FollowTeleportEnabled);
-
-        var enabled = _config.FollowTeleportEnabled;
-        if (ImGui.Checkbox("Enabled##follow", ref enabled))
+        if (ImGui.BeginTable("riders", 3,
+                ImGuiTableFlags.BordersInnerV | ImGuiTableFlags.RowBg | ImGuiTableFlags.SizingFixedFit))
         {
-            _config.FollowTeleportEnabled = enabled;
-            _save();
+            ImGui.TableSetupColumn("Seat", ImGuiTableColumnFlags.WidthFixed, 50f);
+            ImGui.TableSetupColumn("Status", ImGuiTableColumnFlags.WidthFixed, 110f);
+            ImGui.TableSetupColumn("Rider", ImGuiTableColumnFlags.WidthStretch);
+            ImGui.TableHeadersRow();
+
+            if (live)
+            {
+                foreach (var seat in _pillion.Seats)
+                    DrawRiderRow(seat.Index, seat.Status, seat.AssignedName);
+            }
+            else
+            {
+                foreach (var (seatIndex, status, name) in MockRiders)
+                    DrawRiderRow(seatIndex, status, name);
+            }
+
+            ImGui.EndTable();
         }
-        CharonTheme.HelpMarker("When a trusted party member teleports to another zone, follow them\n"
-                               + "to an unlocked aetheryte there (small random delay per toon).\n"
-                               + "Same group only. Normal teleport gil costs apply.");
+
+        // Collapsible debug internals for this feature.
+        if (ImGui.TreeNode("Details##pillionDebug"))
+        {
+            ImGui.TextColored(CharonTheme.TextDisabled, $"Boarding: {ScrambleIn(_boardingStatus())}");
+            if (live)
+                ImGui.TextColored(CharonTheme.TextDisabled, $"Mount id: {_pillion.MountId}");
+
+            ImGui.TextColored(CharonTheme.TextDisabled, "Raw seat data (game)");
+            var raw = _rawSeatOccupancy();
+            if (raw.Count == 0)
+            {
+                ImGui.TextColored(CharonTheme.TextDisabled, "  (not mounted)");
+            }
+            else
+            {
+                foreach (var (seatIndex, entityId, name) in raw)
+                {
+                    var id = _config.ScrambleNames ? "0x········" : $"0x{entityId:X8}";
+                    ImGui.TextColored(CharonTheme.TextDisabled,
+                        entityId == 0
+                            ? $"  #{seatIndex}: empty"
+                            : $"  #{seatIndex}: {id} {(name.Length > 0 ? Display(name) : "(unresolved)")}");
+                }
+            }
+
+            ImGui.TreePop();
+        }
     }
+
+    private void DrawRiderRow(int seatIndex, SeatStatus status, string name)
+    {
+        var color = status switch
+        {
+            SeatStatus.Filled => CharonTheme.StatusGreen,
+            SeatStatus.InvitePending => CharonTheme.StatusYellow,
+            SeatStatus.Declined => CharonTheme.StatusRed,
+            _ => CharonTheme.StatusGrey,
+        };
+
+        ImGui.TableNextRow();
+        ImGui.TableNextColumn();
+        ImGui.TextColored(CharonTheme.TextSecondary, $"#{seatIndex}");
+        ImGui.TableNextColumn();
+        ImGui.TextColored(color, status.ToString());
+        ImGui.TableNextColumn();
+        ImGui.TextUnformatted(name.Length > 0 ? Display(name) : "—");
+    }
+
+    // --- Heal Watch ---
 
     private void DrawHealWatchSection()
     {
-        DrawSectionTitle("■ Heal Watch", _config.HealWatchEnabled);
+        DrawPageHeader("Heal Watch");
 
         var enabled = _config.HealWatchEnabled;
         if (ImGui.Checkbox("Enabled##healwatch", ref enabled))
@@ -198,33 +431,26 @@ public sealed class MainWindow : Window
         }
         CharonTheme.HelpMarker("Skip toons in our own party — healing them is the rotation's job.");
 
+        ImGui.Spacing();
         ImGui.TextColored(CharonTheme.TextSecondary, ScrambleIn(_healStatus()));
+
+        if (_healWatch.HealLog.Count > 0)
+        {
+            ImGui.Spacing();
+            ImGui.TextColored(CharonTheme.TextSecondary, "Recent heals");
+            foreach (var heal in _healWatch.HealLog)
+            {
+                ImGui.TextColored(heal.Emergency ? CharonTheme.StatusRed : CharonTheme.TextDisabled,
+                    $"{heal.TimeUtc:HH:mm:ss}  {Display(heal.Name)}{(heal.Emergency ? "  [EMERGENCY]" : "")}");
+            }
+        }
     }
 
-    private void DrawAutoAcceptSection()
+    // --- Trusted Characters ---
+
+    private void DrawTrustedSection()
     {
-        DrawSectionTitle("■ Auto Accept Invites", _config.AutoAcceptEnabled);
-
-        var enabled = _config.AutoAcceptEnabled;
-        if (ImGui.Checkbox("Enabled##accept", ref enabled))
-        {
-            _config.AutoAcceptEnabled = enabled;
-            _save();
-        }
-        CharonTheme.HelpMarker("Auto-accept group invites from trusted characters only.\n"
-                               + "Unknown inviters are ignored (never declined) — the dialog\n"
-                               + "stays up for you to decide.");
-
-        var lanTrust = _config.LanAutoWhitelist;
-        if (ImGui.Checkbox("Auto-trust LAN Party Members##accept", ref lanTrust))
-        {
-            _config.LanAutoWhitelist = lanTrust;
-            _save();
-        }
-        CharonTheme.HelpMarker("Trust every toon currently in the Daedalus LAN party roster.");
-
-        ImGui.Spacing();
-        ImGui.TextColored(CharonTheme.TextSecondary, "Trusted Characters");
+        DrawPageHeader("Trusted Characters");
         DrawWhitelistTable();
         DrawWhitelistButtons();
     }
@@ -247,7 +473,7 @@ public sealed class MainWindow : Window
         ImGui.TableSetupColumn("Name", ImGuiTableColumnFlags.WidthFixed, 140f);
         ImGui.TableSetupColumn("World", ImGuiTableColumnFlags.WidthFixed, 90f);
         ImGui.TableSetupColumn("Source", ImGuiTableColumnFlags.WidthFixed, 60f);
-        ImGui.TableSetupColumn("##actions", ImGuiTableColumnFlags.WidthFixed, 70f);
+        ImGui.TableSetupColumn("##actions", ImGuiTableColumnFlags.WidthStretch);
 
         // LAN roster first — trusted live via the LAN toggle, shown for visibility.
         foreach (var toon in lanMembers)
@@ -328,7 +554,7 @@ public sealed class MainWindow : Window
             _save();
         }
         if (ImGui.IsItemHovered())
-            ImGui.SetTooltip("Replace character names with aliases in this window.\nCosmetic only — for screenshots.");
+            ImGui.SetTooltip("Replace character names with aliases everywhere in this window.\nCosmetic only — for screenshots.");
 
         if (!_addOpen)
             return;
@@ -350,49 +576,19 @@ public sealed class MainWindow : Window
         }
     }
 
+    // --- Debug ---
+
     private void DrawDebugSection()
     {
-        DrawSectionTitle("■ Debug", false, showDot: false);
-
-        if (!ImGui.TreeNode("Details##debug"))
-            return;
+        DrawPageHeader("Debug");
 
         ImGui.TextColored(CharonTheme.TextSecondary,
             $"Daedalus IPC: {(_roster.IsAvailable ? "connected" : "unavailable — manual whitelist only")}");
         ImGui.TextColored(CharonTheme.TextSecondary, $"Boarding: {ScrambleIn(_boardingStatus())}");
         ImGui.TextColored(CharonTheme.TextSecondary, $"Follow: {ScrambleIn(_followStatus())}");
+        ImGui.TextColored(CharonTheme.TextSecondary, $"Heal Watch: {ScrambleIn(_healStatus())}");
         if (_inviteManager.AcceptPending)
             ImGui.TextColored(CharonTheme.StatusYellow, "Invite accept pending (delay running)");
-
-        if (_pillion.SessionActive)
-        {
-            ImGui.TextColored(CharonTheme.TextSecondary, $"Mount id: {_pillion.MountId}");
-            foreach (var seat in _pillion.Seats)
-            {
-                var color = seat.Status switch
-                {
-                    SeatStatus.Filled => CharonTheme.StatusGreen,
-                    SeatStatus.InvitePending => CharonTheme.StatusYellow,
-                    SeatStatus.Declined => CharonTheme.StatusRed,
-                    _ => CharonTheme.StatusGrey,
-                };
-                var occupant = seat.AssignedName.Length > 0 ? $" — {Display(seat.AssignedName)}" : string.Empty;
-                ImGui.TextColored(color, $"Seat {seat.Index}: {seat.Status}{occupant}");
-            }
-
-            // Raw game state, straight from MountContainer — for diagnosing seat-index mapping.
-            ImGui.Spacing();
-            ImGui.TextColored(CharonTheme.TextSecondary, "Raw seat data (game)");
-            foreach (var (seatIndex, entityId, name) in _rawSeatOccupancy())
-            {
-                // Entity ids identify characters too — mask them while scrambling.
-                var id = _config.ScrambleNames ? "0x········" : $"0x{entityId:X8}";
-                ImGui.TextColored(CharonTheme.TextDisabled,
-                    entityId == 0
-                        ? $"#{seatIndex}: empty"
-                        : $"#{seatIndex}: {id} {(name.Length > 0 ? Display(name) : "(unresolved)")}");
-            }
-        }
 
         if (_healWatch.HealLog.Count > 0)
         {
@@ -415,9 +611,9 @@ public sealed class MainWindow : Window
                     $"{entry.TimeUtc:HH:mm:ss}  {Display(entry.CharacterName)}@{entry.World}  [{entry.Source}]");
             }
         }
-
-        ImGui.TreePop();
     }
+
+    // --- Scramble helpers ---
 
     /// <summary>Session-stable alias: the same character always maps to the same underworld name.</summary>
     private string AliasFor(string characterName)
@@ -459,26 +655,5 @@ public sealed class MainWindow : Window
         }
 
         return text;
-    }
-
-    /// <summary>Section header row: gold title left, status dot right-aligned.</summary>
-    private static void DrawSectionTitle(string title, bool active, bool showDot = true)
-    {
-        ImGui.PushStyleColor(ImGuiCol.Text, CharonTheme.AccentGold);
-        ImGui.TextUnformatted(title);
-        ImGui.PopStyleColor();
-
-        if (showDot)
-        {
-            var label = active ? "● Active" : "● Disabled";
-            var rightX = ImGui.GetWindowContentRegionMax().X - ImGui.CalcTextSize(label).X;
-            if (rightX > ImGui.GetCursorPosX())
-                ImGui.SameLine(rightX);
-            else
-                ImGui.SameLine();
-            ImGui.TextColored(active ? CharonTheme.StatusGreen : CharonTheme.StatusGrey, label);
-        }
-
-        ImGui.Separator();
     }
 }
