@@ -109,6 +109,44 @@ final checkmark always requires a human.
 
 ## 7. Daedalus LAN Relay (cross-machine Charon channel)
 
+> **STATUS 2026-07-12: Daedalus side SHIPPED** (`Ipc/PluginRelayIpc.cs` — `Daedalus.Relay.Publish`
+> Action<string,string>, `Daedalus.Relay.Message` event <string,string>; framework thread;
+> publisher never receives its own frame; silent no-op while the LAN coordinator is disabled).
+> Roster also carries `hp`/`entityId` now. Remaining work is Charon-side — plan below.
+
+### Charon-side implementation plan (phases A→B→C; D later)
+
+**Phase A — plumbing (unblocks both 7 and 8)**
+1. `LanToonInfo`: add `Hp` (`[JsonPropertyName("hp")]`, float 0–1) and `EntityId`
+   (`"entityId"`, uint). `ParseRoster` needs no change (tolerant); old Daedalus JSON
+   defaults them to 0. Tests: new fields parse; legacy JSON without them still parses.
+2. New `Services/RelayClient.cs`: thin wrapper over the two call gates.
+   - `Publish(channel, json)` → `InvokeAction` in try/catch (fail-open no-op when
+     Daedalus absent); `event OnMessage(channel, json)` from `Subscribe` on
+     `Daedalus.Relay.Message` (already framework-thread); `Unsubscribe` on dispose.
+   - Channel constants: `charon.pillion`, `charon.rally`, `charon.assemble`.
+   - Remember: local sibling clients DO receive via UDP loopback; the publisher itself
+     does NOT — never design a flow that needs the sender to hear its own frame.
+
+**Phase B — owner-authoritative pillion assignments (this feature)**
+1. Owner side: `SendPillionInvite` publishes the existing transport-neutral
+   `PillionAssignmentMessage` JSON on `charon.pillion` (message model + tolerant
+   `Parse` already exist in `Ipc/CharonPillionIpc.cs`).
+2. Passenger side: on `charon.pillion` for our character → enter COMMANDED mode:
+   store (owner, seat, expiry ~10s). The boarding executor prefers the commanded seat
+   over `PassengerSeatPicker`; occupancy is still re-checked live before the call, and
+   a commanded-but-occupied seat degrades to the observation picker. On expiry with no
+   new command, observation mode resumes — the no-Daedalus fallback stays fully intact
+   (all 66 existing tests must keep passing untouched).
+3. Retire the per-process Dalamud-IPC broadcast in `CharonPillionIpc` (the relay's
+   loopback covers same-machine siblings); keep the message record + `Parse`.
+4. New tests: commanded-seat override, expiry → fallback, occupied command → picker,
+   command for someone else ignored.
+
+**Phase D — later, small:** `/charon rally` publishes the local map-flag position on
+`charon.rally` (receivers vnav to it, same zone only); assemble-party trigger on
+`charon.assemble` once roadmap #1 exists.
+
 **Goal:** Real owner-driven commands across machines: explicit seat assignments, rally
 broadcasts, assemble-party triggers from one box for toons on another PC.
 
@@ -129,6 +167,25 @@ seat assignment over the relay and boards it exactly (no rank inference), with t
 observation fallback still passing the existing 66 tests.
 
 ## 8. Heal Watch (out-of-group alt healing over the LAN bus)
+
+> **STATUS 2026-07-12: Daedalus prerequisite SHIPPED** — roster entries carry `hp` (0–1)
+> and `entityId`. Charon-side plan (Phase C, builds on Phase A above):
+>
+> 1. `Features/HealWatch/HealWatchManager.cs` (pure, tested): consumes roster vitals +
+>    config snapshot → ordered heal intents. Rules as designed below (thresholds,
+>    emergency queue-jump, per-target 2.5s cooldown, stale-HP guard).
+> 2. `DaedalusIpcClient` gains an `IsRotationEnabled` poll (`Daedalus.IsEnabled`, exists)
+>    piggybacked on the 2s refresh — the manager stands down while true.
+> 3. `Services/Game/HealExecutor.cs` (thin, unsafe): healer-job gate from local ClassJob,
+>    per-job basic heal by level (Cure/Physick/Benefic/Diagnosis table), resolve target
+>    via `EntityId` → object table, LIVE HP re-check (authoritative) →
+>    `ActionManager.UseAction(Spell, id, targetId)`. Verify the UseAction target-id
+>    overload against the dev assemblies BEFORE writing the call (per CLAUDE.md doctrine).
+> 4. UI: Heal Watch section (toggle, thresholds) + roster HP bars (grey when stale) +
+>    heals log in Debug. Config: `HealWatchEnabled` (off), `HealThreshold`,
+>    `EmergencyThreshold`, `OutOfPartyOnly` (on).
+> 5. Tests: threshold/emergency ordering, cooldown dedup, stale-vitals skip, stand-down
+>    on rotation-enabled, non-healer job → inert.
 
 **Goal:** A healer toon watches the HP of the WHOLE fleet — including alts NOT in its party —
 and heals whoever drops below threshold. Out-of-party healing is legal game mechanics (any
