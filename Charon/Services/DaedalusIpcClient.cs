@@ -23,6 +23,14 @@ public sealed class LanToonInfo
     [JsonPropertyName("online")]
     public bool IsOnline { get; set; }
 
+    /// <summary>HP fraction 0–1 from the LAN heartbeat (~1–2s stale; detection only — re-check live before acting). 0 when the Daedalus build predates the field.</summary>
+    [JsonPropertyName("hp")]
+    public float Hp { get; set; }
+
+    /// <summary>Entity id from the LAN heartbeat for object-table resolution. 0 when the Daedalus build predates the field.</summary>
+    [JsonPropertyName("entityId")]
+    public uint EntityId { get; set; }
+
     /// <summary>Seat assigned during the current pillion session (0 = none). Set by Charon, not Daedalus.</summary>
     [JsonIgnore]
     public int SeatAssignment { get; set; }
@@ -57,6 +65,7 @@ public sealed class DaedalusIpcClient : IDaedalusRosterProvider, IDisposable
 
     private readonly ICallGateSubscriber<string> _getRoster;
     private readonly ICallGateSubscriber<string> _getTrustList;
+    private readonly ICallGateSubscriber<bool> _isEnabled;
     private readonly IPluginLog _log;
 
     private List<LanToonInfo> _roster = new();
@@ -69,7 +78,15 @@ public sealed class DaedalusIpcClient : IDaedalusRosterProvider, IDisposable
         _log = log;
         _getRoster = pluginInterface.GetIpcSubscriber<string>(RosterEndpoint);
         _getTrustList = pluginInterface.GetIpcSubscriber<string>(TrustListEndpoint);
+        _isEnabled = pluginInterface.GetIpcSubscriber<bool>("Daedalus.IsEnabled");
     }
+
+    /// <summary>
+    /// True while the local Daedalus ROTATION is enabled — it owns the action queue then,
+    /// and Heal Watch must stand down. False when Daedalus is absent (fail-open: Charon
+    /// may act when nothing else is driving).
+    /// </summary>
+    public bool IsRotationEnabled { get; private set; }
 
     public bool IsAvailable { get; private set; }
 
@@ -101,6 +118,15 @@ public sealed class DaedalusIpcClient : IDaedalusRosterProvider, IDisposable
                 _trustList = new List<string>(); // roster endpoint newer than trust endpoint — tolerate
             }
 
+            try
+            {
+                IsRotationEnabled = _isEnabled.InvokeFunc();
+            }
+            catch
+            {
+                IsRotationEnabled = false; // endpoint missing — treat as rotation off
+            }
+
             IsAvailable = true;
             if (!_wasAvailable)
                 _log.Info("Connected to Daedalus LAN party roster ({0} toons)", _roster.Count);
@@ -113,6 +139,7 @@ public sealed class DaedalusIpcClient : IDaedalusRosterProvider, IDisposable
                 _log.Info("Daedalus IPC unavailable — falling back to manual whitelist");
             IsAvailable = false;
             _wasAvailable = false;
+            IsRotationEnabled = false;
             _roster = new List<LanToonInfo>();
             _trustList = new List<string>();
         }

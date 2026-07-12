@@ -19,7 +19,7 @@ public sealed class DaedalusIpcClientTests
     {
         const string json = """
             [
-                { "name": "Arthena", "world": "Ultros", "machine": "box-a", "online": true },
+                { "name": "Arthena", "world": "Ultros", "machine": "box-a", "online": true, "hp": 0.83, "entityId": 268503433 },
                 { "name": "Kronos", "world": "Ultros", "machine": "box-b", "online": false }
             ]
             """;
@@ -31,7 +31,20 @@ public sealed class DaedalusIpcClientTests
         Assert.Equal("Ultros", roster[0].World);
         Assert.Equal("box-a", roster[0].MachineId);
         Assert.True(roster[0].IsOnline);
+        Assert.Equal(0.83f, roster[0].Hp, 3);
+        Assert.Equal(268503433u, roster[0].EntityId);
         Assert.False(roster[1].IsOnline);
+    }
+
+    [Fact]
+    public void ParseRoster_LegacyJsonWithoutVitals_DefaultsToZero()
+    {
+        // Older Daedalus builds predate hp/entityId — extend-only schema, must still parse.
+        var roster = DaedalusIpcClient.ParseRoster("""[ { "name": "Arthena", "world": "Ultros" } ]""");
+
+        var toon = Assert.Single(roster);
+        Assert.Equal(0f, toon.Hp);
+        Assert.Equal(0u, toon.EntityId);
     }
 
     [Theory]
@@ -77,7 +90,7 @@ public sealed class DaedalusIpcClientTests
     [Fact]
     public void PillionAssignment_ValidJson_Parses()
     {
-        var message = CharonPillionIpc.Parse(
+        var message = PillionRelay.Parse(
             """{ "owner": "Arthena", "member": "Kronos", "seat": 3 }""");
 
         Assert.NotNull(message);
@@ -94,7 +107,7 @@ public sealed class DaedalusIpcClientTests
     [InlineData("""{ "owner": "Arthena", "member": "Kronos", "seat": 0 }""")] // passenger seats are 1-based
     public void PillionAssignment_BadInput_ReturnsNull(string? json)
     {
-        Assert.Null(CharonPillionIpc.Parse(json));
+        Assert.Null(PillionRelay.Parse(json));
     }
 
     // --- Graceful fallback when Daedalus is not loaded ---

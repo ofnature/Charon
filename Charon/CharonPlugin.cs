@@ -7,6 +7,7 @@ using Dalamud.Plugin;
 using Dalamud.Plugin.Services;
 using Charon.Features.AutoAccept;
 using Charon.Features.AutoPillion;
+using Charon.Features.HealWatch;
 using Charon.Ipc;
 using Charon.Services;
 using Charon.Services.Game;
@@ -31,13 +32,19 @@ public sealed class CharonPlugin : IDalamudPlugin
     private readonly CharonConfig _config;
     private readonly WhitelistService _whitelist;
     private readonly DaedalusIpcClient _daedalusIpc;
-    private readonly CharonPillionIpc _pillionIpc;
+    private readonly RelayClient _relay;
     private readonly PillionManager _pillionManager;
     private readonly GroupInviteManager _inviteManager;
     private readonly GroupInviteInterop _inviteInterop;
     private readonly TeleportOfferInterop _teleportOffer;
     private readonly MountStateReader _mountReader;
     private readonly NavClient _nav;
+    private readonly HealWatchManager _healWatch;
+    private readonly HealExecutor _healExecutor;
+
+    // Heal Watch runs at 1 Hz; status surfaced in the window.
+    private DateTime _lastHealScanUtc = DateTime.MinValue;
+    private string _healStatus = "idle";
 
     private readonly WindowSystem _windowSystem = new("Charon");
     private readonly MainWindow _mainWindow;
@@ -68,6 +75,10 @@ public sealed class CharonPlugin : IDalamudPlugin
 
     /// <summary>Seat we last attempted — a shifting computed seat resets the attempt budget.</summary>
     private int _lastAttemptedSeat;
+
+    /// <summary>Latest owner-issued seat assignment from the relay (null = observe-and-pick).</summary>
+    private SeatCommand? _seatCommand;
+    private static readonly TimeSpan SeatCommandLifetime = TimeSpan.FromSeconds(10);
 
     // Follow-teleport state: last seen territory per party member, and the pending follow.
     private readonly Dictionary<string, uint> _partyTerritories = new(StringComparer.OrdinalIgnoreCase);
@@ -115,11 +126,13 @@ public sealed class CharonPlugin : IDalamudPlugin
 
         _whitelist = new WhitelistService(_config.ManualWhitelist, SaveConfig);
         _daedalusIpc = new DaedalusIpcClient(pluginInterface, log);
-        _pillionIpc = new CharonPillionIpc(pluginInterface, log);
-        _pillionIpc.OnAssignmentReceived += OnPillionAssignmentReceived;
+        _relay = new RelayClient(pluginInterface, log);
+        _relay.OnMessage += OnRelayMessage;
 
         _mountReader = new MountStateReader(objectTable, dataManager, partyList);
         _nav = new NavClient(pluginInterface, log);
+        _healWatch = new HealWatchManager(HealWatchConfig.From(_config));
+        _healExecutor = new HealExecutor(objectTable, log);
         _teleportOffer = new TeleportOfferInterop(
             addonLifecycle,
             gameGui,
@@ -141,8 +154,9 @@ public sealed class CharonPlugin : IDalamudPlugin
         _inviteInterop = new GroupInviteInterop(dataManager, _inviteManager, log);
 
         _mainWindow = new MainWindow(_config, SaveConfig, _whitelist, _daedalusIpc, _pillionManager, _inviteManager,
-            ReadRawSeatOccupancy, () => _boardingStatus,
-            () => $"{_followStatus} · offer: {_teleportOffer.Status}");
+            _healWatch, ReadRawSeatOccupancy, () => _boardingStatus,
+            () => $"{_followStatus} · offer: {_teleportOffer.Status}",
+            () => _healStatus);
         _mainWindow.IsOpen = _config.MainWindowVisible;
         _windowSystem.AddWindow(_mainWindow);
 
@@ -169,10 +183,10 @@ public sealed class CharonPlugin : IDalamudPlugin
         _commandManager.RemoveHandler(CommandName);
         _windowSystem.RemoveAllWindows();
 
-        _pillionIpc.OnAssignmentReceived -= OnPillionAssignmentReceived;
+        _relay.OnMessage -= OnRelayMessage;
         _teleportOffer.Dispose();
         _inviteInterop.Dispose();
-        _pillionIpc.Dispose();
+        _relay.Dispose();
         _daedalusIpc.Dispose();
 
         _config.MainWindowVisible = _mainWindow.IsOpen;
@@ -213,8 +227,67 @@ public sealed class CharonPlugin : IDalamudPlugin
         _inviteInterop.Poll(now);
         _teleportOffer.Update(now);
         UpdateFollowTeleport(now);
+        UpdateHealWatch(now);
         _pillionManager.Update(now);
         _inviteManager.Update(now);
+    }
+
+    /// <summary>
+    /// Heal Watch: fleet vitals from the LAN roster → at most one heal per pass on the most
+    /// urgent toon. Stands down while the local Daedalus rotation is enabled. 1 Hz.
+    /// </summary>
+    private void UpdateHealWatch(DateTime now)
+    {
+        _healWatch.UpdateConfig(HealWatchConfig.From(_config));
+
+        if (!_config.HealWatchEnabled)
+        {
+            _healStatus = "disabled";
+            return;
+        }
+
+        if (now - _lastHealScanUtc < TimeSpan.FromSeconds(1))
+            return;
+        _lastHealScanUtc = now;
+
+        if (_daedalusIpc.IsRotationEnabled)
+        {
+            _healStatus = "standing down (Daedalus rotation enabled)";
+            return;
+        }
+
+        var actionId = _healExecutor.GetLocalHealAction();
+        if (actionId == 0)
+        {
+            _healStatus = "inert (not a healer job)";
+            return;
+        }
+
+        var localName = _objectTable.LocalPlayer?.Name.TextValue ?? string.Empty;
+        var candidates = _daedalusIpc.GetLanPartyMembers()
+            .Where(t => t.IsOnline && !t.CharacterName.Equals(localName, StringComparison.OrdinalIgnoreCase))
+            .Select(t => new HealCandidate(t.CharacterName, t.EntityId, t.Hp, IsInMyParty(t.CharacterName)));
+
+        var intents = _healWatch.Evaluate(candidates, _daedalusIpc.IsRotationEnabled, now);
+        if (intents.Count == 0)
+        {
+            _healStatus = "watching";
+            return;
+        }
+
+        // One cast per pass — the manager's global cooldown paces us to roughly one GCD.
+        var intent = intents[0];
+        if (_healExecutor.TryHeal(actionId, intent.EntityId, _config.HealThreshold))
+        {
+            _healWatch.OnHealCast(intent, now);
+            _healStatus = $"healed {intent.Name}{(intent.Emergency ? " (EMERGENCY)" : "")}";
+            _log.Info("Heal Watch: {0}", _healStatus);
+        }
+        else
+        {
+            // Live re-check refused (topped up / out of zone / dead) — vitals were stale.
+            _healStatus = $"skipped {intent.Name} (stale vitals)";
+        }
     }
 
     /// <summary>
@@ -500,7 +573,9 @@ public sealed class CharonPlugin : IDalamudPlugin
         for (var i = 0; i < occupied.Length; i++)
             occupied[i] = mount.SeatOccupantEntityIds[i] != 0;
 
-        var seat = PassengerSeatPicker.PickSeat(localName, presentCandidates, occupied);
+        // Observation-based pick, then an owner command (LAN relay) overrides it while fresh.
+        var pickerSeat = PassengerSeatPicker.PickSeat(localName, presentCandidates, occupied);
+        var seat = SeatCommandResolver.Resolve(_seatCommand, ownerName, now, occupied, pickerSeat);
         if (seat == null)
         {
             // Not a candidate / no free seat left — stay put but keep the session.
@@ -674,6 +749,7 @@ public sealed class CharonPlugin : IDalamudPlugin
         _boardingOwnerEntityId = 0;
         _boardingAttempts = 0;
         _lastAttemptedSeat = 0;
+        _seatCommand = null;
         _boardingStatus = status;
         StopNavIfOurs();
     }
@@ -719,8 +795,9 @@ public sealed class CharonPlugin : IDalamudPlugin
     }
 
     /// <summary>
-    /// Invite transport: broadcast the assignment so the passenger's Charon instance rides the
-    /// assigned seat, and mirror it onto the roster view for the UI.
+    /// Invite transport: publish the assignment on the LAN relay so the passenger's Charon
+    /// enters commanded mode, and mirror it onto the roster view for the UI. No-op transport
+    /// when Daedalus/LAN is absent — passengers then self-board by observation as before.
     /// </summary>
     private void SendPillionInvite(PillionInvite invite)
     {
@@ -728,7 +805,8 @@ public sealed class CharonPlugin : IDalamudPlugin
         if (ownerName.Length == 0)
             return;
 
-        _pillionIpc.BroadcastAssignment(ownerName, invite.CharacterName, invite.SeatIndex);
+        _relay.Publish(RelayClient.PillionChannel,
+            PillionRelay.Serialize(ownerName, invite.CharacterName, invite.SeatIndex));
 
         var toon = _daedalusIpc.GetLanPartyMembers()
             .FirstOrDefault(t => t.CharacterName.Equals(invite.CharacterName, StringComparison.OrdinalIgnoreCase));
@@ -736,30 +814,31 @@ public sealed class CharonPlugin : IDalamudPlugin
             toon.SeatAssignment = invite.SeatIndex;
     }
 
-    /// <summary>Passenger side: an owner assigned OUR character a seat — hop on.</summary>
-    private void OnPillionAssignmentReceived(PillionAssignmentMessage message)
+    /// <summary>Relay dispatch — framework thread (PluginRelayIpc guarantees it).</summary>
+    private void OnRelayMessage(string channel, string json)
     {
+        if (channel == RelayClient.PillionChannel)
+            OnPillionAssignmentReceived(json);
+    }
+
+    /// <summary>
+    /// Passenger side: an owner assigned OUR character a seat. Stored as a fresh command —
+    /// the boarding pipeline (delay, walk-in, live occupancy re-check) still runs; the
+    /// command only overrides WHICH seat is taken (see SeatCommandResolver).
+    /// </summary>
+    private void OnPillionAssignmentReceived(string json)
+    {
+        var message = PillionRelay.Parse(json);
         var localName = _objectTable.LocalPlayer?.Name.TextValue ?? string.Empty;
-        if (localName.Length == 0
+        if (message == null
+            || localName.Length == 0
             || !message.MemberName.Equals(localName, StringComparison.OrdinalIgnoreCase)
             || message.OwnerName.Equals(localName, StringComparison.OrdinalIgnoreCase))
             return;
 
-        var owner = FindPlayerByName(message.OwnerName);
-        if (owner != null && PillionRideHelper.TryRidePillion(owner, message.SeatIndex))
-            _log.Debug("Riding {0}'s mount, seat {1}", message.OwnerName, message.SeatIndex);
-    }
-
-    private Dalamud.Game.ClientState.Objects.SubKinds.IPlayerCharacter? FindPlayerByName(string characterName)
-    {
-        foreach (var obj in _objectTable)
-        {
-            if (obj is Dalamud.Game.ClientState.Objects.SubKinds.IPlayerCharacter pc
-                && pc.Name.TextValue.Equals(characterName, StringComparison.OrdinalIgnoreCase))
-                return pc;
-        }
-
-        return null;
+        _seatCommand = new SeatCommand(message.OwnerName, message.SeatIndex,
+            DateTime.UtcNow + SeatCommandLifetime);
+        _log.Debug("Seat command received: {0}'s mount, seat {1}", message.OwnerName, message.SeatIndex);
     }
 
     private void AcceptPendingInvite() => _inviteInterop.AcceptCurrent();

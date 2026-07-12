@@ -5,6 +5,7 @@ using Dalamud.Bindings.ImGui;
 using Dalamud.Interface.Windowing;
 using Charon.Features.AutoAccept;
 using Charon.Features.AutoPillion;
+using Charon.Features.HealWatch;
 using Charon.Services;
 
 namespace Charon.Windows;
@@ -21,9 +22,11 @@ public sealed class MainWindow : Window
     private readonly IDaedalusRosterProvider _roster;
     private readonly PillionManager _pillion;
     private readonly GroupInviteManager _inviteManager;
+    private readonly HealWatchManager _healWatch;
     private readonly Func<IReadOnlyList<(int Seat, uint EntityId, string Name)>> _rawSeatOccupancy;
     private readonly Func<string> _boardingStatus;
     private readonly Func<string> _followStatus;
+    private readonly Func<string> _healStatus;
 
     private string _addName = string.Empty;
     private string _addWorld = string.Empty;
@@ -46,9 +49,11 @@ public sealed class MainWindow : Window
         IDaedalusRosterProvider roster,
         PillionManager pillion,
         GroupInviteManager inviteManager,
+        HealWatchManager healWatch,
         Func<IReadOnlyList<(int Seat, uint EntityId, string Name)>> rawSeatOccupancy,
         Func<string> boardingStatus,
-        Func<string> followStatus)
+        Func<string> followStatus,
+        Func<string> healStatus)
         : base("Charon##CharonMain", ImGuiWindowFlags.AlwaysAutoResize)
     {
         _config = config;
@@ -57,9 +62,11 @@ public sealed class MainWindow : Window
         _roster = roster;
         _pillion = pillion;
         _inviteManager = inviteManager;
+        _healWatch = healWatch;
         _rawSeatOccupancy = rawSeatOccupancy;
         _boardingStatus = boardingStatus;
         _followStatus = followStatus;
+        _healStatus = healStatus;
     }
 
     public override void Draw()
@@ -70,6 +77,8 @@ public sealed class MainWindow : Window
             DrawAutoPillionSection();
             ImGui.Spacing();
             DrawFollowTeleportSection();
+            ImGui.Spacing();
+            DrawHealWatchSection();
             ImGui.Spacing();
             DrawAutoAcceptSection();
             ImGui.Spacing();
@@ -147,6 +156,49 @@ public sealed class MainWindow : Window
         CharonTheme.HelpMarker("When a trusted party member teleports to another zone, follow them\n"
                                + "to an unlocked aetheryte there (small random delay per toon).\n"
                                + "Same group only. Normal teleport gil costs apply.");
+    }
+
+    private void DrawHealWatchSection()
+    {
+        DrawSectionTitle("■ Heal Watch", _config.HealWatchEnabled);
+
+        var enabled = _config.HealWatchEnabled;
+        if (ImGui.Checkbox("Enabled##healwatch", ref enabled))
+        {
+            _config.HealWatchEnabled = enabled;
+            _save();
+        }
+        CharonTheme.HelpMarker("On a healer job, top up fleet toons from the Daedalus LAN vitals —\n"
+                               + "including toons OUTSIDE your party. Stands down automatically while\n"
+                               + "the Daedalus rotation is enabled.");
+
+        var thresholdPct = _config.HealThreshold * 100f;
+        ImGui.SetNextItemWidth(160f);
+        if (ImGui.SliderFloat("Heal Below##healwatch", ref thresholdPct, 30f, 95f, "%.0f%%"))
+        {
+            _config.HealThreshold = thresholdPct / 100f;
+            _save();
+        }
+        CharonTheme.HelpMarker("Heal anyone at or below this HP fraction (live HP is re-checked\nbefore every cast).");
+
+        var emergencyPct = _config.EmergencyThreshold * 100f;
+        ImGui.SetNextItemWidth(160f);
+        if (ImGui.SliderFloat("Emergency##healwatch", ref emergencyPct, 10f, 60f, "%.0f%%"))
+        {
+            _config.EmergencyThreshold = emergencyPct / 100f;
+            _save();
+        }
+        CharonTheme.HelpMarker("At or below this, a toon jumps the queue.");
+
+        var outOfParty = _config.HealOutOfPartyOnly;
+        if (ImGui.Checkbox("Out-of-party only##healwatch", ref outOfParty))
+        {
+            _config.HealOutOfPartyOnly = outOfParty;
+            _save();
+        }
+        CharonTheme.HelpMarker("Skip toons in our own party — healing them is the rotation's job.");
+
+        ImGui.TextColored(CharonTheme.TextSecondary, ScrambleIn(_healStatus()));
     }
 
     private void DrawAutoAcceptSection()
@@ -339,6 +391,17 @@ public sealed class MainWindow : Window
                     entityId == 0
                         ? $"#{seatIndex}: empty"
                         : $"#{seatIndex}: {id} {(name.Length > 0 ? Display(name) : "(unresolved)")}");
+            }
+        }
+
+        if (_healWatch.HealLog.Count > 0)
+        {
+            ImGui.Spacing();
+            ImGui.TextColored(CharonTheme.TextSecondary, "Recent heals");
+            foreach (var heal in _healWatch.HealLog)
+            {
+                ImGui.TextColored(heal.Emergency ? CharonTheme.StatusRed : CharonTheme.TextDisabled,
+                    $"{heal.TimeUtc:HH:mm:ss}  {Display(heal.Name)}{(heal.Emergency ? "  [EMERGENCY]" : "")}");
             }
         }
 

@@ -34,6 +34,19 @@ public sealed class CharonConfig : IPluginConfiguration
     /// </summary>
     public string TeleportOfferAddonName { get; set; } = string.Empty;
 
+    // Heal Watch
+    /// <summary>Healer toon tops up fleet toons from LAN vitals (out-of-party healing).</summary>
+    public bool HealWatchEnabled { get; set; } = false;
+
+    /// <summary>Heal anyone at or below this HP fraction.</summary>
+    public float HealThreshold { get; set; } = 0.8f;
+
+    /// <summary>At or below this HP fraction a toon jumps the queue.</summary>
+    public float EmergencyThreshold { get; set; } = 0.4f;
+
+    /// <summary>Only heal toons OUTSIDE our party (in-party healing is the rotation's job).</summary>
+    public bool HealOutOfPartyOnly { get; set; } = true;
+
     // Auto Accept
     public bool AutoAcceptEnabled { get; set; } = false;
 
