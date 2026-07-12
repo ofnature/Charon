@@ -28,6 +28,8 @@ Charon is a standalone Dalamud plugin for FFXIV (named for the ferryman of Greek
 ## UI
 Single window (`Windows/MainWindow.cs`), `AlwaysAutoResize`, Daedalus dark/gold theme via `Windows/CharonTheme.cs` (palette copied from the design skill — keep in sync). Sections: Auto Pillion, Auto Accept (trusted-characters table with [LAN]/[Manual] tags), collapsed Debug tree.
 
+- Follow Teleport (two mechanisms, offer preferred): (1) the native party teleport-offer dialog ("Accept Teleport to X?" Yes/Wait/No) is auto-accepted via `Services/Game/TeleportOfferInterop.cs` — its addon name is NOT in ClientStructs, so it is LEARNED at runtime (first addon opening while `Telepo.ActiveTeleportRequest` is true) and persisted in `CharonConfig.TeleportOfferAddonName`; (2) fallback territory-follow (party member zones → `Telepo.Teleport` to an attuned aetheryte there via `IAetheryteList`), which stands down for 15s after an offer accept.
+
 ## Safety Rails (do not weaken)
 - Never auto-DECLINE an invite — ignore means the dialog stays up for the player.
 - Accept fires after a random 0.3–0.8s delay (`AutoAcceptConfig` constants).

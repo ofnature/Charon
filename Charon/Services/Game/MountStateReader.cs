@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Numerics;
 using Dalamud.Plugin.Services;
 using FFXIVClientStructs.FFXIV.Client.Game.Character;
@@ -26,16 +27,24 @@ public sealed record MountSnapshot(uint MountId, int PassengerSeats, uint[] Seat
 /// </summary>
 public sealed unsafe class MountStateReader
 {
-    /// <summary>Riders further than this from the owner cannot be on the owner's mount.</summary>
-    private const float MaxRiderDistanceYalms = 8f;
+    /// <summary>
+    /// Sanity bound only — ownership is established by the party gate (riders must be party
+    /// members), NOT by this radius. Outer seats of the largest 8-person mounts proved to sit
+    /// beyond every "reasonable" radius tried (8y missed seats 4+, 18y missed seats 6+), so this
+    /// is deliberately huge; it exists only to ignore party members riding pillion somewhere
+    /// else across the zone.
+    /// </summary>
+    private const float MaxRiderDistanceYalms = 50f;
 
     private readonly IObjectTable _objectTable;
     private readonly IDataManager _dataManager;
+    private readonly IPartyList _partyList;
 
-    public MountStateReader(IObjectTable objectTable, IDataManager dataManager)
+    public MountStateReader(IObjectTable objectTable, IDataManager dataManager, IPartyList partyList)
     {
         _objectTable = objectTable;
         _dataManager = dataManager;
+        _partyList = partyList;
     }
 
     /// <summary>Null when not mounted (or state is unreadable, e.g. during zone transitions).</summary>
@@ -85,13 +94,16 @@ public sealed unsafe class MountStateReader
         }
     }
 
-    /// <summary>True when the local player is riding pillion (a passenger, not a mount owner).</summary>
-    public bool IsLocalRidingPillion()
+    /// <summary>
+    /// True when this player is riding pillion (a passenger). Riders carry the mount id on
+    /// their character too, so "has a mount" alone does NOT identify the owner — owner
+    /// detection must exclude riders with this check.
+    /// </summary>
+    public bool IsRidingPillion(Dalamud.Game.ClientState.Objects.SubKinds.IPlayerCharacter player)
     {
         try
         {
-            var player = _objectTable.LocalPlayer;
-            if (player == null || player.Address == nint.Zero)
+            if (player.Address == nint.Zero)
                 return false;
 
             return ((Character*)player.Address)->Mode == CharacterModes.RidingPillion;
@@ -100,6 +112,13 @@ public sealed unsafe class MountStateReader
         {
             return false;
         }
+    }
+
+    /// <summary>True when the local player is riding pillion (a passenger, not a mount owner).</summary>
+    public bool IsLocalRidingPillion()
+    {
+        var player = _objectTable.LocalPlayer;
+        return player != null && IsRidingPillion(player);
     }
 
     /// <summary>Passenger-seat count from the Lumina Mount sheet (ExtraSeats; 0 = solo mount).</summary>
@@ -124,12 +143,34 @@ public sealed unsafe class MountStateReader
         if (passengerSeats < 1)
             return occupants;
 
+        // Pillion riders must share the owner's party — and we (the reader) are always in that
+        // party too, so OUR party membership is the ownership tie. This is what keeps the wide
+        // proximity radius from counting riders of another party's mount parked next to us.
+        var partyIds = new HashSet<uint>();
+        try
+        {
+            foreach (var member in _partyList)
+            {
+                if (member.EntityId != 0)
+                    partyIds.Add(member.EntityId);
+            }
+        }
+        catch
+        {
+            // party list unreadable mid-transition — no riders attributable this read
+        }
+
+        if (partyIds.Count == 0)
+            return occupants; // solo: nobody can be riding our mount
+
         foreach (var obj in _objectTable)
         {
             // Riders are always player characters; the Character* cast is only valid for them.
             if (obj is not Dalamud.Game.ClientState.Objects.SubKinds.IPlayerCharacter)
                 continue;
             if (obj.Address == nint.Zero || obj.EntityId == 0 || obj.EntityId == ownerEntityId)
+                continue;
+            if (!partyIds.Contains(obj.EntityId))
                 continue;
             if (Vector3.Distance(ownerPosition, obj.Position) > MaxRiderDistanceYalms)
                 continue;

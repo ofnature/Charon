@@ -24,6 +24,16 @@ public sealed class CharonConfig : IPluginConfiguration
     /// <summary>Only invite Daedalus LAN party members (skip the manual whitelist for pillion).</summary>
     public bool LanMembersOnly { get; set; } = true;
 
+    // Follow Teleport
+    /// <summary>When a trusted party member teleports to another zone, follow them there.</summary>
+    public bool FollowTeleportEnabled { get; set; } = false;
+
+    /// <summary>
+    /// Addon name of the party teleport-offer dialog ("Accept Teleport to X?"), learned at
+    /// runtime the first time an offer appears (not documented in ClientStructs).
+    /// </summary>
+    public string TeleportOfferAddonName { get; set; } = string.Empty;
+
     // Auto Accept
     public bool AutoAcceptEnabled { get; set; } = false;
 

@@ -16,7 +16,7 @@ namespace Charon;
 
 public sealed class CharonPlugin : IDalamudPlugin
 {
-    public const string PluginVersion = "0.1.0";
+    public const string PluginVersion = "0.1.1";
     private const string CommandName = "/charon";
 
     private readonly IDalamudPluginInterface _pluginInterface;
@@ -24,6 +24,8 @@ public sealed class CharonPlugin : IDalamudPlugin
     private readonly IFramework _framework;
     private readonly IObjectTable _objectTable;
     private readonly IPartyList _partyList;
+    private readonly IClientState _clientState;
+    private readonly IAetheryteList _aetheryteList;
     private readonly IPluginLog _log;
 
     private readonly CharonConfig _config;
@@ -33,6 +35,7 @@ public sealed class CharonPlugin : IDalamudPlugin
     private readonly PillionManager _pillionManager;
     private readonly GroupInviteManager _inviteManager;
     private readonly GroupInviteInterop _inviteInterop;
+    private readonly TeleportOfferInterop _teleportOffer;
     private readonly MountStateReader _mountReader;
     private readonly NavClient _nav;
 
@@ -47,14 +50,40 @@ public sealed class CharonPlugin : IDalamudPlugin
     private uint _boardingOwnerEntityId;
     private DateTime _boardingDetectedUtc;
     private DateTime _lastBoardingAttemptUtc;
+    // Attempts are cheap no-ops when they lose a race (rider mid-animation on the target seat),
+    // so retry quickly and generously rather than predicting boarding animations.
     private int _boardingAttempts;
-    private const int MaxBoardingAttempts = 3;
+    private const int MaxBoardingAttempts = 8;
+    private static readonly TimeSpan BoardingRetryInterval = TimeSpan.FromSeconds(1.25);
 
     /// <summary>Human-readable passenger-boarding state, shown in the Debug section.</summary>
     private string _boardingStatus = "idle";
 
-    /// <summary>Boarding can only succeed near the mount — nav in when further than this.</summary>
-    private const float BoardingRangeYalms = 4.0f;
+    /// <summary>Pillion scan cadence — object-table sweeps are too heavy for every frame.</summary>
+    private static readonly TimeSpan PillionTickInterval = TimeSpan.FromMilliseconds(250);
+    private DateTime _lastPillionTickUtc = DateTime.MinValue;
+
+    /// <summary>Local mount snapshot from the last pillion tick — shared by session, boarding, and UI.</summary>
+    private MountSnapshot? _cachedLocalMount;
+
+    /// <summary>Seat we last attempted — a shifting computed seat resets the attempt budget.</summary>
+    private int _lastAttemptedSeat;
+
+    // Follow-teleport state: last seen territory per party member, and the pending follow.
+    private readonly Dictionary<string, uint> _partyTerritories = new(StringComparer.OrdinalIgnoreCase);
+    private DateTime _lastFollowScanUtc = DateTime.MinValue;
+    private DateTime? _pendingTeleportAtUtc;
+    private uint _pendingAetheryteId;
+    private byte _pendingAetheryteSubIndex;
+    private string _followStatus = "idle";
+    private readonly Random _followJitter = new();
+
+    /// <summary>
+    /// Boarding can only succeed near the mount — nav in when further than this.
+    /// Compared on HORIZONTAL distance: the owner sits meters above ground on tall mounts,
+    /// and 3D distance never converged there (toons walked in circles under the mount).
+    /// </summary>
+    private const float BoardingRangeYalms = 5.0f;
 
     /// <summary>True while a vnavmesh path WE issued is (or may be) running — never stop user paths.</summary>
     private bool _navIssuedByUs;
@@ -66,7 +95,11 @@ public sealed class CharonPlugin : IDalamudPlugin
         IFramework framework,
         IObjectTable objectTable,
         IPartyList partyList,
+        IClientState clientState,
+        IAetheryteList aetheryteList,
         IDataManager dataManager,
+        IAddonLifecycle addonLifecycle,
+        IGameGui gameGui,
         IPluginLog log)
     {
         _pluginInterface = pluginInterface;
@@ -74,6 +107,8 @@ public sealed class CharonPlugin : IDalamudPlugin
         _framework = framework;
         _objectTable = objectTable;
         _partyList = partyList;
+        _clientState = clientState;
+        _aetheryteList = aetheryteList;
         _log = log;
 
         _config = pluginInterface.GetPluginConfig() as CharonConfig ?? new CharonConfig();
@@ -83,8 +118,15 @@ public sealed class CharonPlugin : IDalamudPlugin
         _pillionIpc = new CharonPillionIpc(pluginInterface, log);
         _pillionIpc.OnAssignmentReceived += OnPillionAssignmentReceived;
 
-        _mountReader = new MountStateReader(objectTable, dataManager);
+        _mountReader = new MountStateReader(objectTable, dataManager, partyList);
         _nav = new NavClient(pluginInterface, log);
+        _teleportOffer = new TeleportOfferInterop(
+            addonLifecycle,
+            gameGui,
+            () => _config.FollowTeleportEnabled,
+            () => _config.TeleportOfferAddonName,
+            name => { _config.TeleportOfferAddonName = name; SaveConfig(); },
+            log);
         _pillionManager = new PillionManager(
             Features.AutoPillion.PillionConfig.From(_config),
             SendPillionInvite,
@@ -99,7 +141,8 @@ public sealed class CharonPlugin : IDalamudPlugin
         _inviteInterop = new GroupInviteInterop(dataManager, _inviteManager, log);
 
         _mainWindow = new MainWindow(_config, SaveConfig, _whitelist, _daedalusIpc, _pillionManager, _inviteManager,
-            ReadRawSeatOccupancy, () => _boardingStatus);
+            ReadRawSeatOccupancy, () => _boardingStatus,
+            () => $"{_followStatus} · offer: {_teleportOffer.Status}");
         _mainWindow.IsOpen = _config.MainWindowVisible;
         _windowSystem.AddWindow(_mainWindow);
 
@@ -127,6 +170,7 @@ public sealed class CharonPlugin : IDalamudPlugin
         _windowSystem.RemoveAllWindows();
 
         _pillionIpc.OnAssignmentReceived -= OnPillionAssignmentReceived;
+        _teleportOffer.Dispose();
         _inviteInterop.Dispose();
         _pillionIpc.Dispose();
         _daedalusIpc.Dispose();
@@ -155,17 +199,117 @@ public sealed class CharonPlugin : IDalamudPlugin
         _inviteManager.UpdateConfig(AutoAcceptConfig.From(_config));
 
         _daedalusIpc.Refresh(now);
-        UpdatePillionSession(now);
-        UpdatePassengerBoarding(now);
-        _inviteInterop.Poll(now);
 
+        // The pillion paths do full object-table scans with name resolution — far too heavy for
+        // every frame with 8 clients running. 4 Hz is plenty for mount/seat state.
+        if (now - _lastPillionTickUtc >= PillionTickInterval)
+        {
+            _lastPillionTickUtc = now;
+            _cachedLocalMount = _mountReader.ReadLocalMount();
+            UpdatePillionSession(now);
+            UpdatePassengerBoarding(now);
+        }
+
+        _inviteInterop.Poll(now);
+        _teleportOffer.Update(now);
+        UpdateFollowTeleport(now);
         _pillionManager.Update(now);
         _inviteManager.Update(now);
     }
 
+    /// <summary>
+    /// Follow-teleport: when a TRUSTED party member who was in our zone changes territory,
+    /// teleport to an unlocked aetheryte in their new zone after a short randomized delay.
+    /// Party-only by construction (we watch the party list), scans at 1 Hz.
+    /// </summary>
+    private void UpdateFollowTeleport(DateTime now)
+    {
+        if (!_config.FollowTeleportEnabled)
+        {
+            _partyTerritories.Clear();
+            _pendingTeleportAtUtc = null;
+            _followStatus = "disabled";
+            return;
+        }
+
+        // Execute a scheduled follow (checked every frame — cheap).
+        if (_pendingTeleportAtUtc != null && now >= _pendingTeleportAtUtc)
+        {
+            _pendingTeleportAtUtc = null;
+            var ok = TeleportHelper.TryTeleport(_pendingAetheryteId, _pendingAetheryteSubIndex);
+            _followStatus = ok ? "teleport cast" : "teleport FAILED (combat/unavailable?)";
+            _log.Info("Follow teleport: {0} (aetheryte {1})", _followStatus, _pendingAetheryteId);
+        }
+
+        if (now - _lastFollowScanUtc < TimeSpan.FromSeconds(1))
+            return;
+        _lastFollowScanUtc = now;
+
+        var local = _objectTable.LocalPlayer;
+        var localName = local?.Name.TextValue ?? string.Empty;
+        if (local == null || _partyList.Length == 0)
+        {
+            _partyTerritories.Clear();
+            _followStatus = "no party";
+            return;
+        }
+
+        var localTerritory = _clientState.TerritoryType;
+        var trusted = BuildTrustedNames(localName);
+
+        foreach (var member in _partyList)
+        {
+            var name = member.Name.TextValue;
+            if (name.Length == 0 || name.Equals(localName, StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            var territory = member.Territory.RowId;
+            var previous = _partyTerritories.GetValueOrDefault(name);
+            _partyTerritories[name] = territory;
+
+            // Follow only a trusted member who just LEFT OUR zone for another one.
+            // Stand down when we just accepted a native teleport offer — we're already going.
+            if (previous == 0
+                || territory == previous
+                || previous != localTerritory
+                || territory == localTerritory
+                || !trusted.Contains(name)
+                || _pendingTeleportAtUtc != null
+                || now - _teleportOffer.LastAcceptUtc < TimeSpan.FromSeconds(15))
+                continue;
+
+            var aetheryte = FindUnlockedAetheryteIn(territory);
+            if (aetheryte == null)
+            {
+                _followStatus = $"{name} zoned — no unlocked aetheryte there";
+                continue;
+            }
+
+            // Small random stagger so 7 toons don't all start casting on the same server tick.
+            var delay = TimeSpan.FromSeconds(0.8 + _followJitter.NextDouble() * 1.7);
+            _pendingAetheryteId = aetheryte.Value.Id;
+            _pendingAetheryteSubIndex = aetheryte.Value.SubIndex;
+            _pendingTeleportAtUtc = now + delay;
+            _followStatus = $"following {name} in {delay.TotalSeconds:F1}s";
+            _log.Info("Follow teleport: {0} zoned to territory {1} — teleporting in {2:F1}s",
+                name, territory, delay.TotalSeconds);
+        }
+    }
+
+    private (uint Id, byte SubIndex)? FindUnlockedAetheryteIn(uint territoryId)
+    {
+        foreach (var entry in _aetheryteList)
+        {
+            if (entry.TerritoryId == territoryId)
+                return (entry.AetheryteId, entry.SubIndex);
+        }
+
+        return null;
+    }
+
     private void UpdatePillionSession(DateTime now)
     {
-        var snapshot = _mountReader.ReadLocalMount();
+        var snapshot = _cachedLocalMount;
 
         if (snapshot == null || snapshot.PassengerSeats < 1)
         {
@@ -235,10 +379,10 @@ public sealed class CharonPlugin : IDalamudPlugin
         }
     }
 
-    /// <summary>Live raw seat view for the debug section: (seat, entity id, resolved name).</summary>
+    /// <summary>Live raw seat view for the debug section — reads the tick-cached snapshot, never rescans.</summary>
     private IReadOnlyList<(int Seat, uint EntityId, string Name)> ReadRawSeatOccupancy()
     {
-        var snapshot = _mountReader.ReadLocalMount();
+        var snapshot = _cachedLocalMount;
         if (snapshot == null)
             return Array.Empty<(int, uint, string)>();
 
@@ -281,7 +425,7 @@ public sealed class CharonPlugin : IDalamudPlugin
             return;
         }
 
-        if (_mountReader.ReadLocalMount() != null)
+        if (_cachedLocalMount != null)
         {
             ResetBoarding("mounted (own mount)");
             return;
@@ -302,8 +446,14 @@ public sealed class CharonPlugin : IDalamudPlugin
         {
             if (obj is not Dalamud.Game.ClientState.Objects.SubKinds.IPlayerCharacter pc
                 || pc.EntityId == local.EntityId
-                || !trusted.Contains(pc.Name.TextValue)
-                || System.Numerics.Vector3.Distance(local.Position, pc.Position) > 30f)
+                || System.Numerics.Vector3.Distance(local.Position, pc.Position) > 30f
+                || !trusted.Contains(pc.Name.TextValue))
+                continue;
+
+            // Riders carry the mount id too — only the actual owner (mounted, NOT riding
+            // pillion) can be boarded. Without this, once several riders are aboard the scan
+            // could return a rider and RidePillion on a rider is a silent no-op.
+            if (_mountReader.IsRidingPillion(pc))
                 continue;
 
             var snapshot = _mountReader.ReadMountOf(pc);
@@ -358,6 +508,14 @@ public sealed class CharonPlugin : IDalamudPlugin
             return;
         }
 
+        // The computed seat legitimately shifts as other riders board — a fresh target
+        // deserves a fresh attempt budget, otherwise late boarders give up on stale failures.
+        if (seat.Value != _lastAttemptedSeat)
+        {
+            _lastAttemptedSeat = seat.Value;
+            _boardingAttempts = 0;
+        }
+
         if (_boardingAttempts >= MaxBoardingAttempts)
         {
             _boardingStatus = $"owner {ownerName} — gave up after {MaxBoardingAttempts} attempts (seat {seat.Value})";
@@ -375,7 +533,7 @@ public sealed class CharonPlugin : IDalamudPlugin
         }
 
         // Too far to board — walk to the mount first (vnavmesh; skipped when unavailable).
-        var distance = System.Numerics.Vector3.Distance(local.Position, owner.Position);
+        var distance = HorizontalDistance(local.Position, owner.Position);
         if (distance > BoardingRangeYalms)
         {
             NavToOwner(owner.Position, distance, ownerName, now);
@@ -384,7 +542,7 @@ public sealed class CharonPlugin : IDalamudPlugin
 
         StopNavIfOurs();
 
-        if (now - _lastBoardingAttemptUtc < TimeSpan.FromSeconds(2.5))
+        if (now - _lastBoardingAttemptUtc < BoardingRetryInterval)
             return;
 
         _boardingAttempts++;
@@ -408,13 +566,16 @@ public sealed class CharonPlugin : IDalamudPlugin
             if (obj is not Dalamud.Game.ClientState.Objects.SubKinds.IPlayerCharacter pc)
                 continue;
 
+            // Cheap geometric/state filters first — name resolution (SeString parse) last.
+            if (System.Numerics.Vector3.Distance(ownerPosition, pc.Position) > 30f
+                || !_mountReader.CanBoard(pc))
+                continue;
+
             var name = pc.Name.TextValue;
             if (name.Length == 0
                 || name.Equals(ownerName, StringComparison.OrdinalIgnoreCase)
                 || !trusted.Contains(name)
-                || !IsInMyParty(name) // only party members can ride pillion
-                || System.Numerics.Vector3.Distance(ownerPosition, pc.Position) > 30f
-                || !_mountReader.CanBoard(pc))
+                || !IsInMyParty(name)) // only party members can ride pillion
                 continue;
 
             present.Add(name);
@@ -490,6 +651,14 @@ public sealed class CharonPlugin : IDalamudPlugin
         _boardingStatus = $"owner {ownerName} — walking to mount ({distance:F1}y)";
     }
 
+    /// <summary>XZ-plane distance — the owner sits meters above ground on tall mounts.</summary>
+    private static float HorizontalDistance(System.Numerics.Vector3 a, System.Numerics.Vector3 b)
+    {
+        var dx = a.X - b.X;
+        var dz = a.Z - b.Z;
+        return MathF.Sqrt(dx * dx + dz * dz);
+    }
+
     private void StopNavIfOurs()
     {
         if (!_navIssuedByUs)
@@ -504,6 +673,7 @@ public sealed class CharonPlugin : IDalamudPlugin
     {
         _boardingOwnerEntityId = 0;
         _boardingAttempts = 0;
+        _lastAttemptedSeat = 0;
         _boardingStatus = status;
         StopNavIfOurs();
     }

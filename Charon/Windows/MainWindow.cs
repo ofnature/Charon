@@ -23,6 +23,7 @@ public sealed class MainWindow : Window
     private readonly GroupInviteManager _inviteManager;
     private readonly Func<IReadOnlyList<(int Seat, uint EntityId, string Name)>> _rawSeatOccupancy;
     private readonly Func<string> _boardingStatus;
+    private readonly Func<string> _followStatus;
 
     private string _addName = string.Empty;
     private string _addWorld = string.Empty;
@@ -46,7 +47,8 @@ public sealed class MainWindow : Window
         PillionManager pillion,
         GroupInviteManager inviteManager,
         Func<IReadOnlyList<(int Seat, uint EntityId, string Name)>> rawSeatOccupancy,
-        Func<string> boardingStatus)
+        Func<string> boardingStatus,
+        Func<string> followStatus)
         : base("Charon##CharonMain", ImGuiWindowFlags.AlwaysAutoResize)
     {
         _config = config;
@@ -57,6 +59,7 @@ public sealed class MainWindow : Window
         _inviteManager = inviteManager;
         _rawSeatOccupancy = rawSeatOccupancy;
         _boardingStatus = boardingStatus;
+        _followStatus = followStatus;
     }
 
     public override void Draw()
@@ -65,6 +68,8 @@ public sealed class MainWindow : Window
         try
         {
             DrawAutoPillionSection();
+            ImGui.Spacing();
+            DrawFollowTeleportSection();
             ImGui.Spacing();
             DrawAutoAcceptSection();
             ImGui.Spacing();
@@ -127,6 +132,21 @@ public sealed class MainWindow : Window
         {
             ImGui.TextColored(CharonTheme.TextDisabled, "No multi-passenger mount active");
         }
+    }
+
+    private void DrawFollowTeleportSection()
+    {
+        DrawSectionTitle("■ Follow Teleport", _config.FollowTeleportEnabled);
+
+        var enabled = _config.FollowTeleportEnabled;
+        if (ImGui.Checkbox("Enabled##follow", ref enabled))
+        {
+            _config.FollowTeleportEnabled = enabled;
+            _save();
+        }
+        CharonTheme.HelpMarker("When a trusted party member teleports to another zone, follow them\n"
+                               + "to an unlocked aetheryte there (small random delay per toon).\n"
+                               + "Same group only. Normal teleport gil costs apply.");
     }
 
     private void DrawAutoAcceptSection()
@@ -288,6 +308,7 @@ public sealed class MainWindow : Window
         ImGui.TextColored(CharonTheme.TextSecondary,
             $"Daedalus IPC: {(_roster.IsAvailable ? "connected" : "unavailable — manual whitelist only")}");
         ImGui.TextColored(CharonTheme.TextSecondary, $"Boarding: {ScrambleIn(_boardingStatus())}");
+        ImGui.TextColored(CharonTheme.TextSecondary, $"Follow: {ScrambleIn(_followStatus())}");
         if (_inviteManager.AcceptPending)
             ImGui.TextColored(CharonTheme.StatusYellow, "Invite accept pending (delay running)");
 
