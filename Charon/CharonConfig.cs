@@ -61,6 +61,13 @@ public sealed class CharonConfig : IPluginConfiguration
 
     public List<WhitelistEntry> ManualWhitelist { get; set; } = new();
 
+    // FC Chest
+    /// <summary>Chest page (1–5) the entrust/withdraw operations target; remembered across sessions.</summary>
+    public int LastSelectedChestPage { get; set; } = 1;
+
+    /// <summary>Keep the FC chest operation log expanded.</summary>
+    public bool ShowFCChestLog { get; set; } = false;
+
     // Window state
     public bool MainWindowVisible { get; set; } = true;
     public bool DebugSectionOpen { get; set; } = false;

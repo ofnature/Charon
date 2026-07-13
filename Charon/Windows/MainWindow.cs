@@ -9,6 +9,7 @@ using Charon.Features.AutoPillion;
 using Charon.Features.GroupManagement;
 using Charon.Features.HealWatch;
 using Charon.Services;
+using Charon.Services.Game;
 
 namespace Charon.Windows;
 
@@ -26,6 +27,7 @@ public sealed class MainWindow : Window
         AutoPillion,
         HealWatch,
         GroupMgmt,
+        FcChest,
         TrustedList,
         Debug,
     }
@@ -41,6 +43,8 @@ public sealed class MainWindow : Window
     private readonly GroupInviteManager _inviteManager;
     private readonly HealWatchManager _healWatch;
     private readonly InviteManager _groupInvites;
+    private readonly FcChestManager _fcChest;
+    private int _pendingChestOperation; // 0 = none, 1 = entrust, 2 = withdraw (confirm modal)
     private readonly Func<IReadOnlyList<(int Seat, uint EntityId, string Name)>> _rawSeatOccupancy;
     private readonly Func<string> _boardingStatus;
     private readonly Func<string> _followStatus;
@@ -81,6 +85,7 @@ public sealed class MainWindow : Window
         GroupInviteManager inviteManager,
         HealWatchManager healWatch,
         InviteManager groupInvites,
+        FcChestManager fcChest,
         Func<IReadOnlyList<(int Seat, uint EntityId, string Name)>> rawSeatOccupancy,
         Func<string> boardingStatus,
         Func<string> followStatus,
@@ -98,6 +103,7 @@ public sealed class MainWindow : Window
         _inviteManager = inviteManager;
         _healWatch = healWatch;
         _groupInvites = groupInvites;
+        _fcChest = fcChest;
         _rawSeatOccupancy = rawSeatOccupancy;
         _boardingStatus = boardingStatus;
         _followStatus = followStatus;
@@ -145,6 +151,7 @@ public sealed class MainWindow : Window
 
         DrawCategoryHeader("FLEET");
         DrawNavItem("Group Mgmt", Section.GroupMgmt, null);
+        DrawNavItem("FC Chest", Section.FcChest, null);
         DrawNavItem("Trusted List", Section.TrustedList, null);
         ImGui.Spacing();
 
@@ -207,6 +214,7 @@ public sealed class MainWindow : Window
             case Section.AutoPillion: DrawAutoPillionSection(); break;
             case Section.HealWatch: DrawHealWatchSection(); break;
             case Section.GroupMgmt: DrawGroupSection(); break;
+            case Section.FcChest: DrawFcChestSection(); break;
             case Section.TrustedList: DrawTrustedSection(); break;
             case Section.Debug: DrawDebugSection(); break;
         }
@@ -583,6 +591,108 @@ public sealed class MainWindow : Window
             {
                 ImGui.TextColored(entry.Success ? CharonTheme.TextDisabled : CharonTheme.StatusRed,
                     $"{entry.TimeUtc:HH:mm:ss}  {ScrambleIn(entry.Detail)}");
+            }
+        }
+    }
+
+    // --- FC Chest Management ---
+
+    private void DrawFcChestSection()
+    {
+        DrawPageHeader("FC Chest Management");
+
+        var page = Math.Clamp(_config.LastSelectedChestPage, 1, 5);
+        ImGui.SetNextItemWidth(120f);
+        if (ImGui.BeginCombo("Chest Page", $"Page {page}"))
+        {
+            for (var i = 1; i <= 5; i++)
+            {
+                if (ImGui.Selectable($"Page {i}", i == page))
+                {
+                    _config.LastSelectedChestPage = i;
+                    _save();
+                }
+            }
+            ImGui.EndCombo();
+        }
+
+        var chestOpen = _fcChest.IsChestOpen();
+        var pageLoaded = chestOpen && _fcChest.IsPageLoaded(page);
+        var canOperate = Charon.Features.FcChest.FcChestPlanner.CanExecute(chestOpen, pageLoaded)
+                         && !_fcChest.Busy;
+
+        ImGui.Spacing();
+        if (!canOperate) ImGui.BeginDisabled();
+        if (ImGui.Button("Entrust Duplicates") && canOperate)
+        {
+            _pendingChestOperation = 1;
+            ImGui.OpenPopup("fcChestConfirm");
+        }
+        ImGui.SameLine();
+        if (ImGui.Button("Withdraw All But 1") && canOperate)
+        {
+            _pendingChestOperation = 2;
+            ImGui.OpenPopup("fcChestConfirm");
+        }
+        if (!canOperate) ImGui.EndDisabled();
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip(!chestOpen
+                ? "Must be near the FC chest — open the chest window first"
+                : !pageLoaded
+                    ? $"View the Page {page} tab in the chest once so its contents load"
+                    : _fcChest.Busy ? "Operation in progress" : "Withdraw every stack except the last of each item");
+
+        // Confirm modal — the moves are irreversible.
+        if (ImGui.BeginPopupModal("fcChestConfirm", ImGuiWindowFlags.AlwaysAutoResize))
+        {
+            var verb = _pendingChestOperation == 1 ? "Entrust duplicate stacks to" : "Withdraw all but one stack from";
+            ImGui.TextUnformatted($"{verb} Page {page}?");
+            ImGui.TextColored(CharonTheme.TextSecondary, "Whole stacks are moved — this cannot be undone.");
+            ImGui.Spacing();
+
+            if (ImGui.Button("Confirm", new Vector2(120, 0)))
+            {
+                var queued = _pendingChestOperation == 1 ? _fcChest.StartEntrust(page) : _fcChest.StartWithdraw(page);
+                _pendingChestOperation = 0;
+                _ = queued;
+                ImGui.CloseCurrentPopup();
+            }
+            ImGui.SameLine();
+            if (ImGui.Button("Cancel", new Vector2(120, 0)))
+            {
+                _pendingChestOperation = 0;
+                ImGui.CloseCurrentPopup();
+            }
+            ImGui.EndPopup();
+        }
+
+        ImGui.Spacing();
+        ImGui.TextColored(CharonTheme.TextSecondary, $"Status: {_fcChest.Status}");
+        if (_fcChest.LastOperation.Length > 0)
+            ImGui.TextColored(CharonTheme.TextSecondary, $"Last operation: {_fcChest.LastOperation}");
+
+        if (_fcChest.OperationLog.Count > 0)
+        {
+            // Expands automatically right after an operation; the config toggle pins it open.
+            if (_fcChest.OperationJustFinished)
+            {
+                ImGui.SetNextItemOpen(true);
+                _fcChest.OperationJustFinished = false;
+            }
+            else if (_config.ShowFCChestLog)
+            {
+                ImGui.SetNextItemOpen(true, ImGuiCond.Once);
+            }
+
+            if (ImGui.TreeNode($"Items ({_fcChest.OperationLog.Count})##fcChestLog"))
+            {
+                foreach (var entry in _fcChest.OperationLog)
+                {
+                    var failed = entry.Verb.StartsWith("FAILED", StringComparison.Ordinal);
+                    ImGui.TextColored(failed ? CharonTheme.StatusRed : CharonTheme.TextDisabled,
+                        $"{entry.Name}  ×{entry.Quantity} → {entry.Verb}");
+                }
+                ImGui.TreePop();
             }
         }
     }

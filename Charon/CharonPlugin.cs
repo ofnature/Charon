@@ -43,6 +43,7 @@ public sealed class CharonPlugin : IDalamudPlugin
     private readonly HealWatchManager _healWatch;
     private readonly HealExecutor _healExecutor;
     private readonly InviteManager _groupInvites;
+    private readonly FcChestManager _fcChest;
 
     // Heal Watch runs at 1 Hz; status surfaced in the window.
     private DateTime _lastHealScanUtc = DateTime.MinValue;
@@ -142,6 +143,7 @@ public sealed class CharonPlugin : IDalamudPlugin
                 return (ok, detail);
             },
             log: message => _log.Debug("[GroupMgmt] {0}", message));
+        _fcChest = new FcChestManager(gameGui, dataManager, log);
         _teleportOffer = new TeleportOfferInterop(
             addonLifecycle,
             gameGui,
@@ -163,7 +165,7 @@ public sealed class CharonPlugin : IDalamudPlugin
         _inviteInterop = new GroupInviteInterop(dataManager, _inviteManager, log);
 
         _mainWindow = new MainWindow(_config, SaveConfig, _whitelist, _daedalusIpc, _pillionManager, _inviteManager,
-            _healWatch, _groupInvites, ReadRawSeatOccupancy, () => _boardingStatus,
+            _healWatch, _groupInvites, _fcChest, ReadRawSeatOccupancy, () => _boardingStatus,
             () => $"{_followStatus} · offer: {_teleportOffer.Status}",
             () => _healStatus,
             () => _partyList.Length,
@@ -241,6 +243,7 @@ public sealed class CharonPlugin : IDalamudPlugin
         UpdateFollowTeleport(now);
         UpdateHealWatch(now);
         _groupInvites.Update(now);
+        _fcChest.Update(now);
         _pillionManager.Update(now);
         _inviteManager.Update(now);
     }

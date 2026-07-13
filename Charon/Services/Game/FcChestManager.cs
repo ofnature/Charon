@@ -1,0 +1,293 @@
+using System;
+using System.Collections.Generic;
+using Dalamud.Plugin.Services;
+using Charon.Features.FcChest;
+using FFXIVClientStructs.FFXIV.Client.Game;
+using Lumina.Excel.Sheets;
+
+namespace Charon.Services.Game;
+
+/// <summary>One executed chest move, for the section's log.</summary>
+public sealed record ChestLogEntry(string Name, int Quantity, string Verb);
+
+/// <summary>
+/// FC chest entrust/withdraw execution for ONE page at a time. Thin unsafe adapter around
+/// InventoryManager; planning is <see cref="FcChestPlanner"/> (pure). Manual trigger only.
+///
+/// Gates: the FC chest window must be OPEN (that is the game's transfer session — proximity
+/// alone is not enough, and you cannot open it without being at the chest), and the selected
+/// page's container must be loaded (a page loads when its tab is first viewed).
+/// Moves are paced one per 250ms tick to stay server-friendly; each move re-checks the gate
+/// so closing the chest mid-run aborts cleanly.
+/// </summary>
+public sealed unsafe class FcChestManager
+{
+    private const string ChestAddonName = "FreeCompanyChest";
+    private static readonly TimeSpan MovePacing = TimeSpan.FromMilliseconds(250);
+
+    private static readonly InventoryType[] PlayerBags =
+    [
+        InventoryType.Inventory1, InventoryType.Inventory2,
+        InventoryType.Inventory3, InventoryType.Inventory4,
+    ];
+
+    private readonly IGameGui _gameGui;
+    private readonly IDataManager _dataManager;
+    private readonly IPluginLog _log;
+
+    private readonly Queue<ChestMove> _pending = new();
+    private readonly List<ChestLogEntry> _operationLog = new();
+    private InventoryType _moveDestination;
+    private InventoryType _activePage;
+    private bool _withdrawing;
+    private DateTime _lastMoveUtc = DateTime.MinValue;
+
+    public FcChestManager(IGameGui gameGui, IDataManager dataManager, IPluginLog log)
+    {
+        _gameGui = gameGui;
+        _dataManager = dataManager;
+        _log = log;
+    }
+
+    public string Status { get; private set; } = "idle";
+
+    /// <summary>Summary of the last completed operation ("Entrusted 12 stacks to Page 1").</summary>
+    public string LastOperation { get; private set; } = "";
+
+    /// <summary>Per-item results of the last operation, newest run only.</summary>
+    public IReadOnlyList<ChestLogEntry> OperationLog => _operationLog;
+
+    public bool Busy => _pending.Count > 0;
+
+    /// <summary>True when an operation just finished (UI expands the log once, then clears this).</summary>
+    public bool OperationJustFinished { get; set; }
+
+    /// <summary>The transfer gate: FC chest window open (implies proximity) — buttons disable on this.</summary>
+    public bool IsChestOpen()
+    {
+        try
+        {
+            var addon = _gameGui.GetAddonByName(ChestAddonName);
+            return !addon.IsNull && addon.IsVisible;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    /// <summary>True when the page's container data has arrived (its tab was viewed this session).</summary>
+    public bool IsPageLoaded(int page)
+    {
+        try
+        {
+            var container = InventoryManager.Instance()->GetInventoryContainer(PageType(page));
+            return container != null && container->IsLoaded;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    /// <summary>Entrust inventory stacks of items already seeded on the page. Returns moves queued.</summary>
+    public int StartEntrust(int page)
+    {
+        if (Busy || !FcChestPlanner.CanExecute(IsChestOpen(), IsPageLoaded(page)))
+            return 0;
+
+        var moves = FcChestPlanner.PlanEntrust(ReadBags(), ReadPage(page));
+        BeginOperation(moves, PageType(page), withdrawing: false, page);
+        return moves.Count;
+    }
+
+    /// <summary>Withdraw all but the last stack of each item on the page. Returns moves queued.</summary>
+    public int StartWithdraw(int page)
+    {
+        if (Busy || !FcChestPlanner.CanExecute(IsChestOpen(), IsPageLoaded(page)))
+            return 0;
+
+        var moves = FcChestPlanner.PlanWithdraw(ReadPage(page));
+        BeginOperation(moves, PageType(page), withdrawing: true, page);
+        return moves.Count;
+    }
+
+    /// <summary>Drain one pending move per pacing interval. Call every framework tick.</summary>
+    public void Update(DateTime nowUtc)
+    {
+        if (_pending.Count == 0)
+            return;
+
+        if (nowUtc - _lastMoveUtc < MovePacing)
+            return;
+        _lastMoveUtc = nowUtc;
+
+        // Closing the chest mid-run kills the transfer session — abort instead of spamming errors.
+        if (!IsChestOpen())
+        {
+            _pending.Clear();
+            Status = "aborted — chest closed";
+            OperationJustFinished = true;
+            return;
+        }
+
+        var move = _pending.Dequeue();
+        var verb = _withdrawing ? "withdrawn" : "entrusted";
+
+        try
+        {
+            var destinationSlot = FindFreeSlot(_withdrawing ? PlayerBags : [_moveDestination], out var destinationType);
+            if (destinationSlot < 0)
+            {
+                _pending.Clear();
+                Status = _withdrawing ? "aborted — inventory full" : "aborted — chest page full";
+                OperationJustFinished = true;
+                return;
+            }
+
+            var result = InventoryManager.Instance()->MoveItemSlot(
+                (InventoryType)move.SrcContainer, (ushort)move.SrcSlot,
+                destinationType, (ushort)destinationSlot, true);
+
+            _operationLog.Add(new ChestLogEntry(move.Name, move.Quantity, result == 0 ? verb : $"FAILED ({result})"));
+            _log.Debug("FC chest: {0} ×{1} → {2} (code {3})", move.Name, move.Quantity, verb, result);
+        }
+        catch (Exception ex)
+        {
+            _log.Warning(ex, "FC chest move failed ({0})", move.Name);
+            _operationLog.Add(new ChestLogEntry(move.Name, move.Quantity, "FAILED"));
+        }
+
+        if (_pending.Count == 0)
+        {
+            LastOperation = $"{(_withdrawing ? "Withdrew" : "Entrusted")} {_operationLog.Count} stacks "
+                            + $"{(_withdrawing ? "from" : "to")} Page {PageNumber(_activePage)}";
+            Status = "idle";
+            OperationJustFinished = true;
+        }
+        else
+        {
+            Status = $"{verb[..1].ToUpperInvariant()}{verb[1..]} {_operationLog.Count}/{_operationLog.Count + _pending.Count}…";
+        }
+    }
+
+    private void BeginOperation(List<ChestMove> moves, InventoryType page, bool withdrawing, int pageNumber)
+    {
+        _operationLog.Clear();
+        _withdrawing = withdrawing;
+        _activePage = page;
+        _moveDestination = withdrawing ? InventoryType.Inventory1 : page; // withdraw picks bags per-move
+        foreach (var move in moves)
+            _pending.Enqueue(move);
+
+        Status = moves.Count == 0 ? "nothing to do" : $"queued {moves.Count} moves";
+        if (moves.Count == 0)
+        {
+            LastOperation = $"{(withdrawing ? "Withdraw" : "Entrust")}: nothing eligible on Page {pageNumber}";
+            OperationJustFinished = true;
+        }
+    }
+
+    private List<ItemStack> ReadBags()
+    {
+        var stacks = new List<ItemStack>();
+        foreach (var bag in PlayerBags)
+            ReadContainer(bag, stacks);
+        return stacks;
+    }
+
+    private List<ItemStack> ReadPage(int page)
+    {
+        var stacks = new List<ItemStack>();
+        ReadContainer(PageType(page), stacks);
+        return stacks;
+    }
+
+    private void ReadContainer(InventoryType type, List<ItemStack> into)
+    {
+        try
+        {
+            var container = InventoryManager.Instance()->GetInventoryContainer(type);
+            if (container == null || !container->IsLoaded)
+                return;
+
+            for (var i = 0; i < container->Size; i++)
+            {
+                var item = container->GetInventorySlot(i);
+                if (item == null || item->ItemId == 0 || item->Quantity <= 0)
+                    continue;
+
+                into.Add(new ItemStack(item->ItemId, ResolveItemName(item->ItemId), item->Quantity,
+                    (int)type, (short)i));
+            }
+        }
+        catch
+        {
+            // container unreadable mid-transition — treat as empty (planner then does nothing)
+        }
+    }
+
+    private int FindFreeSlot(InventoryType[] candidates, out InventoryType type)
+    {
+        foreach (var candidate in candidates)
+        {
+            try
+            {
+                var container = InventoryManager.Instance()->GetInventoryContainer(candidate);
+                if (container == null || !container->IsLoaded)
+                    continue;
+
+                for (var i = 0; i < container->Size; i++)
+                {
+                    var item = container->GetInventorySlot(i);
+                    if (item != null && item->ItemId == 0)
+                    {
+                        type = candidate;
+                        return i;
+                    }
+                }
+            }
+            catch
+            {
+                // skip unreadable container
+            }
+        }
+
+        type = InventoryType.Inventory1;
+        return -1;
+    }
+
+    private string ResolveItemName(uint itemId)
+    {
+        try
+        {
+            var sheet = _dataManager.GetExcelSheet<Item>();
+            if (sheet != null && sheet.TryGetRow(itemId, out var row))
+                return row.Name.ExtractText();
+        }
+        catch
+        {
+            // fall through
+        }
+
+        return $"item {itemId}";
+    }
+
+    private static InventoryType PageType(int page) => page switch
+    {
+        2 => InventoryType.FreeCompanyPage2,
+        3 => InventoryType.FreeCompanyPage3,
+        4 => InventoryType.FreeCompanyPage4,
+        5 => InventoryType.FreeCompanyPage5,
+        _ => InventoryType.FreeCompanyPage1,
+    };
+
+    private static int PageNumber(InventoryType type) => type switch
+    {
+        InventoryType.FreeCompanyPage2 => 2,
+        InventoryType.FreeCompanyPage3 => 3,
+        InventoryType.FreeCompanyPage4 => 4,
+        InventoryType.FreeCompanyPage5 => 5,
+        _ => 1,
+    };
+}
