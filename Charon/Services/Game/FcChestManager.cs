@@ -61,8 +61,24 @@ public sealed unsafe class FcChestManager
     /// </summary>
     private sealed record SplitOp(int Page, uint ItemId, short KeepSlot, int OriginalQuantity);
 
+    private enum SplitPhase
+    {
+        /// <summary>Call SplitItem — on the FC chest this OPENS the quantity dialog, it does not split.</summary>
+        Submit,
+
+        /// <summary>Wait for the "Select quantity to remove" dialog and confirm it with our quantity.</summary>
+        AwaitDialog,
+
+        /// <summary>Wait for the seed slot to read exactly 1 unit.</summary>
+        Verify,
+    }
+
+    /// <summary>The game's numeric-quantity dialog (opened by SplitItem on FC chest containers).</summary>
+    private const string QuantityDialogAddon = "InputNumeric";
+
     private SplitOp? _split;
-    private bool _splitSubmitted;
+    private SplitPhase _splitPhase;
+    private DateTime _splitDeadlineUtc;
 
     // Contents cache for the UI table — re-reading containers every draw is wasteful.
     private List<ChestContentRow>? _contentsCache;
@@ -133,7 +149,7 @@ public sealed unsafe class FcChestManager
         {
             // Split first; the withdraw moves are planned once the split lands.
             _split = new SplitOp(page, itemId, seed.Slot, seed.Quantity);
-            _splitSubmitted = false;
+            _splitPhase = SplitPhase.Submit;
             Status = "splitting seed stack…";
             return stacks.Count;
         }
@@ -241,50 +257,110 @@ public sealed unsafe class FcChestManager
         SubmitNextMove();
     }
 
-    /// <summary>Submit the seed split, then (next tick) verify it left 1 unit and plan the withdrawals.</summary>
+    /// <summary>
+    /// Seed-split state machine. On FC chest containers SplitItem does not split silently —
+    /// it opens the "Select quantity to remove" dialog (verified in testing), so the flow is:
+    /// submit → confirm the quantity dialog with our amount → verify the seed slot reads 1.
+    /// </summary>
     private void DriveSplit()
     {
         var split = _split!;
 
-        if (!_splitSubmitted)
+        switch (_splitPhase)
         {
-            try
-            {
-                var code = InventoryManager.Instance()->SplitItem(PageType(split.Page), (ushort)split.KeepSlot,
-                    split.OriginalQuantity - 1);
-                _log.Debug("FC chest: split {0} at slot {1} (code {2})", split.ItemId, split.KeepSlot, code);
-                _splitSubmitted = true;
-            }
-            catch (Exception ex)
-            {
-                _log.Warning(ex, "FC chest split threw");
-                _split = null;
-                Status = "aborted — split failed";
-                OperationJustFinished = true;
-            }
-            return;
-        }
+            case SplitPhase.Submit:
+                try
+                {
+                    var code = InventoryManager.Instance()->SplitItem(PageType(split.Page), (ushort)split.KeepSlot,
+                        split.OriginalQuantity - 1);
+                    _log.Debug("FC chest: split requested for {0} at slot {1} (code {2})",
+                        split.ItemId, split.KeepSlot, code);
+                    _splitPhase = SplitPhase.AwaitDialog;
+                    _splitDeadlineUtc = DateTime.UtcNow + TimeSpan.FromSeconds(3);
+                    Status = "waiting for quantity dialog…";
+                }
+                catch (Exception ex)
+                {
+                    _log.Warning(ex, "FC chest split threw");
+                    AbortSplit("aborted — split failed");
+                }
+                return;
 
-        // Verify: the seed slot should hold exactly 1 unit now.
+            case SplitPhase.AwaitDialog:
+                if (TryConfirmQuantityDialog(split.OriginalQuantity - 1))
+                {
+                    _splitPhase = SplitPhase.Verify;
+                    _splitDeadlineUtc = DateTime.UtcNow + TimeSpan.FromSeconds(2);
+                    Status = "confirming split…";
+                    return;
+                }
+
+                if (SeedHoldsOne(split))
+                {
+                    CompleteSplit(split); // some contexts split silently — take the win
+                    return;
+                }
+
+                if (DateTime.UtcNow > _splitDeadlineUtc)
+                    AbortSplit("aborted — quantity dialog never appeared");
+                return;
+
+            case SplitPhase.Verify:
+                if (SeedHoldsOne(split))
+                {
+                    CompleteSplit(split);
+                    return;
+                }
+
+                if (DateTime.UtcNow > _splitDeadlineUtc)
+                    AbortSplit("aborted — split did not land (page full?)");
+                return;
+        }
+    }
+
+    /// <summary>Fill + OK the numeric dialog by firing its callback with the quantity.</summary>
+    private bool TryConfirmQuantityDialog(int quantity)
+    {
+        try
+        {
+            var addon = _gameGui.GetAddonByName(QuantityDialogAddon);
+            if (addon.IsNull || !addon.IsVisible)
+                return false;
+
+            var unit = (FFXIVClientStructs.FFXIV.Component.GUI.AtkUnitBase*)addon.Address;
+            unit->FireCallbackInt(quantity);
+            _log.Debug("FC chest: quantity dialog confirmed with {0}", quantity);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            _log.Warning(ex, "FC chest quantity dialog confirm failed");
+            return false;
+        }
+    }
+
+    private bool SeedHoldsOne(SplitOp split) =>
+        ReadPage(split.Page).Any(s => s.ItemId == split.ItemId && s.Slot == split.KeepSlot && s.Quantity == 1);
+
+    private void CompleteSplit(SplitOp split)
+    {
         _split = null;
-        _splitSubmitted = false;
         _contentsCache = null;
 
         var stacks = ReadPage(split.Page).Where(s => s.ItemId == split.ItemId).ToList();
-        var seed = stacks.FirstOrDefault(s => s.Slot == split.KeepSlot);
-        if (seed == null || seed.Quantity != 1)
-        {
-            Status = "aborted — split did not land (page full?)";
-            OperationJustFinished = true;
-            return;
-        }
-
         foreach (var stack in stacks.Where(s => s.Slot != split.KeepSlot))
             _pending.Enqueue(new ChestMove(stack.ItemId, stack.Name, stack.Quantity, stack.Container, stack.Slot));
 
         Status = _pending.Count == 0 ? "idle" : $"queued {_pending.Count} moves";
         if (_pending.Count == 0)
             FinishOperation();
+    }
+
+    private void AbortSplit(string status)
+    {
+        _split = null;
+        Status = status;
+        OperationJustFinished = true;
     }
 
     private void SubmitNextMove()
