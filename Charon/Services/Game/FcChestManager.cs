@@ -53,32 +53,33 @@ public sealed unsafe class FcChestManager
     private int _succeeded;
 
     /// <summary>
-    /// Per-item withdraw is UNIT-accurate: the seed stack gets SPLIT so exactly 1 unit stays
-    /// (InventoryManager.SplitItem — the same thing the game's right-click Remove quantity
-    /// dialog does), then every other stack of the item is withdrawn. This record is the
-    /// pending split; the withdraw moves are planned AFTER it verifies, because the split's
-    /// new stack lands in an unpredictable free slot.
+    /// Unit-accurate withdraw is a ROUNDTRIP: SplitItem is a dead end on FC chest containers
+    /// (it neither splits nor opens the quantity dialog — verified in testing), so instead we
+    /// withdraw EVERY stack of the item, split 1 unit off in the player's own bags (where
+    /// SplitItem works normally), and move that single unit back to the page as the seed.
+    /// Every primitive in this flow is one that demonstrably works: chest↔bag MoveItemSlot
+    /// and an own-inventory split.
     /// </summary>
-    private sealed record SplitOp(int Page, uint ItemId, short KeepSlot, int OriginalQuantity);
+    private sealed record SeedReturnOp(int Page, uint ItemId, string Name);
 
-    private enum SplitPhase
+    private enum ReturnPhase
     {
-        /// <summary>Call SplitItem — on the FC chest this OPENS the quantity dialog, it does not split.</summary>
-        Submit,
+        /// <summary>Find (or split off) a 1-unit stack of the item in the bags.</summary>
+        EnsureUnitStack,
 
-        /// <summary>Wait for the "Select quantity to remove" dialog and confirm it with our quantity.</summary>
-        AwaitDialog,
+        /// <summary>Wait for the bag split to land.</summary>
+        VerifyUnitStack,
 
-        /// <summary>Wait for the seed slot to read exactly 1 unit.</summary>
-        Verify,
+        /// <summary>Move the 1-unit stack back to an empty slot on the page.</summary>
+        MoveBack,
+
+        /// <summary>Wait for the seed to show up on the page.</summary>
+        VerifyMoveBack,
     }
 
-    /// <summary>The game's numeric-quantity dialog (opened by SplitItem on FC chest containers).</summary>
-    private const string QuantityDialogAddon = "InputNumeric";
-
-    private SplitOp? _split;
-    private SplitPhase _splitPhase;
-    private DateTime _splitDeadlineUtc;
+    private SeedReturnOp? _seedReturn;
+    private ReturnPhase _returnPhase;
+    private DateTime _returnDeadlineUtc;
 
     // Contents cache for the UI table — re-reading containers every draw is wasteful.
     private List<ChestContentRow>? _contentsCache;
@@ -100,7 +101,7 @@ public sealed unsafe class FcChestManager
     /// <summary>Per-item results of the last operation, newest run only.</summary>
     public IReadOnlyList<ChestLogEntry> OperationLog => _operationLog;
 
-    public bool Busy => _pending.Count > 0 || _inFlight != null || _split != null;
+    public bool Busy => _pending.Count > 0 || _inFlight != null || _seedReturn != null;
 
     /// <summary>Aggregated contents of the page for the UI table (cached ~500ms). Empty when unloaded.</summary>
     public IReadOnlyList<ChestContentRow> GetPageContents(int page)
@@ -144,18 +145,12 @@ public sealed unsafe class FcChestManager
         _activePage = PageType(page);
         _moveDestination = InventoryType.Inventory1;
 
-        var seed = stacks[^1];
-        if (seed.Quantity > 1)
-        {
-            // Split first; the withdraw moves are planned once the split lands.
-            _split = new SplitOp(page, itemId, seed.Slot, seed.Quantity);
-            _splitPhase = SplitPhase.Submit;
-            Status = "splitting seed stack…";
-            return stacks.Count;
-        }
+        // Withdraw EVERYTHING, then return exactly 1 unit as the seed (see SeedReturnOp).
+        foreach (var stack in stacks)
+            _pending.Enqueue(new ChestMove(stack.ItemId, stack.Name, stack.Quantity, stack.Container, stack.Slot));
 
-        foreach (var move in FcChestPlanner.PlanWithdrawItem(stacks, itemId))
-            _pending.Enqueue(move);
+        _seedReturn = new SeedReturnOp(page, itemId, stacks[0].Name);
+        _returnPhase = ReturnPhase.EnsureUnitStack;
         Status = $"queued {_pending.Count} moves";
         return _pending.Count;
     }
@@ -221,7 +216,7 @@ public sealed unsafe class FcChestManager
     /// </summary>
     public void Update(DateTime nowUtc)
     {
-        if (_pending.Count == 0 && _inFlight == null && _split == null)
+        if (_pending.Count == 0 && _inFlight == null && _seedReturn == null)
             return;
 
         if (nowUtc - _lastMoveUtc < MovePacing)
@@ -233,15 +228,9 @@ public sealed unsafe class FcChestManager
         {
             _pending.Clear();
             _inFlight = null;
-            _split = null;
+            _seedReturn = null;
             Status = "aborted — chest closed";
             OperationJustFinished = true;
-            return;
-        }
-
-        if (_split != null)
-        {
-            DriveSplit();
             return;
         }
 
@@ -249,117 +238,135 @@ public sealed unsafe class FcChestManager
         {
             VerifyInFlight();
             _contentsCache = null; // the page just changed
-            if (_pending.Count == 0)
+            if (_pending.Count == 0 && _seedReturn == null)
                 FinishOperation();
             return;
         }
 
-        SubmitNextMove();
+        if (_pending.Count > 0)
+        {
+            SubmitNextMove();
+            return;
+        }
+
+        if (_seedReturn != null)
+            DriveSeedReturn();
     }
 
     /// <summary>
-    /// Seed-split state machine. On FC chest containers SplitItem does not split silently —
-    /// it opens the "Select quantity to remove" dialog (verified in testing), so the flow is:
-    /// submit → confirm the quantity dialog with our amount → verify the seed slot reads 1.
+    /// Seed-return state machine (runs after the withdraw queue drains): find or make a
+    /// 1-unit stack of the item in the bags (own-inventory SplitItem — silent, unlike the
+    /// FC chest containers), then move it back to an empty slot on the page as the seed.
     /// </summary>
-    private void DriveSplit()
+    private void DriveSeedReturn()
     {
-        var split = _split!;
+        var op = _seedReturn!;
 
-        switch (_splitPhase)
+        switch (_returnPhase)
         {
-            case SplitPhase.Submit:
+            case ReturnPhase.EnsureUnitStack:
+                var unit = FindBagUnitStack(op.ItemId);
+                if (unit != null)
+                {
+                    _returnPhase = ReturnPhase.MoveBack;
+                    return;
+                }
+
+                var donor = FindBagDonorStack(op.ItemId);
+                if (donor == null)
+                {
+                    AbortSeedReturn("aborted — item vanished from bags before seed return");
+                    return;
+                }
+
                 try
                 {
-                    var code = InventoryManager.Instance()->SplitItem(PageType(split.Page), (ushort)split.KeepSlot,
-                        split.OriginalQuantity - 1);
-                    _log.Debug("FC chest: split requested for {0} at slot {1} (code {2})",
-                        split.ItemId, split.KeepSlot, code);
-                    _splitPhase = SplitPhase.AwaitDialog;
-                    _splitDeadlineUtc = DateTime.UtcNow + TimeSpan.FromSeconds(3);
-                    Status = "waiting for quantity dialog…";
+                    var code = InventoryManager.Instance()->SplitItem(
+                        (InventoryType)donor.Container, (ushort)donor.Slot, 1);
+                    _log.Debug("FC chest: bag split 1 off {0} (code {1})", op.Name, code);
+                    _returnPhase = ReturnPhase.VerifyUnitStack;
+                    _returnDeadlineUtc = DateTime.UtcNow + TimeSpan.FromSeconds(2);
+                    Status = "splitting seed unit in bags…";
                 }
                 catch (Exception ex)
                 {
-                    _log.Warning(ex, "FC chest split threw");
-                    AbortSplit("aborted — split failed");
+                    _log.Warning(ex, "FC chest bag split threw");
+                    AbortSeedReturn("aborted — bag split failed");
                 }
                 return;
 
-            case SplitPhase.AwaitDialog:
-                if (TryConfirmQuantityDialog(split.OriginalQuantity - 1))
+            case ReturnPhase.VerifyUnitStack:
+                if (FindBagUnitStack(op.ItemId) != null)
                 {
-                    _splitPhase = SplitPhase.Verify;
-                    _splitDeadlineUtc = DateTime.UtcNow + TimeSpan.FromSeconds(2);
-                    Status = "confirming split…";
+                    _returnPhase = ReturnPhase.MoveBack;
                     return;
                 }
 
-                if (SeedHoldsOne(split))
-                {
-                    CompleteSplit(split); // some contexts split silently — take the win
-                    return;
-                }
-
-                if (DateTime.UtcNow > _splitDeadlineUtc)
-                    AbortSplit("aborted — quantity dialog never appeared");
+                if (DateTime.UtcNow > _returnDeadlineUtc)
+                    AbortSeedReturn("aborted — bag split did not land (bags full?)");
                 return;
 
-            case SplitPhase.Verify:
-                if (SeedHoldsOne(split))
+            case ReturnPhase.MoveBack:
+                var seedStack = FindBagUnitStack(op.ItemId);
+                if (seedStack == null)
                 {
-                    CompleteSplit(split);
+                    AbortSeedReturn("aborted — seed unit disappeared");
                     return;
                 }
 
-                if (DateTime.UtcNow > _splitDeadlineUtc)
-                    AbortSplit("aborted — split did not land (page full?)");
+                var chestSlot = FindFreeSlot([PageType(op.Page)], out var chestType);
+                if (chestSlot < 0)
+                {
+                    AbortSeedReturn("aborted — no free slot on the page for the seed");
+                    return;
+                }
+
+                try
+                {
+                    InventoryManager.Instance()->MoveItemSlot(
+                        (InventoryType)seedStack.Container, (ushort)seedStack.Slot,
+                        chestType, (ushort)chestSlot, true);
+                    _returnPhase = ReturnPhase.VerifyMoveBack;
+                    _returnDeadlineUtc = DateTime.UtcNow + TimeSpan.FromSeconds(2);
+                    Status = "returning seed to the chest…";
+                }
+                catch (Exception ex)
+                {
+                    _log.Warning(ex, "FC chest seed return threw");
+                    AbortSeedReturn("aborted — seed return failed");
+                }
+                return;
+
+            case ReturnPhase.VerifyMoveBack:
+                _contentsCache = null;
+                if (ReadPage(op.Page).Any(s => s.ItemId == op.ItemId && s.Quantity == 1))
+                {
+                    _operationLog.Add(new ChestLogEntry(op.Name, 1, "seed returned"));
+                    _seedReturn = null;
+                    FinishOperation();
+                    return;
+                }
+
+                if (DateTime.UtcNow > _returnDeadlineUtc)
+                    AbortSeedReturn("aborted — seed did not reach the page");
                 return;
         }
     }
 
-    /// <summary>Fill + OK the numeric dialog by firing its callback with the quantity.</summary>
-    private bool TryConfirmQuantityDialog(int quantity)
+    /// <summary>An exact 1-unit stack of the item in the bags (ready to become the seed).</summary>
+    private ItemStack? FindBagUnitStack(uint itemId) =>
+        ReadBags().FirstOrDefault(s => s.ItemId == itemId && s.Quantity == 1);
+
+    /// <summary>Any bag stack of the item with 2+ units we can split the seed off of.</summary>
+    private ItemStack? FindBagDonorStack(uint itemId) =>
+        ReadBags().FirstOrDefault(s => s.ItemId == itemId && s.Quantity >= 2);
+
+    private void AbortSeedReturn(string status)
     {
-        try
-        {
-            var addon = _gameGui.GetAddonByName(QuantityDialogAddon);
-            if (addon.IsNull || !addon.IsVisible)
-                return false;
-
-            var unit = (FFXIVClientStructs.FFXIV.Component.GUI.AtkUnitBase*)addon.Address;
-            unit->FireCallbackInt(quantity);
-            _log.Debug("FC chest: quantity dialog confirmed with {0}", quantity);
-            return true;
-        }
-        catch (Exception ex)
-        {
-            _log.Warning(ex, "FC chest quantity dialog confirm failed");
-            return false;
-        }
-    }
-
-    private bool SeedHoldsOne(SplitOp split) =>
-        ReadPage(split.Page).Any(s => s.ItemId == split.ItemId && s.Slot == split.KeepSlot && s.Quantity == 1);
-
-    private void CompleteSplit(SplitOp split)
-    {
-        _split = null;
-        _contentsCache = null;
-
-        var stacks = ReadPage(split.Page).Where(s => s.ItemId == split.ItemId).ToList();
-        foreach (var stack in stacks.Where(s => s.Slot != split.KeepSlot))
-            _pending.Enqueue(new ChestMove(stack.ItemId, stack.Name, stack.Quantity, stack.Container, stack.Slot));
-
-        Status = _pending.Count == 0 ? "idle" : $"queued {_pending.Count} moves";
-        if (_pending.Count == 0)
-            FinishOperation();
-    }
-
-    private void AbortSplit(string status)
-    {
-        _split = null;
+        // The withdrawal itself succeeded — only the seed hand-back failed; say so honestly.
+        _seedReturn = null;
         Status = status;
+        LastOperation = $"Withdrew {_succeeded} stacks — seed NOT returned ({status})";
         OperationJustFinished = true;
     }
 
