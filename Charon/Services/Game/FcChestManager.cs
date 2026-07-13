@@ -50,7 +50,9 @@ public sealed unsafe class FcChestManager
     /// ONLY reliable success signal — MoveItemSlot's return code is not: 6 came back on a move
     /// that demonstrably succeeded, verified in testing).</summary>
     private ChestMove? _inFlight;
+    private DateTime _inFlightDeadlineUtc;
     private int _succeeded;
+    private int _movesVerified;
 
     /// <summary>
     /// Unit-accurate withdraw is a ROUNDTRIP: SplitItem is a dead end on FC chest containers
@@ -140,6 +142,7 @@ public sealed unsafe class FcChestManager
 
         _operationLog.Clear();
         _succeeded = 0;
+        _movesVerified = 0;
         _inFlight = null;
         _withdrawing = true;
         _activePage = PageType(page);
@@ -236,7 +239,9 @@ public sealed unsafe class FcChestManager
 
         if (_inFlight != null)
         {
-            VerifyInFlight();
+            if (!TryVerifyInFlight())
+                return; // server round trip still settling — keep waiting
+
             _contentsCache = null; // the page just changed
             if (_pending.Count == 0 && _seedReturn == null)
                 FinishOperation();
@@ -395,8 +400,9 @@ public sealed unsafe class FcChestManager
                 move.Name, move.Quantity, merged ? "merge" : "free slot", code);
 
             _inFlight = move;
+            _inFlightDeadlineUtc = DateTime.UtcNow + TimeSpan.FromSeconds(2.5);
             Status = $"{(_withdrawing ? "Withdrawing" : "Entrusting")} "
-                     + $"{_operationLog.Count + 1}/{_operationLog.Count + _pending.Count + 1}…";
+                     + $"{_movesVerified + 1}/{_movesVerified + _pending.Count + 1}…";
         }
         catch (Exception ex)
         {
@@ -486,11 +492,16 @@ public sealed unsafe class FcChestManager
         return 1; // unknown = never merge
     }
 
-    /// <summary>Success = the source slot no longer holds the item we moved.</summary>
-    private void VerifyInFlight()
+    /// <summary>
+    /// Success = the source slot no longer holds the item we moved. FC chest moves are a
+    /// SERVER round trip — the slot clears noticeably later than the call (verified in
+    /// testing: a snapshot check 250ms after submit reported "still in place" on a move that
+    /// landed fine). So this WAITS until the slot clears or the deadline passes; returns
+    /// false while still waiting.
+    /// </summary>
+    private bool TryVerifyInFlight()
     {
         var move = _inFlight!;
-        _inFlight = null;
 
         var stillThere = false;
         try
@@ -507,16 +518,22 @@ public sealed unsafe class FcChestManager
             // unreadable — assume it moved; the log stays honest enough
         }
 
+        if (stillThere && DateTime.UtcNow < _inFlightDeadlineUtc)
+            return false; // still settling — check again next tick
+
+        _inFlight = null;
+        _movesVerified++;
         var verb = _withdrawing ? "withdrawn" : "entrusted";
         if (!stillThere)
             _succeeded++;
         _operationLog.Add(new ChestLogEntry(move.Name, move.Quantity, stillThere ? "FAILED (still in place)" : verb));
+        return true;
     }
 
     private void FinishOperation()
     {
-        LastOperation = $"{(_withdrawing ? "Withdrew" : "Entrusted")} {_succeeded}/{_operationLog.Count} "
-                        + $"{(_operationLog.Count == 1 ? "stack" : "stacks")} "
+        LastOperation = $"{(_withdrawing ? "Withdrew" : "Entrusted")} {_succeeded}/{_movesVerified} "
+                        + $"{(_movesVerified == 1 ? "stack" : "stacks")} "
                         + $"{(_withdrawing ? "from" : "to")} Page {PageNumber(_activePage)}";
         Status = "idle";
         OperationJustFinished = true;
@@ -526,6 +543,7 @@ public sealed unsafe class FcChestManager
     {
         _operationLog.Clear();
         _succeeded = 0;
+        _movesVerified = 0;
         _inFlight = null;
         _withdrawing = withdrawing;
         _activePage = page;
