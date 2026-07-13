@@ -68,6 +68,9 @@ public sealed class CharonConfig : IPluginConfiguration
     /// <summary>Keep the FC chest operation log expanded.</summary>
     public bool ShowFCChestLog { get; set; } = false;
 
+    /// <summary>Pop the standalone FC Chest window automatically when the game chest opens.</summary>
+    public bool FcChestWindowAutoOpen { get; set; } = true;
+
     // Window state
     public bool MainWindowVisible { get; set; } = true;
     public bool DebugSectionOpen { get; set; } = false;

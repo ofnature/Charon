@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using Dalamud.Game.Addon.Lifecycle;
+using Dalamud.Game.Addon.Lifecycle.AddonArgTypes;
 using Dalamud.Game.Command;
 using Dalamud.Interface.Windowing;
 using Dalamud.Plugin;
@@ -51,6 +53,9 @@ public sealed class CharonPlugin : IDalamudPlugin
 
     private readonly WindowSystem _windowSystem = new("Charon");
     private readonly MainWindow _mainWindow;
+    private readonly FcChestWindow _fcChestWindow;
+    private readonly IAddonLifecycle _addonLifecycle;
+    private const string FcChestAddonName = "FreeCompanyChest";
 
     /// <summary>Previous per-seat occupant entity ids (index 0 = seat 1) — diffed each frame.</summary>
     private uint[] _previousOccupants = Array.Empty<uint>();
@@ -174,10 +179,20 @@ public sealed class CharonPlugin : IDalamudPlugin
         _mainWindow.IsOpen = _config.MainWindowVisible;
         _windowSystem.AddWindow(_mainWindow);
 
+        _fcChestWindow = new FcChestWindow(_config, SaveConfig, _fcChest);
+        _windowSystem.AddWindow(_fcChestWindow);
+
         _commandManager.AddHandler(CommandName, new CommandInfo(OnCommand)
         {
             HelpMessage = "Toggle the Charon window.",
         });
+
+        // Auto-open the FC chest window when the game's Free Company chest opens (and close it
+        // when the chest closes). The chest is the same FreeCompanyChest addon FcChestManager
+        // gates on — reuse the injected addon lifecycle.
+        _addonLifecycle = addonLifecycle;
+        _addonLifecycle.RegisterListener(AddonEvent.PostSetup, FcChestAddonName, OnFcChestOpen);
+        _addonLifecycle.RegisterListener(AddonEvent.PreFinalize, FcChestAddonName, OnFcChestClose);
 
         _pluginInterface.UiBuilder.Draw += _windowSystem.Draw;
         _pluginInterface.UiBuilder.OpenMainUi += OpenMainWindow;
@@ -193,6 +208,9 @@ public sealed class CharonPlugin : IDalamudPlugin
         _pluginInterface.UiBuilder.Draw -= _windowSystem.Draw;
         _pluginInterface.UiBuilder.OpenMainUi -= OpenMainWindow;
         _pluginInterface.UiBuilder.OpenConfigUi -= OpenMainWindow;
+
+        _addonLifecycle.UnregisterListener(AddonEvent.PostSetup, FcChestAddonName, OnFcChestOpen);
+        _addonLifecycle.UnregisterListener(AddonEvent.PreFinalize, FcChestAddonName, OnFcChestClose);
 
         _commandManager.RemoveHandler(CommandName);
         _windowSystem.RemoveAllWindows();
@@ -215,6 +233,19 @@ public sealed class CharonPlugin : IDalamudPlugin
     }
 
     private void OpenMainWindow() => _mainWindow.IsOpen = true;
+
+    /// <summary>FC chest opened — pop the standalone window (unless auto-open is disabled).</summary>
+    private void OnFcChestOpen(AddonEvent type, AddonArgs args)
+    {
+        if (_config.FcChestWindowAutoOpen)
+            _fcChestWindow.IsOpen = true;
+    }
+
+    /// <summary>FC chest closed — the transfer session is gone, so close the window with it.</summary>
+    private void OnFcChestClose(AddonEvent type, AddonArgs args)
+    {
+        _fcChestWindow.IsOpen = false;
+    }
 
     private void SaveConfig() => _pluginInterface.SavePluginConfig(_config);
 
