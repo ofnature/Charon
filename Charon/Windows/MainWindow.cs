@@ -694,11 +694,11 @@ public sealed class MainWindow : Window
                     ImGui.TextColored(CharonTheme.TextSecondary, row.StackCount.ToString());
                     ImGui.TableNextColumn();
 
-                    if (row.StackCount < 2)
+                    if (row.TotalQuantity <= 1)
                     {
                         ImGui.TextColored(CharonTheme.TextDisabled, "seed");
                         if (ImGui.IsItemHovered())
-                            ImGui.SetTooltip("Single stack — always stays as the seed");
+                            ImGui.SetTooltip("Only the seed unit remains — always stays");
                     }
                     else
                     {
@@ -707,7 +707,8 @@ public sealed class MainWindow : Window
                             _fcChest.StartWithdrawItem(page, row.ItemId);
                         if (_fcChest.Busy) ImGui.EndDisabled();
                         if (ImGui.IsItemHovered())
-                            ImGui.SetTooltip($"Withdraw {row.StackCount - 1} of {row.StackCount} stacks — the last stays as seed");
+                            ImGui.SetTooltip($"Withdraw ×{row.TotalQuantity - 1} — exactly 1 unit stays as the seed\n"
+                                             + "(the seed stack is split first, like the game's Remove quantity dialog)");
                     }
                 }
 

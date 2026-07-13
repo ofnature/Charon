@@ -52,6 +52,18 @@ public sealed unsafe class FcChestManager
     private ChestMove? _inFlight;
     private int _succeeded;
 
+    /// <summary>
+    /// Per-item withdraw is UNIT-accurate: the seed stack gets SPLIT so exactly 1 unit stays
+    /// (InventoryManager.SplitItem — the same thing the game's right-click Remove quantity
+    /// dialog does), then every other stack of the item is withdrawn. This record is the
+    /// pending split; the withdraw moves are planned AFTER it verifies, because the split's
+    /// new stack lands in an unpredictable free slot.
+    /// </summary>
+    private sealed record SplitOp(int Page, uint ItemId, short KeepSlot, int OriginalQuantity);
+
+    private SplitOp? _split;
+    private bool _splitSubmitted;
+
     // Contents cache for the UI table — re-reading containers every draw is wasteful.
     private List<ChestContentRow>? _contentsCache;
     private int _contentsCachePage;
@@ -72,7 +84,7 @@ public sealed unsafe class FcChestManager
     /// <summary>Per-item results of the last operation, newest run only.</summary>
     public IReadOnlyList<ChestLogEntry> OperationLog => _operationLog;
 
-    public bool Busy => _pending.Count > 0 || _inFlight != null;
+    public bool Busy => _pending.Count > 0 || _inFlight != null || _split != null;
 
     /// <summary>Aggregated contents of the page for the UI table (cached ~500ms). Empty when unloaded.</summary>
     public IReadOnlyList<ChestContentRow> GetPageContents(int page)
@@ -91,15 +103,45 @@ public sealed unsafe class FcChestManager
         return _contentsCache;
     }
 
-    /// <summary>Withdraw all but the last stack of ONE item (the contents table's per-row button).</summary>
+    /// <summary>
+    /// Withdraw all but QUANTITY 1 of one item (the contents table's per-row button): the seed
+    /// stack is split so a single unit remains, then every other stack is withdrawn.
+    /// </summary>
     public int StartWithdrawItem(int page, uint itemId)
     {
         if (Busy || !FcChestPlanner.CanExecute(IsChestOpen(), IsPageLoaded(page)))
             return 0;
 
-        var moves = FcChestPlanner.PlanWithdrawItem(ReadPage(page), itemId);
-        BeginOperation(moves, PageType(page), withdrawing: true, page);
-        return moves.Count;
+        var stacks = ReadPage(page).Where(s => s.ItemId == itemId).ToList();
+        var total = stacks.Sum(s => s.Quantity);
+        if (stacks.Count == 0 || total <= 1)
+        {
+            LastOperation = "Withdraw: nothing to take — only the seed unit remains";
+            OperationJustFinished = true;
+            return 0;
+        }
+
+        _operationLog.Clear();
+        _succeeded = 0;
+        _inFlight = null;
+        _withdrawing = true;
+        _activePage = PageType(page);
+        _moveDestination = InventoryType.Inventory1;
+
+        var seed = stacks[^1];
+        if (seed.Quantity > 1)
+        {
+            // Split first; the withdraw moves are planned once the split lands.
+            _split = new SplitOp(page, itemId, seed.Slot, seed.Quantity);
+            _splitSubmitted = false;
+            Status = "splitting seed stack…";
+            return stacks.Count;
+        }
+
+        foreach (var move in FcChestPlanner.PlanWithdrawItem(stacks, itemId))
+            _pending.Enqueue(move);
+        Status = $"queued {_pending.Count} moves";
+        return _pending.Count;
     }
 
     /// <summary>True when an operation just finished (UI expands the log once, then clears this).</summary>
@@ -163,7 +205,7 @@ public sealed unsafe class FcChestManager
     /// </summary>
     public void Update(DateTime nowUtc)
     {
-        if (_pending.Count == 0 && _inFlight == null)
+        if (_pending.Count == 0 && _inFlight == null && _split == null)
             return;
 
         if (nowUtc - _lastMoveUtc < MovePacing)
@@ -175,8 +217,15 @@ public sealed unsafe class FcChestManager
         {
             _pending.Clear();
             _inFlight = null;
+            _split = null;
             Status = "aborted — chest closed";
             OperationJustFinished = true;
+            return;
+        }
+
+        if (_split != null)
+        {
+            DriveSplit();
             return;
         }
 
@@ -190,6 +239,52 @@ public sealed unsafe class FcChestManager
         }
 
         SubmitNextMove();
+    }
+
+    /// <summary>Submit the seed split, then (next tick) verify it left 1 unit and plan the withdrawals.</summary>
+    private void DriveSplit()
+    {
+        var split = _split!;
+
+        if (!_splitSubmitted)
+        {
+            try
+            {
+                var code = InventoryManager.Instance()->SplitItem(PageType(split.Page), (ushort)split.KeepSlot,
+                    split.OriginalQuantity - 1);
+                _log.Debug("FC chest: split {0} at slot {1} (code {2})", split.ItemId, split.KeepSlot, code);
+                _splitSubmitted = true;
+            }
+            catch (Exception ex)
+            {
+                _log.Warning(ex, "FC chest split threw");
+                _split = null;
+                Status = "aborted — split failed";
+                OperationJustFinished = true;
+            }
+            return;
+        }
+
+        // Verify: the seed slot should hold exactly 1 unit now.
+        _split = null;
+        _splitSubmitted = false;
+        _contentsCache = null;
+
+        var stacks = ReadPage(split.Page).Where(s => s.ItemId == split.ItemId).ToList();
+        var seed = stacks.FirstOrDefault(s => s.Slot == split.KeepSlot);
+        if (seed == null || seed.Quantity != 1)
+        {
+            Status = "aborted — split did not land (page full?)";
+            OperationJustFinished = true;
+            return;
+        }
+
+        foreach (var stack in stacks.Where(s => s.Slot != split.KeepSlot))
+            _pending.Enqueue(new ChestMove(stack.ItemId, stack.Name, stack.Quantity, stack.Container, stack.Slot));
+
+        Status = _pending.Count == 0 ? "idle" : $"queued {_pending.Count} moves";
+        if (_pending.Count == 0)
+            FinishOperation();
     }
 
     private void SubmitNextMove()
