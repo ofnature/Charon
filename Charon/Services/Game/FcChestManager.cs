@@ -197,7 +197,11 @@ public sealed unsafe class FcChestManager
         var move = _pending.Dequeue();
         try
         {
-            var destinationSlot = FindFreeSlot(_withdrawing ? PlayerBags : [_moveDestination], out var destinationType);
+            // Prefer MERGING into an existing stack of the same item (that is the point of
+            // consolidating duplicates) — strict fit only, so the source stack always empties
+            // completely and verification stays simple. Empty slot is the fallback.
+            var destinationSlot = FindDestination(move, _withdrawing ? PlayerBags : [_moveDestination],
+                out var destinationType, out var merged);
             if (destinationSlot < 0)
             {
                 _pending.Clear();
@@ -209,7 +213,8 @@ public sealed unsafe class FcChestManager
             var code = InventoryManager.Instance()->MoveItemSlot(
                 (InventoryType)move.SrcContainer, (ushort)move.SrcSlot,
                 destinationType, (ushort)destinationSlot, true);
-            _log.Debug("FC chest: submitted {0} ×{1} (code {2})", move.Name, move.Quantity, code);
+            _log.Debug("FC chest: submitted {0} ×{1} ({2}, code {3})",
+                move.Name, move.Quantity, merged ? "merge" : "free slot", code);
 
             _inFlight = move;
             Status = $"{(_withdrawing ? "Withdrawing" : "Entrusting")} "
@@ -222,6 +227,85 @@ public sealed unsafe class FcChestManager
             if (_pending.Count == 0)
                 FinishOperation();
         }
+    }
+
+    /// <summary>
+    /// Destination slot: a same-item stack with room for the WHOLE source stack (same HQ/
+    /// collectable flags, strict fit — partial merges would leave a remainder the plan doesn't
+    /// know about), else the first empty slot. -1 when neither exists.
+    /// </summary>
+    private int FindDestination(ChestMove move, InventoryType[] candidates, out InventoryType type, out bool merged)
+    {
+        var stackSize = GetStackSize(move.ItemId);
+        var sourceFlags = ReadItemFlags((InventoryType)move.SrcContainer, move.SrcSlot);
+
+        if (stackSize > 1 && sourceFlags != null)
+        {
+            foreach (var candidate in candidates)
+            {
+                try
+                {
+                    var container = InventoryManager.Instance()->GetInventoryContainer(candidate);
+                    if (container == null || !container->IsLoaded)
+                        continue;
+
+                    for (var i = 0; i < container->Size; i++)
+                    {
+                        var item = container->GetInventorySlot(i);
+                        if (item != null
+                            && item->ItemId == move.ItemId
+                            && item->Flags == sourceFlags.Value
+                            && item->Quantity > 0
+                            && item->Quantity + move.Quantity <= stackSize)
+                        {
+                            type = candidate;
+                            merged = true;
+                            return i;
+                        }
+                    }
+                }
+                catch
+                {
+                    // skip unreadable container
+                }
+            }
+        }
+
+        merged = false;
+        return FindFreeSlot(candidates, out type);
+    }
+
+    private FFXIVClientStructs.FFXIV.Client.Game.InventoryItem.ItemFlags? ReadItemFlags(InventoryType container, short slot)
+    {
+        try
+        {
+            var inv = InventoryManager.Instance()->GetInventoryContainer(container);
+            if (inv == null || !inv->IsLoaded || slot >= inv->Size)
+                return null;
+
+            var item = inv->GetInventorySlot(slot);
+            return item == null ? null : item->Flags;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private int GetStackSize(uint itemId)
+    {
+        try
+        {
+            var sheet = _dataManager.GetExcelSheet<Item>();
+            if (sheet != null && sheet.TryGetRow(itemId, out var row))
+                return (int)row.StackSize;
+        }
+        catch
+        {
+            // fall through
+        }
+
+        return 1; // unknown = never merge
     }
 
     /// <summary>Success = the source slot no longer holds the item we moved.</summary>
