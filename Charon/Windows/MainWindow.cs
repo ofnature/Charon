@@ -6,6 +6,7 @@ using Dalamud.Bindings.ImGui;
 using Dalamud.Interface.Windowing;
 using Charon.Features.AutoAccept;
 using Charon.Features.AutoPillion;
+using Charon.Features.GroupManagement;
 using Charon.Features.HealWatch;
 using Charon.Services;
 
@@ -24,6 +25,7 @@ public sealed class MainWindow : Window
         General,
         AutoPillion,
         HealWatch,
+        GroupMgmt,
         TrustedList,
         Debug,
     }
@@ -38,10 +40,14 @@ public sealed class MainWindow : Window
     private readonly PillionManager _pillion;
     private readonly GroupInviteManager _inviteManager;
     private readonly HealWatchManager _healWatch;
+    private readonly InviteManager _groupInvites;
     private readonly Func<IReadOnlyList<(int Seat, uint EntityId, string Name)>> _rawSeatOccupancy;
     private readonly Func<string> _boardingStatus;
     private readonly Func<string> _followStatus;
     private readonly Func<string> _healStatus;
+    private readonly Func<int> _partySize;
+    private readonly Func<string, bool> _isInParty;
+    private readonly Func<string> _localName;
 
     private Section _section = Section.General;
     private string _addName = string.Empty;
@@ -74,10 +80,14 @@ public sealed class MainWindow : Window
         PillionManager pillion,
         GroupInviteManager inviteManager,
         HealWatchManager healWatch,
+        InviteManager groupInvites,
         Func<IReadOnlyList<(int Seat, uint EntityId, string Name)>> rawSeatOccupancy,
         Func<string> boardingStatus,
         Func<string> followStatus,
-        Func<string> healStatus)
+        Func<string> healStatus,
+        Func<int> partySize,
+        Func<string, bool> isInParty,
+        Func<string> localName)
         : base("Charon##CharonMain")
     {
         _config = config;
@@ -87,10 +97,14 @@ public sealed class MainWindow : Window
         _pillion = pillion;
         _inviteManager = inviteManager;
         _healWatch = healWatch;
+        _groupInvites = groupInvites;
         _rawSeatOccupancy = rawSeatOccupancy;
         _boardingStatus = boardingStatus;
         _followStatus = followStatus;
         _healStatus = healStatus;
+        _partySize = partySize;
+        _isInParty = isInParty;
+        _localName = localName;
 
         Size = new Vector2(600, 440);
         SizeCondition = ImGuiCond.FirstUseEver;
@@ -130,6 +144,7 @@ public sealed class MainWindow : Window
         ImGui.Spacing();
 
         DrawCategoryHeader("FLEET");
+        DrawNavItem("Group Mgmt", Section.GroupMgmt, null);
         DrawNavItem("Trusted List", Section.TrustedList, null);
         ImGui.Spacing();
 
@@ -191,6 +206,7 @@ public sealed class MainWindow : Window
             case Section.General: DrawGeneralSection(); break;
             case Section.AutoPillion: DrawAutoPillionSection(); break;
             case Section.HealWatch: DrawHealWatchSection(); break;
+            case Section.GroupMgmt: DrawGroupSection(); break;
             case Section.TrustedList: DrawTrustedSection(); break;
             case Section.Debug: DrawDebugSection(); break;
         }
@@ -474,6 +490,100 @@ public sealed class MainWindow : Window
                 ? CharonTheme.StatusRed
                 : CharonTheme.TextDisabled;
             ImGui.TextColored(color, $"{heal.TimeUtc:HH:mm:ss}  {Display(heal.Name)}  {kind}");
+        }
+    }
+
+    // --- Group Management ---
+
+    private void DrawGroupSection()
+    {
+        DrawPageHeader("Group Management");
+
+        var partySize = Math.Max(_partySize(), 1); // solo counts as a party of one
+        var full = partySize >= InviteManager.MaxPartySize;
+        var roster = _roster.GetLanPartyMembers();
+        var localName = _localName();
+        var onlineCount = roster.Count(t => t.IsOnline);
+
+        ImGui.TextColored(CharonTheme.TextSecondary, $"Group: {partySize}/{InviteManager.MaxPartySize}");
+        if (_groupInvites.PendingCount > 0)
+        {
+            ImGui.SameLine();
+            ImGui.TextColored(CharonTheme.StatusYellow, $"· {_groupInvites.PendingCount} invites in flight");
+        }
+
+        ImGui.Spacing();
+
+        // Mass invite — gold accent, full width; disabled at 8/8 or with nothing to invite.
+        var canMass = !full && onlineCount > 0 && _roster.IsAvailable;
+        if (!canMass) ImGui.BeginDisabled();
+        ImGui.PushStyleColor(ImGuiCol.Button, CharonTheme.AccentGold);
+        ImGui.PushStyleColor(ImGuiCol.ButtonHovered, CharonTheme.AccentGold);
+        ImGui.PushStyleColor(ImGuiCol.ButtonActive, CharonTheme.AccentDim);
+        ImGui.PushStyleColor(ImGuiCol.Text, CharonTheme.BgDeep);
+        if (ImGui.Button("Mass Invite All", new Vector2(-1f, 0f)) && canMass)
+            _groupInvites.InviteAll(roster, localName, _partySize(), _isInParty, DateTime.UtcNow);
+        ImGui.PopStyleColor(4);
+        if (!canMass) ImGui.EndDisabled();
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip(full
+                ? "Party is full (8/8)"
+                : _roster.IsAvailable
+                    ? "Invite every online LAN toon not already grouped (staggered).\nTheir Charon auto-accept does the rest."
+                    : "Daedalus LAN roster unavailable");
+
+        ImGui.Spacing();
+        ImGui.TextColored(CharonTheme.TextSecondary, $"LAN Party ({onlineCount} online)");
+
+        if (roster.Count == 0)
+        {
+            ImGui.TextColored(CharonTheme.TextDisabled, "No LAN roster — is Daedalus running with the LAN coordinator on?");
+        }
+        else if (ImGui.BeginTable("lanparty", 4,
+                     ImGuiTableFlags.BordersInnerV | ImGuiTableFlags.RowBg | ImGuiTableFlags.SizingFixedFit))
+        {
+            ImGui.TableSetupColumn("##dot", ImGuiTableColumnFlags.WidthFixed, 16f);
+            ImGui.TableSetupColumn("Name", ImGuiTableColumnFlags.WidthFixed, 150f);
+            ImGui.TableSetupColumn("World", ImGuiTableColumnFlags.WidthFixed, 90f);
+            ImGui.TableSetupColumn("##action", ImGuiTableColumnFlags.WidthStretch);
+
+            foreach (var toon in roster)
+            {
+                ImGui.TableNextRow();
+                ImGui.TableNextColumn();
+                ImGui.TextColored(toon.IsOnline ? CharonTheme.StatusGreen : CharonTheme.StatusGrey,
+                    toon.IsOnline ? "●" : "○");
+                ImGui.TableNextColumn();
+                ImGui.TextUnformatted(Display(toon.CharacterName));
+                ImGui.TableNextColumn();
+                ImGui.TextColored(CharonTheme.TextSecondary, toon.World.Length > 0 ? toon.World : "—");
+                ImGui.TableNextColumn();
+
+                var isSelf = toon.CharacterName.Equals(localName, StringComparison.OrdinalIgnoreCase);
+                if (isSelf)
+                    ImGui.TextColored(CharonTheme.TextDisabled, "You");
+                else if (_isInParty(toon.CharacterName))
+                    ImGui.TextColored(CharonTheme.StatusGreen, "In Group");
+                else if (!toon.IsOnline)
+                    ImGui.TextColored(CharonTheme.TextDisabled, "Offline");
+                else if (full)
+                    ImGui.TextColored(CharonTheme.TextDisabled, "Party full");
+                else if (ImGui.SmallButton($"Invite##inv{toon.CharacterName}"))
+                    _groupInvites.InviteSingle(toon, DateTime.UtcNow);
+            }
+
+            ImGui.EndTable();
+        }
+
+        if (_groupInvites.InviteLog.Count > 0)
+        {
+            ImGui.Spacing();
+            ImGui.TextColored(CharonTheme.TextSecondary, "Invites sent");
+            foreach (var entry in _groupInvites.InviteLog)
+            {
+                ImGui.TextColored(entry.Success ? CharonTheme.TextDisabled : CharonTheme.StatusRed,
+                    $"{entry.TimeUtc:HH:mm:ss}  {ScrambleIn(entry.Detail)}");
+            }
         }
     }
 

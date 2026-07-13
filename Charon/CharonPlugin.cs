@@ -7,6 +7,7 @@ using Dalamud.Plugin;
 using Dalamud.Plugin.Services;
 using Charon.Features.AutoAccept;
 using Charon.Features.AutoPillion;
+using Charon.Features.GroupManagement;
 using Charon.Features.HealWatch;
 using Charon.Ipc;
 using Charon.Services;
@@ -41,6 +42,7 @@ public sealed class CharonPlugin : IDalamudPlugin
     private readonly NavClient _nav;
     private readonly HealWatchManager _healWatch;
     private readonly HealExecutor _healExecutor;
+    private readonly InviteManager _groupInvites;
 
     // Heal Watch runs at 1 Hz; status surfaced in the window.
     private DateTime _lastHealScanUtc = DateTime.MinValue;
@@ -133,6 +135,13 @@ public sealed class CharonPlugin : IDalamudPlugin
         _nav = new NavClient(pluginInterface, log);
         _healWatch = new HealWatchManager(HealWatchConfig.From(_config));
         _healExecutor = new HealExecutor(objectTable, log);
+        _groupInvites = new InviteManager(
+            toon =>
+            {
+                var ok = PartyInviteHelper.TryInvite(toon.CharacterName, toon.ContentId, toon.WorldId, out var detail);
+                return (ok, detail);
+            },
+            log: message => _log.Debug("[GroupMgmt] {0}", message));
         _teleportOffer = new TeleportOfferInterop(
             addonLifecycle,
             gameGui,
@@ -154,9 +163,12 @@ public sealed class CharonPlugin : IDalamudPlugin
         _inviteInterop = new GroupInviteInterop(dataManager, _inviteManager, log);
 
         _mainWindow = new MainWindow(_config, SaveConfig, _whitelist, _daedalusIpc, _pillionManager, _inviteManager,
-            _healWatch, ReadRawSeatOccupancy, () => _boardingStatus,
+            _healWatch, _groupInvites, ReadRawSeatOccupancy, () => _boardingStatus,
             () => $"{_followStatus} · offer: {_teleportOffer.Status}",
-            () => _healStatus);
+            () => _healStatus,
+            () => _partyList.Length,
+            IsInMyParty,
+            () => _objectTable.LocalPlayer?.Name.TextValue ?? string.Empty);
         _mainWindow.IsOpen = _config.MainWindowVisible;
         _windowSystem.AddWindow(_mainWindow);
 
@@ -228,6 +240,7 @@ public sealed class CharonPlugin : IDalamudPlugin
         _teleportOffer.Update(now);
         UpdateFollowTeleport(now);
         UpdateHealWatch(now);
+        _groupInvites.Update(now);
         _pillionManager.Update(now);
         _inviteManager.Update(now);
     }

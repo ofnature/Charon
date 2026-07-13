@@ -31,6 +31,14 @@ public sealed class LanToonInfo
     [JsonPropertyName("entityId")]
     public uint EntityId { get; set; }
 
+    /// <summary>Content id for native party invites. 0 when the Daedalus build predates the field.</summary>
+    [JsonPropertyName("contentId")]
+    public ulong ContentId { get; set; }
+
+    /// <summary>Home world row id for native party invites. 0 when the Daedalus build predates the field.</summary>
+    [JsonPropertyName("worldId")]
+    public ushort WorldId { get; set; }
+
     /// <summary>Seat assigned during the current pillion session (0 = none). Set by Charon, not Daedalus.</summary>
     [JsonIgnore]
     public int SeatAssignment { get; set; }
