@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using Dalamud.Plugin.Services;
 using Charon.Features.FcChest;
 using FFXIVClientStructs.FFXIV.Client.Game;
@@ -9,6 +10,9 @@ namespace Charon.Services.Game;
 
 /// <summary>One executed chest move, for the section's log.</summary>
 public sealed record ChestLogEntry(string Name, int Quantity, string Verb);
+
+/// <summary>One item aggregated across its stacks on a chest page, for the contents table.</summary>
+public sealed record ChestContentRow(uint ItemId, string Name, int TotalQuantity, int StackCount);
 
 /// <summary>
 /// FC chest entrust/withdraw execution for ONE page at a time. Thin unsafe adapter around
@@ -42,6 +46,17 @@ public sealed unsafe class FcChestManager
     private bool _withdrawing;
     private DateTime _lastMoveUtc = DateTime.MinValue;
 
+    /// <summary>Move submitted last tick, awaiting verification (the source slot emptying is the
+    /// ONLY reliable success signal — MoveItemSlot's return code is not: 6 came back on a move
+    /// that demonstrably succeeded, verified in testing).</summary>
+    private ChestMove? _inFlight;
+    private int _succeeded;
+
+    // Contents cache for the UI table — re-reading containers every draw is wasteful.
+    private List<ChestContentRow>? _contentsCache;
+    private int _contentsCachePage;
+    private DateTime _contentsCacheUtc = DateTime.MinValue;
+
     public FcChestManager(IGameGui gameGui, IDataManager dataManager, IPluginLog log)
     {
         _gameGui = gameGui;
@@ -57,7 +72,35 @@ public sealed unsafe class FcChestManager
     /// <summary>Per-item results of the last operation, newest run only.</summary>
     public IReadOnlyList<ChestLogEntry> OperationLog => _operationLog;
 
-    public bool Busy => _pending.Count > 0;
+    public bool Busy => _pending.Count > 0 || _inFlight != null;
+
+    /// <summary>Aggregated contents of the page for the UI table (cached ~500ms). Empty when unloaded.</summary>
+    public IReadOnlyList<ChestContentRow> GetPageContents(int page)
+    {
+        if (_contentsCache != null && _contentsCachePage == page
+            && DateTime.UtcNow - _contentsCacheUtc < TimeSpan.FromMilliseconds(500))
+            return _contentsCache;
+
+        _contentsCache = ReadPage(page)
+            .GroupBy(s => s.ItemId)
+            .Select(g => new ChestContentRow(g.Key, g.First().Name, g.Sum(s => s.Quantity), g.Count()))
+            .OrderBy(r => r.Name, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        _contentsCachePage = page;
+        _contentsCacheUtc = DateTime.UtcNow;
+        return _contentsCache;
+    }
+
+    /// <summary>Withdraw all but the last stack of ONE item (the contents table's per-row button).</summary>
+    public int StartWithdrawItem(int page, uint itemId)
+    {
+        if (Busy || !FcChestPlanner.CanExecute(IsChestOpen(), IsPageLoaded(page)))
+            return 0;
+
+        var moves = FcChestPlanner.PlanWithdrawItem(ReadPage(page), itemId);
+        BeginOperation(moves, PageType(page), withdrawing: true, page);
+        return moves.Count;
+    }
 
     /// <summary>True when an operation just finished (UI expands the log once, then clears this).</summary>
     public bool OperationJustFinished { get; set; }
@@ -112,10 +155,15 @@ public sealed unsafe class FcChestManager
         return moves.Count;
     }
 
-    /// <summary>Drain one pending move per pacing interval. Call every framework tick.</summary>
+    /// <summary>
+    /// Drive the move queue: alternate ticks submit a move and VERIFY the previous one by
+    /// re-reading its source slot — the only reliable success signal (MoveItemSlot's return
+    /// code is not: it returned 6 on a move that demonstrably succeeded).
+    /// Call every framework tick.
+    /// </summary>
     public void Update(DateTime nowUtc)
     {
-        if (_pending.Count == 0)
+        if (_pending.Count == 0 && _inFlight == null)
             return;
 
         if (nowUtc - _lastMoveUtc < MovePacing)
@@ -126,14 +174,27 @@ public sealed unsafe class FcChestManager
         if (!IsChestOpen())
         {
             _pending.Clear();
+            _inFlight = null;
             Status = "aborted — chest closed";
             OperationJustFinished = true;
             return;
         }
 
-        var move = _pending.Dequeue();
-        var verb = _withdrawing ? "withdrawn" : "entrusted";
+        if (_inFlight != null)
+        {
+            VerifyInFlight();
+            _contentsCache = null; // the page just changed
+            if (_pending.Count == 0)
+                FinishOperation();
+            return;
+        }
 
+        SubmitNextMove();
+    }
+
+    private void SubmitNextMove()
+    {
+        var move = _pending.Dequeue();
         try
         {
             var destinationSlot = FindFreeSlot(_withdrawing ? PlayerBags : [_moveDestination], out var destinationType);
@@ -145,35 +206,65 @@ public sealed unsafe class FcChestManager
                 return;
             }
 
-            var result = InventoryManager.Instance()->MoveItemSlot(
+            var code = InventoryManager.Instance()->MoveItemSlot(
                 (InventoryType)move.SrcContainer, (ushort)move.SrcSlot,
                 destinationType, (ushort)destinationSlot, true);
+            _log.Debug("FC chest: submitted {0} ×{1} (code {2})", move.Name, move.Quantity, code);
 
-            _operationLog.Add(new ChestLogEntry(move.Name, move.Quantity, result == 0 ? verb : $"FAILED ({result})"));
-            _log.Debug("FC chest: {0} ×{1} → {2} (code {3})", move.Name, move.Quantity, verb, result);
+            _inFlight = move;
+            Status = $"{(_withdrawing ? "Withdrawing" : "Entrusting")} "
+                     + $"{_operationLog.Count + 1}/{_operationLog.Count + _pending.Count + 1}…";
         }
         catch (Exception ex)
         {
-            _log.Warning(ex, "FC chest move failed ({0})", move.Name);
+            _log.Warning(ex, "FC chest move threw ({0})", move.Name);
             _operationLog.Add(new ChestLogEntry(move.Name, move.Quantity, "FAILED"));
+            if (_pending.Count == 0)
+                FinishOperation();
+        }
+    }
+
+    /// <summary>Success = the source slot no longer holds the item we moved.</summary>
+    private void VerifyInFlight()
+    {
+        var move = _inFlight!;
+        _inFlight = null;
+
+        var stillThere = false;
+        try
+        {
+            var container = InventoryManager.Instance()->GetInventoryContainer((InventoryType)move.SrcContainer);
+            if (container != null && container->IsLoaded && move.SrcSlot < container->Size)
+            {
+                var item = container->GetInventorySlot(move.SrcSlot);
+                stillThere = item != null && item->ItemId == move.ItemId && item->Quantity > 0;
+            }
+        }
+        catch
+        {
+            // unreadable — assume it moved; the log stays honest enough
         }
 
-        if (_pending.Count == 0)
-        {
-            LastOperation = $"{(_withdrawing ? "Withdrew" : "Entrusted")} {_operationLog.Count} stacks "
-                            + $"{(_withdrawing ? "from" : "to")} Page {PageNumber(_activePage)}";
-            Status = "idle";
-            OperationJustFinished = true;
-        }
-        else
-        {
-            Status = $"{verb[..1].ToUpperInvariant()}{verb[1..]} {_operationLog.Count}/{_operationLog.Count + _pending.Count}…";
-        }
+        var verb = _withdrawing ? "withdrawn" : "entrusted";
+        if (!stillThere)
+            _succeeded++;
+        _operationLog.Add(new ChestLogEntry(move.Name, move.Quantity, stillThere ? "FAILED (still in place)" : verb));
+    }
+
+    private void FinishOperation()
+    {
+        LastOperation = $"{(_withdrawing ? "Withdrew" : "Entrusted")} {_succeeded}/{_operationLog.Count} "
+                        + $"{(_operationLog.Count == 1 ? "stack" : "stacks")} "
+                        + $"{(_withdrawing ? "from" : "to")} Page {PageNumber(_activePage)}";
+        Status = "idle";
+        OperationJustFinished = true;
     }
 
     private void BeginOperation(List<ChestMove> moves, InventoryType page, bool withdrawing, int pageNumber)
     {
         _operationLog.Clear();
+        _succeeded = 0;
+        _inFlight = null;
         _withdrawing = withdrawing;
         _activePage = page;
         _moveDestination = withdrawing ? InventoryType.Inventory1 : page; // withdraw picks bags per-move

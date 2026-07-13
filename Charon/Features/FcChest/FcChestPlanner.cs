@@ -40,6 +40,10 @@ public static class FcChestPlanner
             .ToList();
     }
 
+    /// <summary>Per-item withdraw: all stacks of ONE item except the last (the seed stays).</summary>
+    public static List<ChestMove> PlanWithdrawItem(IReadOnlyList<ItemStack> chestPage, uint itemId) =>
+        PlanWithdraw(chestPage.Where(s => s.ItemId == itemId).ToList());
+
     /// <summary>Chest-page stacks to withdraw: everything except the last stack of each item.</summary>
     public static List<ChestMove> PlanWithdraw(IReadOnlyList<ItemStack> chestPage)
     {

@@ -44,7 +44,6 @@ public sealed class MainWindow : Window
     private readonly HealWatchManager _healWatch;
     private readonly InviteManager _groupInvites;
     private readonly FcChestManager _fcChest;
-    private int _pendingChestOperation; // 0 = none, 1 = entrust, 2 = withdraw (confirm modal)
     private readonly Func<IReadOnlyList<(int Seat, uint EntityId, string Name)>> _rawSeatOccupancy;
     private readonly Func<string> _boardingStatus;
     private readonly Func<string> _followStatus;
@@ -625,13 +624,6 @@ public sealed class MainWindow : Window
         if (!canOperate) ImGui.BeginDisabled();
         if (ImGui.Button("Entrust Duplicates") && canOperate)
         {
-            _pendingChestOperation = 1;
-            ImGui.OpenPopup("fcChestConfirm");
-        }
-        ImGui.SameLine();
-        if (ImGui.Button("Withdraw All But 1") && canOperate)
-        {
-            _pendingChestOperation = 2;
             ImGui.OpenPopup("fcChestConfirm");
         }
         if (!canOperate) ImGui.EndDisabled();
@@ -640,30 +632,87 @@ public sealed class MainWindow : Window
                 ? "Must be near the FC chest — open the chest window first"
                 : !pageLoaded
                     ? $"View the Page {page} tab in the chest once so its contents load"
-                    : _fcChest.Busy ? "Operation in progress" : "Withdraw every stack except the last of each item");
+                    : _fcChest.Busy
+                        ? "Operation in progress"
+                        : $"Entrust every inventory stack of items already on Page {page}");
 
         // Confirm modal — the moves are irreversible.
         if (ImGui.BeginPopupModal("fcChestConfirm", ImGuiWindowFlags.AlwaysAutoResize))
         {
-            var verb = _pendingChestOperation == 1 ? "Entrust duplicate stacks to" : "Withdraw all but one stack from";
-            ImGui.TextUnformatted($"{verb} Page {page}?");
+            ImGui.TextUnformatted($"Entrust duplicate stacks to Page {page}?");
             ImGui.TextColored(CharonTheme.TextSecondary, "Whole stacks are moved — this cannot be undone.");
             ImGui.Spacing();
 
             if (ImGui.Button("Confirm", new Vector2(120, 0)))
             {
-                var queued = _pendingChestOperation == 1 ? _fcChest.StartEntrust(page) : _fcChest.StartWithdraw(page);
-                _pendingChestOperation = 0;
-                _ = queued;
+                _fcChest.StartEntrust(page);
                 ImGui.CloseCurrentPopup();
             }
             ImGui.SameLine();
             if (ImGui.Button("Cancel", new Vector2(120, 0)))
             {
-                _pendingChestOperation = 0;
                 ImGui.CloseCurrentPopup();
             }
             ImGui.EndPopup();
+        }
+
+        // Page contents with per-item withdraw.
+        ImGui.Spacing();
+        ImGui.TextColored(CharonTheme.TextSecondary, $"Page {page} contents");
+        if (!pageLoaded)
+        {
+            ImGui.TextColored(CharonTheme.TextDisabled, chestOpen
+                ? $"View the Page {page} tab in the chest once so its contents load."
+                : "Open the FC chest to see this page.");
+        }
+        else
+        {
+            var contents = _fcChest.GetPageContents(page);
+            if (contents.Count == 0)
+            {
+                ImGui.TextColored(CharonTheme.TextDisabled, "Page is empty.");
+            }
+            else if (ImGui.BeginTable("fcContents", 4,
+                         ImGuiTableFlags.BordersInnerV | ImGuiTableFlags.RowBg | ImGuiTableFlags.SizingFixedFit
+                         | ImGuiTableFlags.ScrollY, new Vector2(0f, 220f)))
+            {
+                ImGui.TableSetupColumn("Item", ImGuiTableColumnFlags.WidthStretch);
+                ImGui.TableSetupColumn("Qty", ImGuiTableColumnFlags.WidthFixed, 60f);
+                ImGui.TableSetupColumn("Stacks", ImGuiTableColumnFlags.WidthFixed, 50f);
+                ImGui.TableSetupColumn("##act", ImGuiTableColumnFlags.WidthFixed, 130f);
+                ImGui.TableSetupScrollFreeze(0, 1);
+                ImGui.TableHeadersRow();
+
+                foreach (var row in contents)
+                {
+                    ImGui.TableNextRow();
+                    ImGui.TableNextColumn();
+                    ImGui.TextUnformatted(row.Name);
+                    ImGui.TableNextColumn();
+                    ImGui.TextColored(CharonTheme.TextSecondary, $"×{row.TotalQuantity}");
+                    ImGui.TableNextColumn();
+                    ImGui.TextColored(CharonTheme.TextSecondary, row.StackCount.ToString());
+                    ImGui.TableNextColumn();
+
+                    if (row.StackCount < 2)
+                    {
+                        ImGui.TextColored(CharonTheme.TextDisabled, "seed");
+                        if (ImGui.IsItemHovered())
+                            ImGui.SetTooltip("Single stack — always stays as the seed");
+                    }
+                    else
+                    {
+                        if (_fcChest.Busy) ImGui.BeginDisabled();
+                        if (ImGui.SmallButton($"Withdraw all but 1##wd{row.ItemId}") && !_fcChest.Busy)
+                            _fcChest.StartWithdrawItem(page, row.ItemId);
+                        if (_fcChest.Busy) ImGui.EndDisabled();
+                        if (ImGui.IsItemHovered())
+                            ImGui.SetTooltip($"Withdraw {row.StackCount - 1} of {row.StackCount} stacks — the last stays as seed");
+                    }
+                }
+
+                ImGui.EndTable();
+            }
         }
 
         ImGui.Spacing();
