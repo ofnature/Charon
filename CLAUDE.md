@@ -29,6 +29,7 @@ Charon is a standalone Dalamud plugin for FFXIV (named for the ferryman of Greek
 - Build BOTH configs before any change is done: `dotnet build Charon.sln -c Debug` AND `-c Release`; run `dotnet test Charon.Tests`.
 - Release build emits `Charon/bin/Release/Charon/latest.zip` (DalamudPackager) for GitHub releases.
 - Versions must match across: `Charon.csproj` `<Version>`, `CharonPlugin.PluginVersion`, `repo.json` `AssemblyVersion` + download-link tags, and the Charon entry in the combined `D:\Dev\Olympus\repo.json`.
+- **When cutting a release that adds a user-facing feature, UPDATE `README.md` in the same release** — add/refresh the feature section, the intro blurb, and any mockups. The README is the repo's front page; a release that ships a feature it doesn't mention is incomplete.
 
 ## UI
 Single window (`Windows/MainWindow.cs`), Daedalus-config SIDEBAR style (mirrors `ConfigSidebar.cs`: grey small-cap category headers, gold selection = 2px left accent bar over a 10% gold wash, 140px sidebar child + content child, resizable with SizeConstraints). Theme via `Windows/CharonTheme.cs` (palette copied from the design skill — keep in sync). Sections: FEATURES → General (auto accept + follow teleport), Auto Pillion (settings + rider list that shows MOCK rows when no session is live, plus a collapsible Details tree with boarding status / raw seat data), Heal Watch; FLEET → Trusted List ([LAN]/[Manual] table, add/import/scramble); SYSTEM → Debug (all status lines + logs). Sidebar rows carry a green/grey feature-state dot.
