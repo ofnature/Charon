@@ -3,3 +3,7 @@ obj/
 .vs/
 *.user
 TestResults/
+
+# Internal docs — keep local, not in the public repo (README.md is the only tracked .md)
+CLAUDE.md
+ROADMAP.md
