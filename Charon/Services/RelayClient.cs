@@ -23,6 +23,9 @@ public sealed class RelayClient : IDisposable
     /// <summary>Owner-authoritative pillion seat assignments (PillionAssignmentMessage JSON).</summary>
     public const string PillionChannel = "charon.pillion";
 
+    /// <summary>Fleet Follow commands (FollowMessage JSON — leader/target/act).</summary>
+    public const string FollowChannel = "charon.follow";
+
     /// <summary>Rally-to-flag broadcasts (roadmap #6 — not yet implemented).</summary>
     public const string RallyChannel = "charon.rally";
 

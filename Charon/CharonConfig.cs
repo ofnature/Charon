@@ -34,6 +34,16 @@ public sealed class CharonConfig : IPluginConfiguration
     /// </summary>
     public string TeleportOfferAddonName { get; set; } = string.Empty;
 
+    // Fleet Follow
+    /// <summary>How close (yalms) a follower trails its leader before it stops moving.</summary>
+    public float FollowDistance { get; set; } = 2.5f;
+
+    /// <summary>Stop following while IN COMBAT during a boss module (both true) — hands movement to BMR.</summary>
+    public bool FollowStopInBossFight { get; set; } = true;
+
+    /// <summary>Active follow leader ("" = not following). Persisted so a reload mid-follow resumes.</summary>
+    public string FollowLeaderName { get; set; } = string.Empty;
+
     // Heal Watch
     /// <summary>Healer toon tops up fleet toons from LAN vitals (out-of-party healing).</summary>
     public bool HealWatchEnabled { get; set; } = false;

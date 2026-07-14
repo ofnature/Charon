@@ -6,6 +6,7 @@ using Dalamud.Bindings.ImGui;
 using Dalamud.Interface.Windowing;
 using Charon.Features.AutoAccept;
 using Charon.Features.AutoPillion;
+using Charon.Features.Follow;
 using Charon.Features.GroupManagement;
 using Charon.Features.HealWatch;
 using Charon.Services;
@@ -27,10 +28,18 @@ public sealed class MainWindow : Window
         AutoPillion,
         HealWatch,
         GroupMgmt,
+        Follow,
         FcChest,
         TrustedList,
         Debug,
     }
+
+    /// <summary>Sender-side follow command callbacks, wired from the plugin.</summary>
+    public sealed record FollowCommands(
+        Action<string> Follow,
+        Action<string> Stop,
+        Action FollowAll,
+        Action StopAll);
 
     private const float SidebarWidth = 140f;
     private static readonly Vector4 AccentWash = new(0.85f, 0.65f, 0.20f, 0.10f);
@@ -44,13 +53,16 @@ public sealed class MainWindow : Window
     private readonly HealWatchManager _healWatch;
     private readonly InviteManager _groupInvites;
     private readonly FcChestManager _fcChest;
+    private readonly FollowManager _followManager;
     private readonly Func<IReadOnlyList<(int Seat, uint EntityId, string Name)>> _rawSeatOccupancy;
     private readonly Func<string> _boardingStatus;
     private readonly Func<string> _followStatus;
     private readonly Func<string> _healStatus;
+    private readonly Func<string> _followFleetStatus;
     private readonly Func<int> _partySize;
     private readonly Func<string, bool> _isInParty;
     private readonly Func<string> _localName;
+    private readonly FollowCommands _followCommands;
 
     private Section _section = Section.General;
     private string _addName = string.Empty;
@@ -85,13 +97,16 @@ public sealed class MainWindow : Window
         HealWatchManager healWatch,
         InviteManager groupInvites,
         FcChestManager fcChest,
+        FollowManager followManager,
         Func<IReadOnlyList<(int Seat, uint EntityId, string Name)>> rawSeatOccupancy,
         Func<string> boardingStatus,
         Func<string> followStatus,
         Func<string> healStatus,
+        Func<string> followFleetStatus,
         Func<int> partySize,
         Func<string, bool> isInParty,
-        Func<string> localName)
+        Func<string> localName,
+        FollowCommands followCommands)
         : base("Charon##CharonMain")
     {
         _config = config;
@@ -103,13 +118,16 @@ public sealed class MainWindow : Window
         _healWatch = healWatch;
         _groupInvites = groupInvites;
         _fcChest = fcChest;
+        _followManager = followManager;
         _rawSeatOccupancy = rawSeatOccupancy;
         _boardingStatus = boardingStatus;
         _followStatus = followStatus;
         _healStatus = healStatus;
+        _followFleetStatus = followFleetStatus;
         _partySize = partySize;
         _isInParty = isInParty;
         _localName = localName;
+        _followCommands = followCommands;
 
         Size = new Vector2(600, 440);
         SizeCondition = ImGuiCond.FirstUseEver;
@@ -150,6 +168,7 @@ public sealed class MainWindow : Window
 
         DrawCategoryHeader("FLEET");
         DrawNavItem("Group Mgmt", Section.GroupMgmt, null);
+        DrawNavItem("Follow", Section.Follow, _followManager.Following);
         DrawNavItem("FC Chest", Section.FcChest, null);
         DrawNavItem("Trusted List", Section.TrustedList, null);
         ImGui.Spacing();
@@ -213,6 +232,7 @@ public sealed class MainWindow : Window
             case Section.AutoPillion: DrawAutoPillionSection(); break;
             case Section.HealWatch: DrawHealWatchSection(); break;
             case Section.GroupMgmt: DrawGroupSection(); break;
+            case Section.Follow: DrawFollowSection(); break;
             case Section.FcChest: DrawFcChestSection(); break;
             case Section.TrustedList: DrawTrustedSection(); break;
             case Section.Debug: DrawDebugSection(); break;
@@ -592,6 +612,123 @@ public sealed class MainWindow : Window
                     $"{entry.TimeUtc:HH:mm:ss}  {ScrambleIn(entry.Detail)}");
             }
         }
+    }
+
+    // --- Fleet Follow ---
+
+    private void DrawFollowSection()
+    {
+        DrawPageHeader("Fleet Follow");
+
+        // This box's own follow state (it may have been commanded to follow someone).
+        if (_followManager.Following)
+        {
+            ImGui.TextColored(CharonTheme.StatusGreen, $"● This toon: {ScrambleIn(_followFleetStatus())}");
+            ImGui.SameLine();
+            if (ImGui.SmallButton("Stop##followself"))
+                _followCommands.Stop(_localName());
+        }
+        else
+        {
+            ImGui.TextColored(CharonTheme.TextDisabled, "This toon: not following anyone");
+        }
+
+        // Follow settings.
+        var distance = _config.FollowDistance;
+        ImGui.SetNextItemWidth(160f);
+        if (ImGui.SliderFloat("Follow Distance##follow", ref distance, 1.0f, 8.0f, "%.1f y"))
+        {
+            _config.FollowDistance = distance;
+            _save();
+        }
+        CharonTheme.HelpMarker("How close a follower trails its leader before it stops moving.");
+
+        var stopInBoss = _config.FollowStopInBossFight;
+        if (ImGui.Checkbox("Stop in boss fights##follow", ref stopInBoss))
+        {
+            _config.FollowStopInBossFight = stopInBoss;
+            _save();
+        }
+        CharonTheme.HelpMarker("Pause following only while IN COMBAT during a BMR boss module (both true) —\n"
+                               + "pre-pull and normal (non-boss) combat keep following. When it pauses,\n"
+                               + "movement is handed to BossMod for the fight, then resumes automatically.");
+
+        ImGui.Spacing();
+
+        // Sender controls — command the fleet to follow this toon.
+        var roster = _roster.GetLanPartyMembers();
+        var localName = _localName();
+        var onlineCount = roster.Count(t => t.IsOnline && !t.CharacterName.Equals(localName, StringComparison.OrdinalIgnoreCase));
+        var canCommand = onlineCount > 0 && _roster.IsAvailable;
+
+        if (!canCommand) ImGui.BeginDisabled();
+        ImGui.PushStyleColor(ImGuiCol.Button, CharonTheme.AccentGold);
+        ImGui.PushStyleColor(ImGuiCol.ButtonHovered, CharonTheme.AccentGold);
+        ImGui.PushStyleColor(ImGuiCol.ButtonActive, CharonTheme.AccentDim);
+        ImGui.PushStyleColor(ImGuiCol.Text, CharonTheme.BgDeep);
+        if (ImGui.Button("Follow Me (All)", new Vector2(-1f, 0f)) && canCommand)
+            _followCommands.FollowAll();
+        ImGui.PopStyleColor(4);
+        if (!canCommand) ImGui.EndDisabled();
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip(_roster.IsAvailable
+                ? "Tell every online LAN toon to follow this character (over the LAN relay)."
+                : "Daedalus LAN roster/relay unavailable");
+
+        ImGui.SameLine();
+        if (ImGui.Button("Stop All##follow"))
+            _followCommands.StopAll();
+
+        ImGui.Spacing();
+        ImGui.TextColored(CharonTheme.TextSecondary, $"LAN Party ({onlineCount} online)");
+
+        if (roster.Count == 0)
+        {
+            ImGui.TextColored(CharonTheme.TextDisabled, "No LAN roster — is Daedalus running with the LAN coordinator on?");
+        }
+        else if (ImGui.BeginTable("followparty", 3,
+                     ImGuiTableFlags.BordersInnerV | ImGuiTableFlags.RowBg | ImGuiTableFlags.SizingFixedFit))
+        {
+            ImGui.TableSetupColumn("##dot", ImGuiTableColumnFlags.WidthFixed, 16f);
+            ImGui.TableSetupColumn("Name", ImGuiTableColumnFlags.WidthFixed, 160f);
+            ImGui.TableSetupColumn("##action", ImGuiTableColumnFlags.WidthStretch);
+
+            foreach (var toon in roster)
+            {
+                var isSelf = toon.CharacterName.Equals(localName, StringComparison.OrdinalIgnoreCase);
+
+                ImGui.TableNextRow();
+                ImGui.TableNextColumn();
+                ImGui.TextColored(toon.IsOnline ? CharonTheme.StatusGreen : CharonTheme.StatusGrey,
+                    toon.IsOnline ? "●" : "○");
+                ImGui.TableNextColumn();
+                ImGui.TextUnformatted(Display(toon.CharacterName));
+                ImGui.TableNextColumn();
+
+                if (isSelf)
+                {
+                    ImGui.TextColored(CharonTheme.TextDisabled, "You");
+                }
+                else if (!toon.IsOnline)
+                {
+                    ImGui.TextColored(CharonTheme.TextDisabled, "Offline");
+                }
+                else
+                {
+                    if (ImGui.SmallButton($"Follow##f{toon.CharacterName}"))
+                        _followCommands.Follow(toon.CharacterName);
+                    ImGui.SameLine();
+                    if (ImGui.SmallButton($"Stop##s{toon.CharacterName}"))
+                        _followCommands.Stop(toon.CharacterName);
+                }
+            }
+
+            ImGui.EndTable();
+        }
+
+        if (!_roster.IsAvailable)
+            ImGui.TextColored(CharonTheme.TextDisabled,
+                "Cross-box follow needs the Daedalus LAN relay. /charon follow <name> drives this box locally.");
     }
 
     // --- FC Chest Management ---

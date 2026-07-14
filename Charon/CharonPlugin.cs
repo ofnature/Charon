@@ -3,12 +3,14 @@ using System.Collections.Generic;
 using System.Linq;
 using Dalamud.Game.Addon.Lifecycle;
 using Dalamud.Game.Addon.Lifecycle.AddonArgTypes;
+using Dalamud.Game.ClientState.Conditions;
 using Dalamud.Game.Command;
 using Dalamud.Interface.Windowing;
 using Dalamud.Plugin;
 using Dalamud.Plugin.Services;
 using Charon.Features.AutoAccept;
 using Charon.Features.AutoPillion;
+using Charon.Features.Follow;
 using Charon.Features.GroupManagement;
 using Charon.Features.HealWatch;
 using Charon.Ipc;
@@ -30,6 +32,7 @@ public sealed class CharonPlugin : IDalamudPlugin
     private readonly IPartyList _partyList;
     private readonly IClientState _clientState;
     private readonly IAetheryteList _aetheryteList;
+    private readonly ICondition _condition;
     private readonly IPluginLog _log;
 
     private readonly CharonConfig _config;
@@ -46,6 +49,13 @@ public sealed class CharonPlugin : IDalamudPlugin
     private readonly HealExecutor _healExecutor;
     private readonly InviteManager _groupInvites;
     private readonly FcChestManager _fcChest;
+    private readonly FollowManager _followManager;
+    private readonly BossModClient _bossMod;
+
+    // Fleet Follow: our own nav-path bookkeeping (separate from the pillion path state).
+    private bool _followNavIssued;
+    private DateTime _lastFollowNavUtc = DateTime.MinValue;
+    private string _followFleetStatus = "idle";
 
     // Heal Watch runs at 1 Hz; status surfaced in the window.
     private DateTime _lastHealScanUtc = DateTime.MinValue;
@@ -116,6 +126,7 @@ public sealed class CharonPlugin : IDalamudPlugin
         IPartyList partyList,
         IClientState clientState,
         IAetheryteList aetheryteList,
+        ICondition condition,
         IDataManager dataManager,
         IAddonLifecycle addonLifecycle,
         IGameGui gameGui,
@@ -128,6 +139,7 @@ public sealed class CharonPlugin : IDalamudPlugin
         _partyList = partyList;
         _clientState = clientState;
         _aetheryteList = aetheryteList;
+        _condition = condition;
         _log = log;
 
         _config = pluginInterface.GetPluginConfig() as CharonConfig ?? new CharonConfig();
@@ -149,6 +161,10 @@ public sealed class CharonPlugin : IDalamudPlugin
             },
             log: message => _log.Debug("[GroupMgmt] {0}", message));
         _fcChest = new FcChestManager(gameGui, dataManager, log);
+        _bossMod = new BossModClient(pluginInterface);
+        _followManager = new FollowManager(FollowConfig.From(_config));
+        if (_config.FollowLeaderName.Length > 0)
+            _followManager.StartFollowing(_config.FollowLeaderName); // resume a follow interrupted by reload
         _teleportOffer = new TeleportOfferInterop(
             addonLifecycle,
             gameGui,
@@ -170,12 +186,14 @@ public sealed class CharonPlugin : IDalamudPlugin
         _inviteInterop = new GroupInviteInterop(dataManager, _inviteManager, log);
 
         _mainWindow = new MainWindow(_config, SaveConfig, _whitelist, _daedalusIpc, _pillionManager, _inviteManager,
-            _healWatch, _groupInvites, _fcChest, ReadRawSeatOccupancy, () => _boardingStatus,
+            _healWatch, _groupInvites, _fcChest, _followManager, ReadRawSeatOccupancy, () => _boardingStatus,
             () => $"{_followStatus} · offer: {_teleportOffer.Status}",
             () => _healStatus,
+            () => _followFleetStatus,
             () => _partyList.Length,
             IsInMyParty,
-            () => _objectTable.LocalPlayer?.Name.TextValue ?? string.Empty);
+            () => _objectTable.LocalPlayer?.Name.TextValue ?? string.Empty,
+            new MainWindow.FollowCommands(CommandFollow, CommandStopFollow, CommandFollowAll, CommandStopFollowAll));
         _mainWindow.IsOpen = _config.MainWindowVisible;
         _windowSystem.AddWindow(_mainWindow);
 
@@ -184,7 +202,7 @@ public sealed class CharonPlugin : IDalamudPlugin
 
         _commandManager.AddHandler(CommandName, new CommandInfo(OnCommand)
         {
-            HelpMessage = "Toggle the Charon window.",
+            HelpMessage = "Toggle the Charon window. /charon follow <name> to follow a toon, /charon follow stop to stop.",
         });
 
         // Auto-open the FC chest window when the game's Free Company chest opens (and close it
@@ -227,6 +245,27 @@ public sealed class CharonPlugin : IDalamudPlugin
 
     private void OnCommand(string command, string args)
     {
+        var trimmed = args.Trim();
+
+        // "/charon follow <name>" drives the LOCAL box directly (no relay) — handy for testing.
+        // "/charon follow stop" (or unfollow) clears it. Bare "/charon" toggles the window.
+        if (trimmed.StartsWith("follow", StringComparison.OrdinalIgnoreCase))
+        {
+            var rest = trimmed[6..].Trim();
+            if (rest.Length == 0 || rest.Equals("stop", StringComparison.OrdinalIgnoreCase)
+                                 || rest.Equals("off", StringComparison.OrdinalIgnoreCase))
+                StopLocalFollow();
+            else
+                StartLocalFollow(rest);
+            return;
+        }
+
+        if (trimmed.Equals("unfollow", StringComparison.OrdinalIgnoreCase))
+        {
+            StopLocalFollow();
+            return;
+        }
+
         _mainWindow.IsOpen = !_mainWindow.IsOpen;
         _config.MainWindowVisible = _mainWindow.IsOpen;
         SaveConfig();
@@ -272,6 +311,7 @@ public sealed class CharonPlugin : IDalamudPlugin
         _inviteInterop.Poll(now);
         _teleportOffer.Update(now);
         UpdateFollowTeleport(now);
+        UpdateFleetFollow(now);
         UpdateHealWatch(now);
         _groupInvites.Update(now);
         _fcChest.Update(now);
@@ -441,6 +481,157 @@ public sealed class CharonPlugin : IDalamudPlugin
         }
 
         return null;
+    }
+
+    /// <summary>
+    /// Fleet Follow (receiver side): trail the commanded leader via vnavmesh. Every gate is
+    /// re-checked each tick, so a paused follower resumes when the gate clears — no reissue.
+    /// On ANY non-Move outcome we actively stop our path, so movement is released cleanly the
+    /// instant a boss fight engages (BMR then owns movement).
+    /// </summary>
+    private void UpdateFleetFollow(DateTime now)
+    {
+        _followManager.UpdateConfig(FollowConfig.From(_config));
+
+        if (!_followManager.Following)
+        {
+            _followFleetStatus = "idle";
+            StopFollowNavIfOurs();
+            return;
+        }
+
+        var local = _objectTable.LocalPlayer;
+        if (local == null)
+        {
+            _followFleetStatus = "no player";
+            StopFollowNavIfOurs();
+            return;
+        }
+
+        var leader = FindPlayerByName(_followManager.LeaderName);
+        System.Numerics.Vector3? leaderPos = leader?.Position;
+
+        // Yield movement to the game/other features: dead, cutscene/zoning, being carried, or
+        // an active pillion boarding session (which drives the shared vnav path itself).
+        var localBusy = local.IsDead
+                        || _condition[ConditionFlag.BetweenAreas]
+                        || _condition[ConditionFlag.OccupiedInCutSceneEvent]
+                        || _condition[ConditionFlag.WatchingCutscene]
+                        || _mountReader.IsLocalRidingPillion()
+                        || _boardingOwnerEntityId != 0;
+
+        var decision = _followManager.Evaluate(
+            leaderPos, local.Position,
+            _condition[ConditionFlag.InCombat], _bossMod.HasActiveModule, localBusy);
+        _followFleetStatus = decision.Status;
+
+        if (decision.Action == FollowAction.Move)
+            FollowNavTo(decision.Target, now);
+        else
+            StopFollowNavIfOurs(); // Idle or Hold — release the path (the boss-fight handoff)
+    }
+
+    private void FollowNavTo(System.Numerics.Vector3 target, DateTime now)
+    {
+        if (!_nav.IsAvailable)
+        {
+            _followFleetStatus += " — vnavmesh unavailable";
+            return;
+        }
+
+        // Re-issue as the leader moves: when our path finished/failed, throttled to 0.5s.
+        if ((!_followNavIssued || !_nav.IsPathRunning) && now - _lastFollowNavUtc > TimeSpan.FromSeconds(0.5))
+        {
+            if (_nav.MoveCloseTo(target, _config.FollowDistance))
+            {
+                _followNavIssued = true;
+                _lastFollowNavUtc = now;
+            }
+        }
+    }
+
+    private void StopFollowNavIfOurs()
+    {
+        if (!_followNavIssued)
+            return;
+
+        _followNavIssued = false;
+        if (_nav.IsPathRunning)
+            _nav.Stop();
+    }
+
+    private Dalamud.Game.ClientState.Objects.SubKinds.IPlayerCharacter? FindPlayerByName(string characterName)
+    {
+        if (string.IsNullOrEmpty(characterName))
+            return null;
+
+        foreach (var obj in _objectTable)
+        {
+            if (obj is Dalamud.Game.ClientState.Objects.SubKinds.IPlayerCharacter pc
+                && pc.Name.TextValue.Equals(characterName, StringComparison.OrdinalIgnoreCase))
+                return pc;
+        }
+
+        return null;
+    }
+
+    // --- Fleet Follow: sender side (publish commands over the LAN relay) ---
+
+    /// <summary>Tell a toon to follow the local character.</summary>
+    private void CommandFollow(string targetName)
+    {
+        var me = _objectTable.LocalPlayer?.Name.TextValue ?? string.Empty;
+        if (me.Length == 0 || targetName.Length == 0 || targetName.Equals(me, StringComparison.OrdinalIgnoreCase))
+            return;
+        _relay.Publish(RelayClient.FollowChannel, FollowRelay.Serialize(me, targetName, FollowRelay.ActStart));
+        _log.Debug("Follow command → {0} follow me", targetName);
+    }
+
+    /// <summary>Tell every online LAN toon (except us) to follow the local character.</summary>
+    private void CommandFollowAll()
+    {
+        var me = _objectTable.LocalPlayer?.Name.TextValue ?? string.Empty;
+        if (me.Length == 0)
+            return;
+        foreach (var toon in _daedalusIpc.GetLanPartyMembers())
+        {
+            if (toon.IsOnline && !toon.CharacterName.Equals(me, StringComparison.OrdinalIgnoreCase))
+                _relay.Publish(RelayClient.FollowChannel, FollowRelay.Serialize(me, toon.CharacterName, FollowRelay.ActStart));
+        }
+    }
+
+    private void CommandStopFollow(string targetName)
+    {
+        if (targetName.Length == 0)
+            return;
+        _relay.Publish(RelayClient.FollowChannel, FollowRelay.Serialize(string.Empty, targetName, FollowRelay.ActStop));
+    }
+
+    /// <summary>Stop every online LAN toon, and stop the local follower too.</summary>
+    private void CommandStopFollowAll()
+    {
+        foreach (var toon in _daedalusIpc.GetLanPartyMembers())
+        {
+            if (toon.IsOnline)
+                _relay.Publish(RelayClient.FollowChannel, FollowRelay.Serialize(string.Empty, toon.CharacterName, FollowRelay.ActStop));
+        }
+        StopLocalFollow();
+    }
+
+    /// <summary>Start/stop the LOCAL follower directly (relay receive + /charon follow command).</summary>
+    private void StartLocalFollow(string leaderName)
+    {
+        _followManager.StartFollowing(leaderName);
+        _config.FollowLeaderName = _followManager.LeaderName;
+        SaveConfig();
+    }
+
+    private void StopLocalFollow()
+    {
+        _followManager.Stop();
+        _config.FollowLeaderName = string.Empty;
+        SaveConfig();
+        StopFollowNavIfOurs();
     }
 
     private void UpdatePillionSession(DateTime now)
@@ -882,6 +1073,27 @@ public sealed class CharonPlugin : IDalamudPlugin
     {
         if (channel == RelayClient.PillionChannel)
             OnPillionAssignmentReceived(json);
+        else if (channel == RelayClient.FollowChannel)
+            OnFollowCommandReceived(json);
+    }
+
+    /// <summary>Receiver side: a follow command addressed to our character starts/stops following.</summary>
+    private void OnFollowCommandReceived(string json)
+    {
+        var message = FollowRelay.Parse(json);
+        var me = _objectTable.LocalPlayer?.Name.TextValue ?? string.Empty;
+        if (message == null || me.Length == 0 || !message.Target.Equals(me, StringComparison.OrdinalIgnoreCase))
+            return;
+
+        if (message.Act == FollowRelay.ActStop)
+        {
+            StopLocalFollow();
+        }
+        else if (!message.Leader.Equals(me, StringComparison.OrdinalIgnoreCase))
+        {
+            StartLocalFollow(message.Leader);
+            _log.Debug("Now following {0} (relay command)", message.Leader);
+        }
     }
 
     /// <summary>
