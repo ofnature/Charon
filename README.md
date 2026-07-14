@@ -4,9 +4,9 @@
 
 # Charon
 
-**The ferryman for your fleet.** A Dalamud plugin for FFXIV, companion to [Daedalus](https://github.com/ofnature/Daedalus) — party assembly, auto pillion with smart seat scanning, whitelisted auto group invite, follow teleport, a heal-watch babysitter for leveling alts, and FC chest management.
+**The ferryman for your fleet.** A Dalamud plugin for FFXIV, companion to [Daedalus](https://github.com/ofnature/Daedalus) — party assembly, auto pillion with smart seat scanning, whitelisted auto group invite, follow teleport, fleet follow, a heal-watch babysitter for leveling alts, and FC chest management.
 
-Built for multibox setups: invite the fleet, group up, mount up, teleport out, keep the bots alive, and manage the FC chest — without touching seven other keyboards.
+Built for multibox setups: invite the fleet, group up, mount up, teleport out, follow you around, keep the bots alive, and manage the FC chest — without touching seven other keyboards.
 
 <p align="center">
   <img src="images/ui-main.png" width="500" alt="Charon window — Auto Pillion (mockup)">
@@ -44,6 +44,14 @@ When a trusted party member teleports, the rest of the group follows:
 - Auto-accepts the native party teleport offer ("Accept Teleport to X?") — the dialog is learned automatically the first time it appears.
 - Fallback: when a trusted member zones away without an offer, teleport to an attuned aetheryte in their new zone.
 - Same group only, small randomized delay per toon.
+
+## Fleet Follow
+
+BossMod-Reborn-style follow, commanded across the fleet: from your main, tell every LAN toon to follow you around the overworld and through dungeons.
+
+- **Follow Me (All)** or per-toon Follow/Stop — the commanded toons trail you via [vnavmesh](https://github.com/awgil/ffxiv_navmesh), pathing around walls and terrain.
+- **Clean boss handoff:** follow keeps going into the arena and through pre-pull, then hard-stops the instant a boss fight engages (in combat **and** a BossMod module loaded) so BMR's AI owns movement — and resumes automatically when the fight ends. Normal trash combat never breaks the convoy.
+- Pairs with Follow Teleport (zone away and the alts teleport to you, then follow resumes) and yields cleanly to auto-pillion when you mount up. `/charon follow <name>` drives one box directly.
 
 ## Heal Watch
 
@@ -92,6 +100,6 @@ dotnet build Charon.sln -c Release
 dotnet test Charon.Tests
 ```
 
-Targets `Dalamud.NET.Sdk/15.0.0`; the test suite covers the seat state machine, deterministic seat picking, relay seat commands, whitelist matching, heal-watch triage, mass-invite eligibility, FC chest planning, and IPC fallback.
+Targets `Dalamud.NET.Sdk/15.0.0`; the test suite covers the seat state machine, deterministic seat picking, relay seat commands, whitelist matching, heal-watch triage, mass-invite eligibility, FC chest planning, follow gating, and IPC fallback.
 
 *Window images above are stylized mockups of the in-game UI (names scrambled).*
