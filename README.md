@@ -74,6 +74,7 @@ Consolidate and reclaim the Free Company chest, per page:
 - **Entrust Duplicates** — sends every inventory stack of items already on the page, merging into existing stacks instead of scattering into free slots.
 - **Withdraw all but 1** per item — leaves exactly one unit behind as the seed and pulls the rest to your bags.
 - Manual trigger only, confirm before entrusting, gated on the chest being open with the page loaded; every move is verified against real chest state before the next one fires.
+- **Text Size** slider (100–250%) for the item list — scales the whole panel proportionally, persisted per install.
 
 ## Daedalus Integration
 
