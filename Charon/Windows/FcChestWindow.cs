@@ -34,6 +34,17 @@ public sealed class FcChestWindow : Window
         };
     }
 
+    /// <summary>Keep the minimum size in step with the text scale so bigger text can't clip.</summary>
+    public override void PreDraw()
+    {
+        var scale = Math.Clamp(_config.FcChestFontScale, FcChestView.MinFontScale, FcChestView.MaxFontScale);
+        SizeConstraints = new WindowSizeConstraints
+        {
+            MinimumSize = new Vector2(320f * scale, 300f),
+            MaximumSize = new Vector2(900f, 1000f),
+        };
+    }
+
     public override void Draw()
     {
         ImGui.PushStyleVar(ImGuiStyleVar.FrameRounding, 4f);

@@ -13,10 +13,33 @@ namespace Charon.Windows;
 /// </summary>
 internal static class FcChestView
 {
+    internal const float MinFontScale = 1.0f;
+    internal const float MaxFontScale = 2.5f;
+
+    /// <summary>
+    /// Draws the body at the user's text scale (accessibility — the item list is small by
+    /// default). SetWindowFontScale scales TEXT only, so every fixed pixel size in here is
+    /// multiplied by the same factor to keep the layout proportional. The scale is reset
+    /// before returning so it never leaks into the rest of the host window.
+    /// </summary>
     public static void DrawBody(CharonConfig config, Action save, FcChestManager fcChest)
     {
+        var scale = Math.Clamp(config.FcChestFontScale, MinFontScale, MaxFontScale);
+        ImGui.SetWindowFontScale(scale);
+        try
+        {
+            DrawScaledBody(config, save, fcChest, scale);
+        }
+        finally
+        {
+            ImGui.SetWindowFontScale(1f);
+        }
+    }
+
+    private static void DrawScaledBody(CharonConfig config, Action save, FcChestManager fcChest, float scale)
+    {
         var page = Math.Clamp(config.LastSelectedChestPage, 1, 5);
-        ImGui.SetNextItemWidth(120f);
+        ImGui.SetNextItemWidth(120f * scale);
         if (ImGui.BeginCombo("Chest Page", $"Page {page}"))
         {
             for (var i = 1; i <= 5; i++)
@@ -29,6 +52,17 @@ internal static class FcChestView
             }
             ImGui.EndCombo();
         }
+
+        // Accessibility: text size for this panel, persisted.
+        var scalePercent = scale * 100f;
+        ImGui.SetNextItemWidth(120f * scale);
+        if (ImGui.SliderFloat("Text Size", ref scalePercent, MinFontScale * 100f, MaxFontScale * 100f, "%.0f%%"))
+        {
+            config.FcChestFontScale = Math.Clamp(scalePercent / 100f, MinFontScale, MaxFontScale);
+            save();
+        }
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Make the item list bigger/smaller. Applies to this panel only.");
 
         var chestOpen = fcChest.IsChestOpen();
         var pageLoaded = chestOpen && fcChest.IsPageLoaded(page);
@@ -55,13 +89,13 @@ internal static class FcChestView
             ImGui.TextColored(CharonTheme.TextSecondary, "Whole stacks are moved — this cannot be undone.");
             ImGui.Spacing();
 
-            if (ImGui.Button("Confirm", new Vector2(120, 0)))
+            if (ImGui.Button("Confirm", new Vector2(120f * scale, 0)))
             {
                 fcChest.StartEntrust(page);
                 ImGui.CloseCurrentPopup();
             }
             ImGui.SameLine();
-            if (ImGui.Button("Cancel", new Vector2(120, 0)))
+            if (ImGui.Button("Cancel", new Vector2(120f * scale, 0)))
                 ImGui.CloseCurrentPopup();
             ImGui.EndPopup();
         }
@@ -84,12 +118,12 @@ internal static class FcChestView
             }
             else if (ImGui.BeginTable("fcContents", 4,
                          ImGuiTableFlags.BordersInnerV | ImGuiTableFlags.RowBg | ImGuiTableFlags.SizingFixedFit
-                         | ImGuiTableFlags.ScrollY, new Vector2(0f, 220f)))
+                         | ImGuiTableFlags.ScrollY, new Vector2(0f, 220f * scale)))
             {
                 ImGui.TableSetupColumn("Item", ImGuiTableColumnFlags.WidthStretch);
-                ImGui.TableSetupColumn("Qty", ImGuiTableColumnFlags.WidthFixed, 60f);
-                ImGui.TableSetupColumn("Stacks", ImGuiTableColumnFlags.WidthFixed, 50f);
-                ImGui.TableSetupColumn("##act", ImGuiTableColumnFlags.WidthFixed, 130f);
+                ImGui.TableSetupColumn("Qty", ImGuiTableColumnFlags.WidthFixed, 60f * scale);
+                ImGui.TableSetupColumn("Stacks", ImGuiTableColumnFlags.WidthFixed, 50f * scale);
+                ImGui.TableSetupColumn("##act", ImGuiTableColumnFlags.WidthFixed, 130f * scale);
                 ImGui.TableSetupScrollFreeze(0, 1);
                 ImGui.TableHeadersRow();
 

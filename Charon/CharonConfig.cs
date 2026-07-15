@@ -81,6 +81,9 @@ public sealed class CharonConfig : IPluginConfiguration
     /// <summary>Pop the standalone FC Chest window automatically when the game chest opens.</summary>
     public bool FcChestWindowAutoOpen { get; set; } = true;
 
+    /// <summary>Text scale for the FC chest UI (1.0 = normal). Accessibility — the item list gets hard to read.</summary>
+    public float FcChestFontScale { get; set; } = 1.0f;
+
     // Window state
     public bool MainWindowVisible { get; set; } = true;
     public bool DebugSectionOpen { get; set; } = false;
