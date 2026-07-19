@@ -57,6 +57,12 @@ public sealed class CharonPlugin : IDalamudPlugin
     private DateTime _lastFollowNavUtc = DateTime.MinValue;
     private string _followFleetStatus = "idle";
 
+    // Reachability cache — the navmesh query flood-fills, so it runs on a throttle rather than
+    // every frame, and is forced immediately when the leader teleports (portal/lift).
+    private bool _leaderReachable = true;
+    private DateTime _lastReachabilityCheckUtc = DateTime.MinValue;
+    private static readonly TimeSpan ReachabilityCheckInterval = TimeSpan.FromSeconds(1.5);
+
     // Heal Watch runs at 1 Hz; status surfaced in the window.
     private DateTime _lastHealScanUtc = DateTime.MinValue;
     private string _healStatus = "idle";
@@ -511,6 +517,14 @@ public sealed class CharonPlugin : IDalamudPlugin
         var leader = FindPlayerByName(_followManager.LeaderName);
         System.Numerics.Vector3? leaderPos = leader?.Position;
 
+        // A big one-tick position jump = portal / teleport stone / lift, not walking. Re-verify
+        // reachability at once rather than pathing at a spot we may not be able to walk to.
+        var teleported = _followManager.NoteLeaderPosition(leaderPos);
+        if (teleported)
+            _log.Debug("Follow: {0} jumped position (portal?) — re-checking reachability", _followManager.LeaderName);
+
+        UpdateLeaderReachability(leaderPos, teleported, now);
+
         // Yield movement to the game/other features: dead, cutscene/zoning, being carried, or
         // an active pillion boarding session (which drives the shared vnav path itself).
         var localBusy = local.IsDead
@@ -522,13 +536,36 @@ public sealed class CharonPlugin : IDalamudPlugin
 
         var decision = _followManager.Evaluate(
             leaderPos, local.Position,
-            _condition[ConditionFlag.InCombat], _bossMod.HasActiveModule, localBusy);
+            _condition[ConditionFlag.InCombat], _bossMod.HasActiveModule, localBusy, _leaderReachable);
         _followFleetStatus = decision.Status;
 
         if (decision.Action == FollowAction.Move)
             FollowNavTo(decision.Target, now);
         else
             StopFollowNavIfOurs(); // Idle or Hold — release the path (the boss-fight handoff)
+    }
+
+    /// <summary>
+    /// Refresh the cached "can we actually walk to the leader" answer — throttled because the
+    /// navmesh query flood-fills, but forced the moment the leader teleports. Disabled by
+    /// config or with vnavmesh absent, we assume reachable (fail-open).
+    /// </summary>
+    private void UpdateLeaderReachability(System.Numerics.Vector3? leaderPos, bool forceNow, DateTime now)
+    {
+        if (!_config.FollowReachabilityCheck || leaderPos == null || !_nav.IsAvailable)
+        {
+            _leaderReachable = true;
+            return;
+        }
+
+        if (!forceNow && now - _lastReachabilityCheckUtc < ReachabilityCheckInterval)
+            return;
+
+        _lastReachabilityCheckUtc = now;
+        var reachable = _nav.IsReachable(leaderPos.Value);
+        if (reachable != _leaderReachable)
+            _log.Debug("Follow: {0} is now {1}", _followManager.LeaderName, reachable ? "reachable" : "UNREACHABLE");
+        _leaderReachable = reachable;
     }
 
     private void FollowNavTo(System.Numerics.Vector3 target, DateTime now)

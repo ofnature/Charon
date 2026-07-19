@@ -653,6 +653,16 @@ public sealed class MainWindow : Window
                                + "pre-pull and normal (non-boss) combat keep following. When it pauses,\n"
                                + "movement is handed to BossMod for the fight, then resumes automatically.");
 
+        var reachCheck = _config.FollowReachabilityCheck;
+        if (ImGui.Checkbox("Skip unreachable leaders##follow", ref reachCheck))
+        {
+            _config.FollowReachabilityCheck = reachCheck;
+            _save();
+        }
+        CharonTheme.HelpMarker("Check the navmesh before pathing. If the leader took a portal or teleport\n"
+                               + "stone and landed somewhere you can't walk to, hold instead of running at\n"
+                               + "a wall — and resume the moment they're reachable again.");
+
         ImGui.Spacing();
 
         // Sender controls — command the fleet to follow this toon.

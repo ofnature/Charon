@@ -117,6 +117,54 @@ public sealed class FollowManagerTests
         Assert.Equal(FollowAction.Hold, d.Action);
     }
 
+    // --- Portal / unreachable-leader handling ---
+
+    [Fact]
+    public void UnreachableLeader_Holds_InsteadOfPathingAtAWall()
+    {
+        var m = Following(leader: "Styx");
+        var d = m.Evaluate(Far, Origin, false, false, false, leaderReachable: false);
+        Assert.Equal(FollowAction.Hold, d.Action);
+        Assert.Contains("unreachable", d.Status);
+    }
+
+    [Fact]
+    public void LeaderBecomesReachableAgain_ResumesMove()
+    {
+        var m = Following();
+        Assert.Equal(FollowAction.Hold, m.Evaluate(Far, Origin, false, false, false, leaderReachable: false).Action);
+        // Came back through the portal (or we teleported to them) — resume, no reissue.
+        Assert.Equal(FollowAction.Move, m.Evaluate(Far, Origin, false, false, false, leaderReachable: true).Action);
+    }
+
+    [Fact]
+    public void NoteLeaderPosition_DetectsTeleportJump()
+    {
+        var m = Following();
+        Assert.False(m.NoteLeaderPosition(Origin));                       // first sighting
+        Assert.False(m.NoteLeaderPosition(new Vector3(5f, 0f, 0f)));      // walked
+        Assert.True(m.NoteLeaderPosition(new Vector3(500f, 0f, 0f)));     // portal
+    }
+
+    [Fact]
+    public void NoteLeaderPosition_LeaderVanishing_IsNotAJump()
+    {
+        var m = Following();
+        m.NoteLeaderPosition(Origin);
+        Assert.False(m.NoteLeaderPosition(null)); // out of range ≠ teleport
+    }
+
+    [Fact]
+    public void NoteLeaderPosition_ResetsOnStartAndStop()
+    {
+        var m = Following();
+        m.NoteLeaderPosition(Origin);
+        m.Stop();
+        m.StartFollowing("Someone Else");
+        // First sighting after a fresh session must not read as a jump.
+        Assert.False(m.NoteLeaderPosition(new Vector3(900f, 0f, 0f)));
+    }
+
     [Fact]
     public void Stop_ClearsSession()
     {

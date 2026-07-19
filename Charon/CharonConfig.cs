@@ -44,6 +44,9 @@ public sealed class CharonConfig : IPluginConfiguration
     /// <summary>Active follow leader ("" = not following). Persisted so a reload mid-follow resumes.</summary>
     public string FollowLeaderName { get; set; } = string.Empty;
 
+    /// <summary>Verify the leader is actually walkable-to before pathing (catches portals/teleport stones).</summary>
+    public bool FollowReachabilityCheck { get; set; } = true;
+
     // Heal Watch
     /// <summary>Healer toon tops up fleet toons from LAN vitals (out-of-party healing).</summary>
     public bool HealWatchEnabled { get; set; } = false;

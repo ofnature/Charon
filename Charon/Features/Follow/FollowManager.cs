@@ -39,7 +39,15 @@ public sealed class FollowManager
     /// <summary>Hysteresis: start moving only past FollowDistance + this, so tiny leader shifts don't twitch.</summary>
     internal const float MoveDeadband = 1.5f;
 
+    /// <summary>
+    /// A leader position change larger than this in one tick isn't walking — it's a portal,
+    /// teleport stone, lift or other interact-object relocation. Used to force an immediate
+    /// reachability re-check instead of blindly pathing at the new spot.
+    /// </summary>
+    internal const float TeleportJumpYalms = 30f;
+
     private FollowConfig _config;
+    private Vector3? _lastLeaderPos;
 
     public FollowManager(FollowConfig config) => _config = config;
 
@@ -50,16 +58,42 @@ public sealed class FollowManager
 
     public void UpdateConfig(FollowConfig config) => _config = config;
 
-    public void StartFollowing(string leaderName) => LeaderName = leaderName?.Trim() ?? string.Empty;
+    public void StartFollowing(string leaderName)
+    {
+        LeaderName = leaderName?.Trim() ?? string.Empty;
+        _lastLeaderPos = null;
+    }
 
-    public void Stop() => LeaderName = string.Empty;
+    public void Stop()
+    {
+        LeaderName = string.Empty;
+        _lastLeaderPos = null;
+    }
+
+    /// <summary>
+    /// Feed the leader's position each tick. Returns true when it JUMPED — the leader took a
+    /// portal / teleport stone / lift rather than walking, so the caller should re-check
+    /// reachability immediately instead of trusting a cached result.
+    /// </summary>
+    public bool NoteLeaderPosition(Vector3? leaderPos)
+    {
+        var previous = _lastLeaderPos;
+        _lastLeaderPos = leaderPos;
+
+        if (previous == null || leaderPos == null)
+            return false; // first sighting or leader vanished — nothing to compare
+
+        return Vector3.Distance(previous.Value, leaderPos.Value) > TeleportJumpYalms;
+    }
 
     /// <param name="leaderPos">Leader's world position, or null when not resolvable (out of zone/range).</param>
     /// <param name="selfPos">Local player's world position.</param>
     /// <param name="inCombat">Local player is in combat.</param>
     /// <param name="hasActiveModule">A BMR boss module is active (its StateMachine has an active state).</param>
     /// <param name="localBusy">Local player can't be driven right now (dead, cutscene, zoning, being carried, pillion-boarding).</param>
-    public FollowDecision Evaluate(Vector3? leaderPos, Vector3 selfPos, bool inCombat, bool hasActiveModule, bool localBusy)
+    /// <param name="leaderReachable">Navmesh says we can actually walk there (false = portal/disconnected island).</param>
+    public FollowDecision Evaluate(Vector3? leaderPos, Vector3 selfPos, bool inCombat, bool hasActiveModule,
+        bool localBusy, bool leaderReachable = true)
     {
         if (!Following)
             return new FollowDecision(FollowAction.Idle, default, "idle");
@@ -73,6 +107,12 @@ public sealed class FollowManager
 
         if (leaderPos == null)
             return new FollowDecision(FollowAction.Hold, default, $"waiting — {LeaderName} not in zone");
+
+        // Portal case: visible on the map but on a disconnected navmesh island. Walking at it
+        // forever helps nobody — hold and say so; re-checked each tick, so coming back resumes.
+        if (!leaderReachable)
+            return new FollowDecision(FollowAction.Hold, default,
+                $"waiting — {LeaderName} unreachable (portal/instance?)");
 
         var distance = Horizontal(selfPos, leaderPos.Value);
         if (distance <= _config.FollowDistance + MoveDeadband)
