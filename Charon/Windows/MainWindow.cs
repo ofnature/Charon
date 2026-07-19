@@ -663,6 +663,16 @@ public sealed class MainWindow : Window
                                + "stone and landed somewhere you can't walk to, hold instead of running at\n"
                                + "a wall — and resume the moment they're reachable again.");
 
+        var takePortals = _config.FollowTakePortals;
+        if (ImGui.Checkbox("Take the leader's portal##follow", ref takePortals))
+        {
+            _config.FollowTakePortals = takePortals;
+            _save();
+        }
+        CharonTheme.HelpMarker("When the leader ports out of reach (raid arena transitions), walk to the\n"
+                               + "spot they ported FROM and click the same portal. Only fires while the\n"
+                               + "leader is unreachable — never clicks anything during normal following.");
+
         ImGui.Spacing();
 
         // Sender controls — command the fleet to follow this toon.

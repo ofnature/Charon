@@ -49,6 +49,17 @@ public sealed class FollowManager
     private FollowConfig _config;
     private Vector3? _lastLeaderPos;
 
+    /// <summary>
+    /// Where the leader stood JUST BEFORE a detected teleport jump — i.e. the spot they walked
+    /// to and clicked. The portal/lift they used is right there, so this is a precise hint for
+    /// "which object do I need to interact with to follow them", far safer than guessing at
+    /// whatever interactable happens to be near us. Null when no jump is pending.
+    /// </summary>
+    public Vector3? PortalHint { get; private set; }
+
+    /// <summary>Clear the portal hint (leader reachable again, or we took the portal).</summary>
+    public void ClearPortalHint() => PortalHint = null;
+
     public FollowManager(FollowConfig config) => _config = config;
 
     /// <summary>Leader we're following ("" = not following).</summary>
@@ -62,12 +73,14 @@ public sealed class FollowManager
     {
         LeaderName = leaderName?.Trim() ?? string.Empty;
         _lastLeaderPos = null;
+        PortalHint = null;
     }
 
     public void Stop()
     {
         LeaderName = string.Empty;
         _lastLeaderPos = null;
+        PortalHint = null;
     }
 
     /// <summary>
@@ -83,7 +96,11 @@ public sealed class FollowManager
         if (previous == null || leaderPos == null)
             return false; // first sighting or leader vanished — nothing to compare
 
-        return Vector3.Distance(previous.Value, leaderPos.Value) > TeleportJumpYalms;
+        if (Vector3.Distance(previous.Value, leaderPos.Value) <= TeleportJumpYalms)
+            return false;
+
+        PortalHint = previous; // they clicked something right here
+        return true;
     }
 
     /// <param name="leaderPos">Leader's world position, or null when not resolvable (out of zone/range).</param>

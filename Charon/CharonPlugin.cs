@@ -51,6 +51,7 @@ public sealed class CharonPlugin : IDalamudPlugin
     private readonly FcChestManager _fcChest;
     private readonly FollowManager _followManager;
     private readonly BossModClient _bossMod;
+    private readonly InteractHelper _interact;
 
     // Fleet Follow: our own nav-path bookkeeping (separate from the pillion path state).
     private bool _followNavIssued;
@@ -62,6 +63,14 @@ public sealed class CharonPlugin : IDalamudPlugin
     private bool _leaderReachable = true;
     private DateTime _lastReachabilityCheckUtc = DateTime.MinValue;
     private static readonly TimeSpan ReachabilityCheckInterval = TimeSpan.FromSeconds(1.5);
+
+    // Portal taking: when the leader ports between raid arenas, walk to the object they used
+    // and click it ourselves rather than stranding the follower.
+    private DateTime _lastPortalAttemptUtc = DateTime.MinValue;
+    private int _portalAttempts;
+    private const int MaxPortalAttempts = 6;
+    private const float PortalSearchRadius = 12f;   // how far from the leader's pre-jump spot to look
+    private const float PortalInteractRange = 4.5f; // game interact range
 
     // Heal Watch runs at 1 Hz; status surfaced in the window.
     private DateTime _lastHealScanUtc = DateTime.MinValue;
@@ -168,6 +177,7 @@ public sealed class CharonPlugin : IDalamudPlugin
             log: message => _log.Debug("[GroupMgmt] {0}", message));
         _fcChest = new FcChestManager(gameGui, dataManager, log);
         _bossMod = new BossModClient(pluginInterface);
+        _interact = new InteractHelper(log);
         _followManager = new FollowManager(FollowConfig.From(_config));
         if (_config.FollowLeaderName.Length > 0)
             _followManager.StartFollowing(_config.FollowLeaderName); // resume a follow interrupted by reload
@@ -539,10 +549,87 @@ public sealed class CharonPlugin : IDalamudPlugin
             _condition[ConditionFlag.InCombat], _bossMod.HasActiveModule, localBusy, _leaderReachable);
         _followFleetStatus = decision.Status;
 
+        // Leader ported somewhere we can't walk (raid arena transition): take the same portal
+        // instead of stranding here. Only in exactly that state, and only near where they stood.
+        if (decision.Action == FollowAction.Hold && !_leaderReachable
+            && _config.FollowTakePortals && _followManager.PortalHint != null)
+        {
+            if (TryTakeLeaderPortal(local.Position, _followManager.PortalHint.Value, now))
+                return; // driving toward / clicking the portal this tick
+        }
+
         if (decision.Action == FollowAction.Move)
             FollowNavTo(decision.Target, now);
         else
             StopFollowNavIfOurs(); // Idle or Hold — release the path (the boss-fight handoff)
+    }
+
+    /// <summary>
+    /// Take the portal/lift the leader just used. The hint is where they STOOD before jumping —
+    /// they walked to the thing and clicked it — so we look for an interactable right there
+    /// rather than guessing at whatever object happens to be near us. Walks over if needed,
+    /// then interacts. Returns true while it is driving this (caller skips normal follow).
+    /// </summary>
+    private bool TryTakeLeaderPortal(System.Numerics.Vector3 selfPos, System.Numerics.Vector3 portalHint, DateTime now)
+    {
+        if (_portalAttempts >= MaxPortalAttempts)
+        {
+            _followFleetStatus = $"waiting — {_followManager.LeaderName} ported; couldn't use the portal";
+            return false;
+        }
+
+        var portal = FindInteractableNear(portalHint, PortalSearchRadius);
+        if (portal == null)
+        {
+            _followFleetStatus = $"waiting — {_followManager.LeaderName} ported (no portal found here)";
+            return false;
+        }
+
+        var distance = System.Numerics.Vector3.Distance(selfPos, portal.Position);
+        if (distance > PortalInteractRange)
+        {
+            // Walk to it first — the portal itself is reachable even though the leader isn't.
+            FollowNavTo(portal.Position, now);
+            _followFleetStatus = $"taking {_followManager.LeaderName}'s portal ({distance:F1}y)";
+            return true;
+        }
+
+        StopFollowNavIfOurs();
+
+        if (now - _lastPortalAttemptUtc < TimeSpan.FromSeconds(2.5))
+            return true; // let the previous click resolve
+
+        _lastPortalAttemptUtc = now;
+        _portalAttempts++;
+        var clicked = _interact.TryInteract(portal);
+        _followFleetStatus = clicked
+            ? $"clicked {portal.Name.TextValue} (attempt {_portalAttempts})"
+            : $"portal click FAILED (attempt {_portalAttempts})";
+        _log.Info("Follow portal: {0}", _followFleetStatus);
+        return true;
+    }
+
+    /// <summary>Nearest targetable EventObj to a point — raid portals/lifts are EventObjs.</summary>
+    private Dalamud.Game.ClientState.Objects.Types.IGameObject? FindInteractableNear(
+        System.Numerics.Vector3 point, float radius)
+    {
+        Dalamud.Game.ClientState.Objects.Types.IGameObject? best = null;
+        var bestDistance = radius;
+
+        foreach (var obj in _objectTable)
+        {
+            if (obj.ObjectKind != Dalamud.Game.ClientState.Objects.Enums.ObjectKind.EventObj || !obj.IsTargetable)
+                continue;
+
+            var distance = System.Numerics.Vector3.Distance(point, obj.Position);
+            if (distance < bestDistance)
+            {
+                bestDistance = distance;
+                best = obj;
+            }
+        }
+
+        return best;
     }
 
     /// <summary>
@@ -565,6 +652,14 @@ public sealed class CharonPlugin : IDalamudPlugin
         var reachable = _nav.IsReachable(leaderPos.Value);
         if (reachable != _leaderReachable)
             _log.Debug("Follow: {0} is now {1}", _followManager.LeaderName, reachable ? "reachable" : "UNREACHABLE");
+
+        // Back together (we took the portal, or they came back) — retire the portal episode.
+        if (reachable)
+        {
+            _followManager.ClearPortalHint();
+            _portalAttempts = 0;
+        }
+
         _leaderReachable = reachable;
     }
 

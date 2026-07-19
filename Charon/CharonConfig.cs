@@ -47,6 +47,9 @@ public sealed class CharonConfig : IPluginConfiguration
     /// <summary>Verify the leader is actually walkable-to before pathing (catches portals/teleport stones).</summary>
     public bool FollowReachabilityCheck { get; set; } = true;
 
+    /// <summary>When the leader ports out of reach, walk to the object they used and click it too.</summary>
+    public bool FollowTakePortals { get; set; } = true;
+
     // Heal Watch
     /// <summary>Healer toon tops up fleet toons from LAN vitals (out-of-party healing).</summary>
     public bool HealWatchEnabled { get; set; } = false;

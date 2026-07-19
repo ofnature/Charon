@@ -155,6 +155,36 @@ public sealed class FollowManagerTests
     }
 
     [Fact]
+    public void PortalHint_RecordsWhereLeaderStoodBeforeJumping()
+    {
+        var m = Following();
+        m.NoteLeaderPosition(Origin);
+        var atPortal = new Vector3(10f, 0f, 0f);
+        m.NoteLeaderPosition(atPortal);          // walked to the portal
+        Assert.Null(m.PortalHint);
+
+        m.NoteLeaderPosition(new Vector3(800f, 0f, 0f)); // used it
+        Assert.Equal(atPortal, m.PortalHint);    // hint = the spot they clicked from
+    }
+
+    [Fact]
+    public void PortalHint_ClearedExplicitlyAndOnSessionChange()
+    {
+        var m = Following();
+        m.NoteLeaderPosition(Origin);
+        m.NoteLeaderPosition(new Vector3(800f, 0f, 0f));
+        Assert.NotNull(m.PortalHint);
+
+        m.ClearPortalHint();
+        Assert.Null(m.PortalHint);
+
+        m.NoteLeaderPosition(Origin);
+        m.NoteLeaderPosition(new Vector3(800f, 0f, 0f));
+        m.Stop();
+        Assert.Null(m.PortalHint);
+    }
+
+    [Fact]
     public void NoteLeaderPosition_ResetsOnStartAndStop()
     {
         var m = Following();
