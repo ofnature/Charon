@@ -51,6 +51,7 @@ BossMod-Reborn-style follow, commanded across the fleet: from your main, tell ev
 
 - **Follow Me (All)** or per-toon Follow/Stop — the commanded toons trail you via [vnavmesh](https://github.com/awgil/ffxiv_navmesh), pathing around walls and terrain.
 - **Clean boss handoff:** follow keeps going into the arena and through pre-pull, then hard-stops the instant a boss fight engages (in combat **and** a BossMod module loaded) so BMR's AI owns movement — and resumes automatically when the fight ends. Normal trash combat never breaks the convoy.
+- **Takes your portal:** in raids with portal stones between arenas, followers walk to the exact spot you ported from and click the same stone — no stopping and re-issuing follow on seven boxes. If a leader ends up somewhere genuinely unwalkable, followers hold with a clear status instead of running at a wall, and resume the moment you're reachable again.
 - Pairs with Follow Teleport (zone away and the alts teleport to you, then follow resumes) and yields cleanly to auto-pillion when you mount up. `/charon follow <name>` drives one box directly.
 
 ## Heal Watch
