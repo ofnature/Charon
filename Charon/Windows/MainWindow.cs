@@ -273,6 +273,16 @@ public sealed class MainWindow : Window
         }
         CharonTheme.HelpMarker("Trust every toon currently in the Daedalus LAN party roster.");
 
+        var autoCommence = _config.AutoCommenceDutyEnabled;
+        if (ImGui.Checkbox("Auto-commence duty pops##accept", ref autoCommence))
+        {
+            _config.AutoCommenceDutyEnabled = autoCommence;
+            _save();
+        }
+        CharonTheme.HelpMarker("Click Commence on the Duty Ready popup — but ONLY when every other\n"
+                               + "party member is a trusted LAN toon (your fleet queueing together).\n"
+                               + "A solo/roulette pop, or any stranger in the party, is left for you.");
+
         ImGui.Spacing();
         ImGui.Separator();
         ImGui.Spacing();

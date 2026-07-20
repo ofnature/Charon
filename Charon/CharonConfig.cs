@@ -72,6 +72,9 @@ public sealed class CharonConfig : IPluginConfiguration
     // Auto Accept
     public bool AutoAcceptEnabled { get; set; } = false;
 
+    /// <summary>Auto-commence the Duty Finder pop when the whole party is trusted LAN toons.</summary>
+    public bool AutoCommenceDutyEnabled { get; set; } = true;
+
     /// <summary>Auto-trust every toon in the Daedalus LAN party roster.</summary>
     public bool LanAutoWhitelist { get; set; } = true;
 

@@ -43,6 +43,7 @@ public sealed class CharonPlugin : IDalamudPlugin
     private readonly GroupInviteManager _inviteManager;
     private readonly GroupInviteInterop _inviteInterop;
     private readonly TeleportOfferInterop _teleportOffer;
+    private readonly DutyPopInterop _dutyPop;
     private readonly MountStateReader _mountReader;
     private readonly NavClient _nav;
     private readonly HealWatchManager _healWatch;
@@ -200,6 +201,7 @@ public sealed class CharonPlugin : IDalamudPlugin
             AcceptPendingInvite,
             log: message => _log.Debug("[AutoAccept] {0}", message));
         _inviteInterop = new GroupInviteInterop(dataManager, _inviteManager, log);
+        _dutyPop = new DutyPopInterop(addonLifecycle, gameGui, ShouldAutoCommenceDuty, log);
 
         _mainWindow = new MainWindow(_config, SaveConfig, _whitelist, _daedalusIpc, _pillionManager, _inviteManager,
             _healWatch, _groupInvites, _fcChest, _followManager, ReadRawSeatOccupancy, () => _boardingStatus,
@@ -250,6 +252,7 @@ public sealed class CharonPlugin : IDalamudPlugin
         _windowSystem.RemoveAllWindows();
 
         _relay.OnMessage -= OnRelayMessage;
+        _dutyPop.Dispose();
         _teleportOffer.Dispose();
         _inviteInterop.Dispose();
         _relay.Dispose();
@@ -326,6 +329,7 @@ public sealed class CharonPlugin : IDalamudPlugin
 
         _inviteInterop.Poll(now);
         _teleportOffer.Update(now);
+        _dutyPop.Update(now);
         UpdateFollowTeleport(now);
         UpdateFleetFollow(now);
         UpdateHealWatch(now);
@@ -1043,6 +1047,31 @@ public sealed class CharonPlugin : IDalamudPlugin
         }
 
         return present;
+    }
+
+    /// <summary>
+    /// Duty-pop gate: commence only when we're in a real party and every other member is a
+    /// trusted LAN toon (our fleet queueing together). A matched/roulette pop arrives while
+    /// solo, and any stranger in the party vetoes it — both are left for the player.
+    /// </summary>
+    private bool ShouldAutoCommenceDuty()
+    {
+        try
+        {
+            var localName = _objectTable.LocalPlayer?.Name.TextValue ?? string.Empty;
+            var trusted = BuildTrustedNames(localName);
+
+            var members = new List<string>();
+            foreach (var member in _partyList)
+                members.Add(member.Name.TextValue);
+
+            return DutyAcceptPolicy.ShouldAutoCommence(
+                _config.AutoCommenceDutyEnabled, members, localName, trusted.Contains);
+        }
+        catch
+        {
+            return false; // unreadable party — never auto-commence on a guess
+        }
     }
 
     /// <summary>True when the named character is in our current party (pillion requires a group).</summary>
