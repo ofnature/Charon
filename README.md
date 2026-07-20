@@ -4,7 +4,7 @@
 
 # Charon
 
-**The ferryman for your fleet.** A Dalamud plugin for FFXIV, companion to [Daedalus](https://github.com/ofnature/Daedalus) — party assembly, auto pillion with smart seat scanning, whitelisted auto group invite, follow teleport, fleet follow, a heal-watch babysitter for leveling alts, and FC chest management.
+**The ferryman for your fleet.** A Dalamud plugin for FFXIV, companion to [Daedalus](https://github.com/ofnature/Daedalus) — party assembly, auto pillion with smart seat scanning, whitelisted auto group invite, follow teleport, fleet follow, duty-pop and trade automation, a heal-watch babysitter for leveling alts, and FC chest management.
 
 Built for multibox setups: invite the fleet, group up, mount up, teleport out, follow you around, keep the bots alive, and manage the FC chest — without touching seven other keyboards.
 
@@ -44,6 +44,13 @@ When a trusted party member teleports, the rest of the group follows:
 - Auto-accepts the native party teleport offer ("Accept Teleport to X?") — the dialog is learned automatically the first time it appears.
 - Fallback: when a trusted member zones away without an offer, teleport to an attuned aetheryte in their new zone.
 - Same group only, small randomized delay per toon.
+
+## Duty Pops & Trades
+
+Two more clicks the fleet shouldn't need — both gated on trusted LAN toons only:
+
+- **Auto-commence duty pops** — clicks Commence on the Duty Ready window, but *only* when every other party member is a trusted LAN toon (your fleet queueing together). A solo/roulette pop, or any stranger in the party, is always left to you. Withdraw is never clicked.
+- **Mirror LAN toon trades** — when a fleet toon clicks Trade, the other toon clicks Trade and answers "Complete trade?". It only ever mirrors *after* the partner commits, never commits first, and never cancels. The partner is read from the trade window itself, so a trade with anyone outside the fleet is left completely alone.
 
 ## Fleet Follow
 
