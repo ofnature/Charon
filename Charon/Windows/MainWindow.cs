@@ -283,6 +283,17 @@ public sealed class MainWindow : Window
                                + "party member is a trusted LAN toon (your fleet queueing together).\n"
                                + "A solo/roulette pop, or any stranger in the party, is left for you.");
 
+        var autoTrade = _config.AutoTradeEnabled;
+        if (ImGui.Checkbox("Mirror LAN toon trades##accept", ref autoTrade))
+        {
+            _config.AutoTradeEnabled = autoTrade;
+            _save();
+        }
+        CharonTheme.HelpMarker("When a trusted LAN toon clicks Trade, this toon clicks Trade too and\n"
+                               + "answers the \"Complete trade?\" prompt. Only mirrors — it never commits\n"
+                               + "before the partner does, and never cancels. A trade with anyone who is\n"
+                               + "NOT a LAN toon is left entirely alone.");
+
         ImGui.Spacing();
         ImGui.Separator();
         ImGui.Spacing();

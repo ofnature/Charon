@@ -44,6 +44,7 @@ public sealed class CharonPlugin : IDalamudPlugin
     private readonly GroupInviteInterop _inviteInterop;
     private readonly TeleportOfferInterop _teleportOffer;
     private readonly DutyPopInterop _dutyPop;
+    private readonly TradeInterop _trade;
     private readonly MountStateReader _mountReader;
     private readonly NavClient _nav;
     private readonly HealWatchManager _healWatch;
@@ -202,6 +203,7 @@ public sealed class CharonPlugin : IDalamudPlugin
             log: message => _log.Debug("[AutoAccept] {0}", message));
         _inviteInterop = new GroupInviteInterop(dataManager, _inviteManager, log);
         _dutyPop = new DutyPopInterop(addonLifecycle, gameGui, ShouldAutoCommenceDuty, log);
+        _trade = new TradeInterop(gameGui, () => _config.AutoTradeEnabled, IsTrustedToon, log);
 
         _mainWindow = new MainWindow(_config, SaveConfig, _whitelist, _daedalusIpc, _pillionManager, _inviteManager,
             _healWatch, _groupInvites, _fcChest, _followManager, ReadRawSeatOccupancy, () => _boardingStatus,
@@ -330,6 +332,7 @@ public sealed class CharonPlugin : IDalamudPlugin
         _inviteInterop.Poll(now);
         _teleportOffer.Update(now);
         _dutyPop.Update(now);
+        _trade.Update(now);
         UpdateFollowTeleport(now);
         UpdateFleetFollow(now);
         UpdateHealWatch(now);
@@ -1072,6 +1075,17 @@ public sealed class CharonPlugin : IDalamudPlugin
         {
             return false; // unreadable party — never auto-commence on a guess
         }
+    }
+
+    /// <summary>Trust gate shared by the trade mirror: LAN roster (+ manual whitelist per config).</summary>
+    private bool IsTrustedToon(string characterName)
+    {
+        if (characterName.Length == 0)
+            return false;
+
+        var localName = _objectTable.LocalPlayer?.Name.TextValue ?? string.Empty;
+        return BuildTrustedNames(localName).Contains(characterName)
+               && !characterName.Equals(localName, StringComparison.OrdinalIgnoreCase);
     }
 
     /// <summary>True when the named character is in our current party (pillion requires a group).</summary>
