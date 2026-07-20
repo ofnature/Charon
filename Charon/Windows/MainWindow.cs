@@ -59,6 +59,8 @@ public sealed class MainWindow : Window
     private readonly Func<string> _followStatus;
     private readonly Func<string> _healStatus;
     private readonly Func<string> _followFleetStatus;
+    private readonly Func<string> _dutyPopStatus;
+    private readonly Func<string> _tradeStatus;
     private readonly Func<int> _partySize;
     private readonly Func<string, bool> _isInParty;
     private readonly Func<string> _localName;
@@ -103,6 +105,8 @@ public sealed class MainWindow : Window
         Func<string> followStatus,
         Func<string> healStatus,
         Func<string> followFleetStatus,
+        Func<string> dutyPopStatus,
+        Func<string> tradeStatus,
         Func<int> partySize,
         Func<string, bool> isInParty,
         Func<string> localName,
@@ -124,6 +128,8 @@ public sealed class MainWindow : Window
         _followStatus = followStatus;
         _healStatus = healStatus;
         _followFleetStatus = followFleetStatus;
+        _dutyPopStatus = dutyPopStatus;
+        _tradeStatus = tradeStatus;
         _partySize = partySize;
         _isInParty = isInParty;
         _localName = localName;
@@ -931,7 +937,10 @@ public sealed class MainWindow : Window
             $"Daedalus IPC: {(_roster.IsAvailable ? "connected" : "unavailable — manual whitelist only")}");
         ImGui.TextColored(CharonTheme.TextSecondary, $"Boarding: {ScrambleIn(_boardingStatus())}");
         ImGui.TextColored(CharonTheme.TextSecondary, $"Follow: {ScrambleIn(_followStatus())}");
+        ImGui.TextColored(CharonTheme.TextSecondary, $"Fleet Follow: {ScrambleIn(_followFleetStatus())}");
         ImGui.TextColored(CharonTheme.TextSecondary, $"Heal Watch: {ScrambleIn(_healStatus())}");
+        ImGui.TextColored(CharonTheme.TextSecondary, $"Duty pop: {_dutyPopStatus()}");
+        ImGui.TextColored(CharonTheme.TextSecondary, $"Trade: {ScrambleIn(_tradeStatus())}");
         if (_inviteManager.AcceptPending)
             ImGui.TextColored(CharonTheme.StatusYellow, "Invite accept pending (delay running)");
 

@@ -210,6 +210,8 @@ public sealed class CharonPlugin : IDalamudPlugin
             () => $"{_followStatus} · offer: {_teleportOffer.Status}",
             () => _healStatus,
             () => _followFleetStatus,
+            () => _dutyPop.Status,
+            () => _trade.PartnerName.Length > 0 ? $"{_trade.Status} (partner: {_trade.PartnerName})" : _trade.Status,
             () => _partyList.Length,
             IsInMyParty,
             () => _objectTable.LocalPlayer?.Name.TextValue ?? string.Empty,
