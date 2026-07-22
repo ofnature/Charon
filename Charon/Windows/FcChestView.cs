@@ -146,10 +146,14 @@ internal static class FcChestView
                     }
                     else
                     {
-                        if (fcChest.Busy) ImGui.BeginDisabled();
-                        if (ImGui.SmallButton($"Withdraw all but 1##wd{row.ItemId}") && !fcChest.Busy)
+                        // Snapshot Busy: clicking starts an operation that flips it mid-draw,
+                        // which would leave BeginDisabled/EndDisabled unbalanced and corrupt
+                        // ImGui's stack (throws every frame after).
+                        var busy = fcChest.Busy;
+                        if (busy) ImGui.BeginDisabled();
+                        if (ImGui.SmallButton($"Withdraw all but 1##wd{row.ItemId}") && !busy)
                             fcChest.StartWithdrawItem(page, row.ItemId);
-                        if (fcChest.Busy) ImGui.EndDisabled();
+                        if (busy) ImGui.EndDisabled();
                         if (ImGui.IsItemHovered())
                             ImGui.SetTooltip($"Withdraw ×{row.TotalQuantity - 1} — exactly 1 unit stays as the seed\n"
                                              + "(withdraw all, split 1 in bags, return it as the seed)");
