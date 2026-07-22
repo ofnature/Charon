@@ -36,10 +36,21 @@ public sealed class TradePolicyTests
     // --- Confirmation ---
 
     [Fact]
-    public void ConfirmDialogOpen_AfterLockIn_Confirms()
+    public void ConfirmDialogOpen_BothLockedIn_Confirms()
     {
-        Assert.Equal(TradeAction.Confirm, Decide(local: TradePhase.LockedIn, confirmOpen: true));
-        Assert.Equal(TradeAction.Confirm, Decide(local: TradePhase.WaitingForConfirmation, confirmOpen: true));
+        Assert.Equal(TradeAction.Confirm,
+            Decide(local: TradePhase.LockedIn, remote: TradePhase.LockedIn, confirmOpen: true));
+        Assert.Equal(TradeAction.Confirm,
+            Decide(local: TradePhase.WaitingForConfirmation, remote: TradePhase.Confirmed, confirmOpen: true));
+    }
+
+    [Fact]
+    public void ConfirmDialogOpen_ButPartnerNotCommitted_DoesNotConfirm()
+    {
+        // A SelectYesno while WE are locked in but the partner still choosing is not the
+        // "Complete trade?" prompt — never auto-answer it.
+        Assert.Equal(TradeAction.None,
+            Decide(local: TradePhase.LockedIn, remote: TradePhase.SelectingGoods, confirmOpen: true));
     }
 
     [Fact]

@@ -50,8 +50,13 @@ public static class TradePolicy
         if (remote == TradePhase.LockedIn && local == TradePhase.SelectingGoods)
             return TradeAction.LockIn;
 
-        // Both committed — answer the "Complete trade?" prompt.
-        if (confirmDialogOpen && local is TradePhase.LockedIn or TradePhase.WaitingForConfirmation)
+        // Answer the "Complete trade?" prompt — but ONLY when BOTH sides have locked in, which
+        // is exactly when that prompt appears. The prompt is a generic SelectYesno, so requiring
+        // the partner (remote) to have committed too guards against auto-answering some unrelated
+        // yes/no that happens to be open mid-trade.
+        if (confirmDialogOpen
+            && local is TradePhase.LockedIn or TradePhase.WaitingForConfirmation or TradePhase.Confirmed
+            && remote is TradePhase.LockedIn or TradePhase.WaitingForConfirmation or TradePhase.Confirmed)
             return TradeAction.Confirm;
 
         return TradeAction.None;
