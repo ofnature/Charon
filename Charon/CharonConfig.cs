@@ -10,7 +10,35 @@ namespace Charon;
 /// </summary>
 public sealed class CharonConfig : IPluginConfiguration
 {
+    /// <summary>
+    /// Config schema version, bumped when a load-time migration is needed.
+    /// 2 = the never-evict list is seeded with EXP-bonus gear (<see cref="Features.Gear.ExpBonusItems"/>).
+    /// </summary>
     public int Version { get; set; } = 1;
+
+    /// <summary>Newest schema version — a config below this runs <see cref="Migrate"/> on load.</summary>
+    public const int CurrentVersion = 2;
+
+    /// <summary>
+    /// Bring a loaded config up to <see cref="CurrentVersion"/>. Returns true when something
+    /// changed (the caller then saves). Runs for fresh installs too, since a new config starts at
+    /// version 1 — that is what seeds the EXP-gear protection for everyone exactly once. A user who
+    /// later unticks one of those items keeps that decision: the migration never runs again.
+    /// </summary>
+    public bool Migrate()
+    {
+        if (Version >= CurrentVersion)
+            return false;
+
+        foreach (var itemId in Features.Gear.ExpBonusItems.ItemIds)
+        {
+            if (!GearNeverEvictItemIds.Contains(itemId))
+                GearNeverEvictItemIds.Add(itemId);
+        }
+
+        Version = CurrentVersion;
+        return true;
+    }
 
     // Pillion
     public bool AutoPillionEnabled { get; set; } = false;
@@ -95,6 +123,26 @@ public sealed class CharonConfig : IPluginConfiguration
 
     /// <summary>Text scale for the FC chest UI (1.0 = normal). Accessibility — the item list gets hard to read.</summary>
     public float FcChestFontScale { get; set; } = 1.0f;
+
+    // Gear Equipper
+    /// <summary>Expose the Charon.EquipUpgrades / …Busy / PendingUpgradeCount gates to other plugins.</summary>
+    public bool GearIpcEnabled { get; set; } = true;
+
+    /// <summary>
+    /// Let the IPC actually EQUIP. Off = preview only: the count gate and the in-window preview stay
+    /// live, EquipUpgrades just logs the plan and returns false so callers fall back to the game's
+    /// Equip Recommended. Flip this on once the previews have been verified in-game.
+    /// </summary>
+    public bool GearIpcExecuteEnabled { get; set; } = false;
+
+    /// <summary>Save the newly worn gear onto the active gearset after a pass.</summary>
+    public bool GearUpdateGearsetAfterPass { get; set; } = true;
+
+    /// <summary>Scan the armoury ONLY — skips the main bags, where dungeon/SealBreaker loot lands.</summary>
+    public bool GearArmouryOnly { get; set; } = false;
+
+    /// <summary>Item ids the armoury cleanup must never evict (per-item veto from its preview list).</summary>
+    public List<uint> GearNeverEvictItemIds { get; set; } = new();
 
     // Window state
     public bool MainWindowVisible { get; set; } = true;

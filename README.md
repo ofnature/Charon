@@ -4,7 +4,7 @@
 
 # Charon
 
-**The ferryman for your fleet.** A Dalamud plugin for FFXIV, companion to [Daedalus](https://github.com/ofnature/Daedalus) — party assembly, auto pillion with smart seat scanning, whitelisted auto group invite, follow teleport, fleet follow, duty-pop and trade automation, a heal-watch babysitter for leveling alts, and FC chest management.
+**The ferryman for your fleet.** A Dalamud plugin for FFXIV, companion to [Daedalus](https://github.com/ofnature/Daedalus) — party assembly, auto pillion with smart seat scanning, whitelisted auto group invite, follow teleport, fleet follow, duty-pop and trade automation, a heal-watch babysitter for leveling alts, automatic gear upgrades, and FC chest management.
 
 Built for multibox setups: invite the fleet, group up, mount up, teleport out, follow you around, keep the bots alive, and manage the FC chest — without touching seven other keyboards.
 
@@ -83,6 +83,17 @@ Consolidate and reclaim the Free Company chest, per page:
 - **Withdraw all but 1** per item — leaves exactly one unit behind as the seed and pulls the rest to your bags.
 - Manual trigger only, confirm before entrusting, gated on the chest being open with the page loaded; every move is verified against real chest state before the next one fires.
 - **Text Size** slider (100–250%) for the item list — scales the whole panel proportionally, persisted per install.
+
+## Gear Equipper
+
+Leveling alts wear whatever dropped three dungeons ago. Charon finds the upgrades and puts them on:
+
+- **Scans bags *and* armoury** — dungeon and [SealBreaker](https://github.com/ofnature/SealBreaker) loot lands in your main inventory, so that's where it looks first (armoury-only is an opt-in checkbox). Filters by job, equip level, and slot; ranks by item level with a stat tie-break, handles the ring pair and unique-equip rings, and skips the offhand when you're wielding a two-hander.
+- **Bags → armoury → equip:** an upgrade sitting in a bag moves into the armoury *first*, then gets equipped from there — so the piece it replaces swaps into the armoury and your bags stay clear for loot.
+- **Preview first.** The window always shows exactly what would change (slot, what you're wearing, what replaces it, ilvl gained) with a manual Equip button. Every step is re-planned against live inventory and verified before the next one fires — never a replayed batch.
+- **Clean armoury** — lists every armoury item that no saved gearset uses, then moves them back to your bags on one button. Each row has a **Keep** tick to protect that item permanently (glamour pieces, spare weapons); protected items stay in the list, greyed out, so you can un-protect them later. **EXP-bonus gear is protected out of the box** — Brand-new Ring, Friendship Circlet, the pre-order earrings (Ala Mhigan / Aetheryte / Menphina's / Azeyma's) and friends are tagged `[EXP]` and pre-ticked, since they belong to no gearset and several can never be re-obtained. Gearset gear is never touched, soul crystals always stay put, and if your gearsets haven't loaded yet nothing is evicted at all.
+- **Fleet-wide over IPC:** SealBreaker asks Charon to gear up after a duty and *before* Expert Delivery, so drops get worn instead of turned in. Plugin-driven equipping ships **off** — requests are logged and declined (callers fall back to the game's Equip Recommended) until you've eyeballed the previews and switched it on.
+- Never runs in combat, in a duty, mid-cast, or while zoning.
 
 ## Daedalus Integration
 

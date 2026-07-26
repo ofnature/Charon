@@ -7,6 +7,7 @@ using Dalamud.Interface.Windowing;
 using Charon.Features.AutoAccept;
 using Charon.Features.AutoPillion;
 using Charon.Features.Follow;
+using Charon.Features.Gear;
 using Charon.Features.GroupManagement;
 using Charon.Features.HealWatch;
 using Charon.Services;
@@ -30,6 +31,7 @@ public sealed class MainWindow : Window
         GroupMgmt,
         Follow,
         FcChest,
+        Gear,
         TrustedList,
         Debug,
     }
@@ -53,6 +55,7 @@ public sealed class MainWindow : Window
     private readonly HealWatchManager _healWatch;
     private readonly InviteManager _groupInvites;
     private readonly FcChestManager _fcChest;
+    private readonly GearManager _gear;
     private readonly FollowManager _followManager;
     private readonly Func<IReadOnlyList<(int Seat, uint EntityId, string Name)>> _rawSeatOccupancy;
     private readonly Func<string> _boardingStatus;
@@ -61,6 +64,7 @@ public sealed class MainWindow : Window
     private readonly Func<string> _followFleetStatus;
     private readonly Func<string> _dutyPopStatus;
     private readonly Func<string> _tradeStatus;
+    private readonly Func<string> _gearStatus;
     private readonly Func<int> _partySize;
     private readonly Func<string, bool> _isInParty;
     private readonly Func<string> _localName;
@@ -99,6 +103,7 @@ public sealed class MainWindow : Window
         HealWatchManager healWatch,
         InviteManager groupInvites,
         FcChestManager fcChest,
+        GearManager gear,
         FollowManager followManager,
         Func<IReadOnlyList<(int Seat, uint EntityId, string Name)>> rawSeatOccupancy,
         Func<string> boardingStatus,
@@ -107,6 +112,7 @@ public sealed class MainWindow : Window
         Func<string> followFleetStatus,
         Func<string> dutyPopStatus,
         Func<string> tradeStatus,
+        Func<string> gearStatus,
         Func<int> partySize,
         Func<string, bool> isInParty,
         Func<string> localName,
@@ -122,6 +128,7 @@ public sealed class MainWindow : Window
         _healWatch = healWatch;
         _groupInvites = groupInvites;
         _fcChest = fcChest;
+        _gear = gear;
         _followManager = followManager;
         _rawSeatOccupancy = rawSeatOccupancy;
         _boardingStatus = boardingStatus;
@@ -130,6 +137,7 @@ public sealed class MainWindow : Window
         _followFleetStatus = followFleetStatus;
         _dutyPopStatus = dutyPopStatus;
         _tradeStatus = tradeStatus;
+        _gearStatus = gearStatus;
         _partySize = partySize;
         _isInParty = isInParty;
         _localName = localName;
@@ -176,6 +184,7 @@ public sealed class MainWindow : Window
         DrawNavItem("Group Mgmt", Section.GroupMgmt, null);
         DrawNavItem("Follow", Section.Follow, _followManager.Following);
         DrawNavItem("FC Chest", Section.FcChest, null);
+        DrawNavItem("Gear", Section.Gear, _config.GearIpcExecuteEnabled);
         DrawNavItem("Trusted List", Section.TrustedList, null);
         ImGui.Spacing();
 
@@ -240,6 +249,7 @@ public sealed class MainWindow : Window
             case Section.GroupMgmt: DrawGroupSection(); break;
             case Section.Follow: DrawFollowSection(); break;
             case Section.FcChest: DrawFcChestSection(); break;
+            case Section.Gear: DrawGearSection(); break;
             case Section.TrustedList: DrawTrustedSection(); break;
             case Section.Debug: DrawDebugSection(); break;
         }
@@ -797,6 +807,214 @@ public sealed class MainWindow : Window
         FcChestView.DrawBody(_config, _save, _fcChest);
     }
 
+    // --- Gear Equipper ---
+
+    private void DrawGearSection()
+    {
+        DrawPageHeader("Gear Equipper");
+
+        var upgrades = _gear.GetUpgradePreview();
+        var busy = _gear.Busy; // snapshot: a button press flips this mid-draw and unbalances BeginDisabled
+
+        ImGui.TextColored(CharonTheme.TextSecondary,
+            upgrades.Count == 0
+                ? "No upgrades available — wearing the best gear in the bags and armoury."
+                : $"{upgrades.Count} {(upgrades.Count == 1 ? "upgrade" : "upgrades")} available:");
+
+        if (upgrades.Count > 0)
+            DrawUpgradeTable(upgrades);
+
+        ImGui.Spacing();
+
+        if (busy) ImGui.BeginDisabled();
+        if (ImGui.Button("Equip upgrades") && !busy)
+            _gear.StartEquipPass();
+        if (busy) ImGui.EndDisabled();
+        CharonTheme.HelpMarker("Equips the list above, one piece at a time, re-checking after each.\n"
+                               + "Upgrades sitting in your bags move into the armoury first, so the\n"
+                               + "gear they replace lands in the armoury instead of your bags.");
+
+        ImGui.Spacing();
+        DrawArmouryCleanup(busy);
+
+        if (_gear.Status.Length > 0 && _gear.Status != "idle")
+            ImGui.TextColored(CharonTheme.StatusYellow, _gear.Status);
+        if (_gear.LastOperation.Length > 0)
+            ImGui.TextColored(CharonTheme.TextDisabled, _gear.LastOperation);
+
+        ImGui.Spacing();
+        ImGui.Separator();
+        ImGui.Spacing();
+
+        var armouryOnly = _config.GearArmouryOnly;
+        if (ImGui.Checkbox("Armoury only (skip the main bags)", ref armouryOnly))
+        {
+            _config.GearArmouryOnly = armouryOnly;
+            _save();
+        }
+        CharonTheme.HelpMarker("Off by default: dungeon and SealBreaker loot lands in your main bags,\n"
+                               + "so those need scanning too. Tick this to consider armoury gear only.");
+
+        var updateGearset = _config.GearUpdateGearsetAfterPass;
+        if (ImGui.Checkbox("Update the active gearset after equipping", ref updateGearset))
+        {
+            _config.GearUpdateGearsetAfterPass = updateGearset;
+            _save();
+        }
+        CharonTheme.HelpMarker("Saves the newly worn pieces onto your current gearset, so swapping\n"
+                               + "jobs and back keeps the upgrades.");
+
+        var ipcEnabled = _config.GearIpcEnabled;
+        if (ImGui.Checkbox("Allow other plugins to ask (IPC)", ref ipcEnabled))
+        {
+            _config.GearIpcEnabled = ipcEnabled;
+            _save();
+        }
+        CharonTheme.HelpMarker("Exposes the upgrade count and equip request to SealBreaker, which uses\n"
+                               + "them after a duty and before Expert Delivery so drops get worn, not\n"
+                               + "turned in.");
+
+        var executeEnabled = _config.GearIpcExecuteEnabled;
+        if (ImGui.Checkbox("Let other plugins actually equip", ref executeEnabled))
+        {
+            _config.GearIpcExecuteEnabled = executeEnabled;
+            _save();
+        }
+        CharonTheme.HelpMarker("Off = preview only: requests are logged and declined, and the caller\n"
+                               + "falls back to the game's Equip Recommended. Turn this on once the\n"
+                               + "preview list above matches what you'd equip by hand.");
+
+        if (!_config.GearIpcExecuteEnabled)
+            ImGui.TextColored(CharonTheme.StatusYellow,
+                "Preview mode — the button above still works; only plugin requests are declined.");
+    }
+
+    /// <summary>
+    /// Armoury cleanup: the full list of what would leave, each row vetoable. A vetoed item stays
+    /// listed (greyed, ticked) so the veto can be undone — it must never just vanish.
+    /// </summary>
+    private void DrawArmouryCleanup(bool busy)
+    {
+        var rows = _gear.GetCleanupPreview();
+        var evicting = rows.Count(r => !r.Kept);
+
+        if (!ImGui.CollapsingHeader($"Armoury cleanup — {evicting} to remove###gearCleanup"))
+            return;
+
+        if (rows.Count == 0)
+        {
+            ImGui.TextColored(CharonTheme.TextDisabled,
+                "Nothing to clean: every armoury item belongs to a gearset.");
+            ImGui.TextColored(CharonTheme.TextDisabled,
+                "(If you've just logged in, open your gearset list once so the game loads it.)");
+            return;
+        }
+
+        ImGui.TextColored(CharonTheme.TextSecondary,
+            "These armoury items aren't in any saved gearset. Tick Keep to protect one.");
+
+        if (ImGui.BeginTable("gearCleanupRows", 3,
+                ImGuiTableFlags.BordersInnerV | ImGuiTableFlags.RowBg | ImGuiTableFlags.SizingFixedFit
+                | ImGuiTableFlags.ScrollY, new Vector2(0, 160)))
+        {
+            ImGui.TableSetupColumn("Keep", ImGuiTableColumnFlags.WidthFixed, 42f);
+            ImGui.TableSetupColumn("Item", ImGuiTableColumnFlags.WidthStretch);
+            ImGui.TableSetupColumn("Stacks", ImGuiTableColumnFlags.WidthFixed, 50f);
+            ImGui.TableHeadersRow();
+
+            foreach (var row in rows)
+            {
+                ImGui.TableNextRow();
+                ImGui.TableNextColumn();
+                var kept = row.Kept;
+                if (ImGui.Checkbox($"##keep{row.ItemId}", ref kept))
+                    SetItemKept(row.ItemId, kept);
+                if (ImGui.IsItemHovered())
+                    ImGui.SetTooltip(kept
+                        ? "Protected — cleanup will leave this in the armoury"
+                        : "Protect this item from cleanup (every stack of it)");
+
+                ImGui.TableNextColumn();
+                ImGui.TextColored(row.Kept ? CharonTheme.TextDisabled : CharonTheme.TextSecondary, row.Name);
+                if (row.ExpBonus.Length > 0)
+                {
+                    ImGui.SameLine();
+                    ImGui.TextColored(CharonTheme.AccentGold, "[EXP]");
+                    if (ImGui.IsItemHovered())
+                        ImGui.SetTooltip($"{row.ExpBonus}\nProtected by default — untick Keep to let it go.");
+                }
+
+                ImGui.TableNextColumn();
+                ImGui.TextColored(CharonTheme.TextDisabled, row.StackCount.ToString());
+            }
+
+            ImGui.EndTable();
+        }
+
+        if (busy || evicting == 0) ImGui.BeginDisabled();
+        if (ImGui.Button($"Move {evicting} to bags") && !busy && evicting > 0)
+            _gear.StartArmouryCleanup();
+        if (busy || evicting == 0) ImGui.EndDisabled();
+        CharonTheme.HelpMarker("Moves the unticked items above back into your bags.\n"
+                               + "Gearset gear is never touched, and soul crystals always stay put.");
+
+        var keptCount = rows.Count - evicting;
+        if (keptCount > 0)
+        {
+            ImGui.SameLine();
+            ImGui.TextColored(CharonTheme.TextDisabled,
+                $"{keptCount} kept");
+        }
+    }
+
+    /// <summary>Add/remove an item from the never-evict list and refresh the preview at once.</summary>
+    private void SetItemKept(uint itemId, bool kept)
+    {
+        if (kept)
+        {
+            if (!_config.GearNeverEvictItemIds.Contains(itemId))
+                _config.GearNeverEvictItemIds.Add(itemId);
+        }
+        else
+        {
+            _config.GearNeverEvictItemIds.Remove(itemId);
+        }
+
+        _save();
+        _gear.InvalidatePreview(); // otherwise the tick doesn't show for up to half a second
+    }
+
+    private static void DrawUpgradeTable(IReadOnlyList<GearUpgrade> upgrades)
+    {
+        if (!ImGui.BeginTable("gearUpgrades", 4,
+                ImGuiTableFlags.BordersInnerV | ImGuiTableFlags.RowBg | ImGuiTableFlags.SizingFixedFit))
+            return;
+
+        ImGui.TableSetupColumn("Slot", ImGuiTableColumnFlags.WidthFixed, 75f);
+        ImGui.TableSetupColumn("Wearing", ImGuiTableColumnFlags.WidthFixed, 150f);
+        ImGui.TableSetupColumn("Upgrade", ImGuiTableColumnFlags.WidthStretch);
+        ImGui.TableSetupColumn("ilvl", ImGuiTableColumnFlags.WidthFixed, 50f);
+        ImGui.TableHeadersRow();
+
+        foreach (var upgrade in upgrades)
+        {
+            ImGui.TableNextRow();
+            ImGui.TableNextColumn();
+            ImGui.TextColored(CharonTheme.TextSecondary, upgrade.Slot.ToString());
+            ImGui.TableNextColumn();
+            if (upgrade.Replacing == null)
+                ImGui.TextColored(CharonTheme.TextDisabled, "(empty)");
+            else
+                ImGui.TextUnformatted(upgrade.Replacing.Name);
+            ImGui.TableNextColumn();
+            ImGui.TextColored(CharonTheme.AccentGold, upgrade.Item.Name);
+            ImGui.TableNextColumn();
+            ImGui.TextColored(CharonTheme.StatusGreen, $"+{upgrade.IlvlGain}");
+        }
+
+        ImGui.EndTable();
+    }
+
     // --- Trusted Characters ---
 
     private void DrawTrustedSection()
@@ -941,6 +1159,7 @@ public sealed class MainWindow : Window
         ImGui.TextColored(CharonTheme.TextSecondary, $"Heal Watch: {ScrambleIn(_healStatus())}");
         ImGui.TextColored(CharonTheme.TextSecondary, $"Duty pop: {_dutyPopStatus()}");
         ImGui.TextColored(CharonTheme.TextSecondary, $"Trade: {ScrambleIn(_tradeStatus())}");
+        ImGui.TextColored(CharonTheme.TextSecondary, $"Gear: {_gearStatus()}");
         if (_inviteManager.AcceptPending)
             ImGui.TextColored(CharonTheme.StatusYellow, "Invite accept pending (delay running)");
 

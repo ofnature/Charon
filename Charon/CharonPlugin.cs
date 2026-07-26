@@ -22,7 +22,7 @@ namespace Charon;
 
 public sealed class CharonPlugin : IDalamudPlugin
 {
-    public const string PluginVersion = "0.1.8";
+    public const string PluginVersion = "0.1.9";
     private const string CommandName = "/charon";
 
     private readonly IDalamudPluginInterface _pluginInterface;
@@ -51,6 +51,8 @@ public sealed class CharonPlugin : IDalamudPlugin
     private readonly HealExecutor _healExecutor;
     private readonly InviteManager _groupInvites;
     private readonly FcChestManager _fcChest;
+    private readonly GearManager _gear;
+    private readonly GearEquipperIpc _gearIpc;
     private readonly FollowManager _followManager;
     private readonly BossModClient _bossMod;
     private readonly InteractHelper _interact;
@@ -160,6 +162,8 @@ public sealed class CharonPlugin : IDalamudPlugin
         _log = log;
 
         _config = pluginInterface.GetPluginConfig() as CharonConfig ?? new CharonConfig();
+        if (_config.Migrate())
+            SaveConfig();
 
         _whitelist = new WhitelistService(_config.ManualWhitelist, SaveConfig);
         _daedalusIpc = new DaedalusIpcClient(pluginInterface, log);
@@ -178,6 +182,11 @@ public sealed class CharonPlugin : IDalamudPlugin
             },
             log: message => _log.Debug("[GroupMgmt] {0}", message));
         _fcChest = new FcChestManager(gameGui, dataManager, log);
+        _gear = new GearManager(clientState, objectTable, dataManager, condition,
+            () => !_config.GearArmouryOnly, () => _config.GearUpdateGearsetAfterPass,
+            () => _config.GearNeverEvictItemIds, log);
+        _gearIpc = new GearEquipperIpc(pluginInterface, _gear,
+            () => _config.GearIpcEnabled, () => _config.GearIpcExecuteEnabled, log);
         _bossMod = new BossModClient(pluginInterface);
         _interact = new InteractHelper(log);
         _followManager = new FollowManager(FollowConfig.From(_config));
@@ -206,12 +215,13 @@ public sealed class CharonPlugin : IDalamudPlugin
         _trade = new TradeInterop(gameGui, () => _config.AutoTradeEnabled, IsTrustedToon, log);
 
         _mainWindow = new MainWindow(_config, SaveConfig, _whitelist, _daedalusIpc, _pillionManager, _inviteManager,
-            _healWatch, _groupInvites, _fcChest, _followManager, ReadRawSeatOccupancy, () => _boardingStatus,
+            _healWatch, _groupInvites, _fcChest, _gear, _followManager, ReadRawSeatOccupancy, () => _boardingStatus,
             () => $"{_followStatus} · offer: {_teleportOffer.Status}",
             () => _healStatus,
             () => _followFleetStatus,
             () => _dutyPop.Status,
             () => _trade.PartnerName.Length > 0 ? $"{_trade.Status} (partner: {_trade.PartnerName})" : _trade.Status,
+            () => $"{_gear.Status} · IPC: {_gearIpc.Status}",
             () => _partyList.Length,
             IsInMyParty,
             () => _objectTable.LocalPlayer?.Name.TextValue ?? string.Empty,
@@ -256,6 +266,7 @@ public sealed class CharonPlugin : IDalamudPlugin
         _windowSystem.RemoveAllWindows();
 
         _relay.OnMessage -= OnRelayMessage;
+        _gearIpc.Dispose();
         _dutyPop.Dispose();
         _teleportOffer.Dispose();
         _inviteInterop.Dispose();
@@ -340,6 +351,7 @@ public sealed class CharonPlugin : IDalamudPlugin
         UpdateHealWatch(now);
         _groupInvites.Update(now);
         _fcChest.Update(now);
+        _gear.Update(now);
         _pillionManager.Update(now);
         _inviteManager.Update(now);
     }

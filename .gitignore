@@ -7,3 +7,6 @@ TestResults/
 # Internal docs — keep local, not in the public repo (README.md is the only tracked .md)
 CLAUDE.md
 ROADMAP.md
+
+# Internal planning docs live under docs/ — keep local (README.md is the only tracked .md)
+docs/
