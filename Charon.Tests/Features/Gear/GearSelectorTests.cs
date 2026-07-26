@@ -31,12 +31,94 @@ public sealed class GearSelectorTests
     }
 
     [Fact]
-    public void LowerOrEqualIlvl_IsNotAnUpgrade()
+    public void LowerIlvl_IsNotAnUpgrade()
     {
         var equipped = Equipped(Item(1, GearSlot.Head, 130));
 
         Assert.Empty(GearSelector.Plan(equipped, [Item(2, GearSlot.Head, 100)], JobLevel));
-        Assert.Empty(GearSelector.Plan(equipped, [Item(2, GearSlot.Head, 130)], JobLevel)); // sidegrade
+    }
+
+    [Fact]
+    public void SameIlvlSameStats_IsNotAnUpgrade()
+    {
+        var equipped = Equipped(Item(1, GearSlot.Head, 130, stats: 100));
+
+        Assert.Empty(GearSelector.Plan(equipped, [Item(2, GearSlot.Head, 130, stats: 100)], JobLevel));
+    }
+
+    // --- At-cap behaviour: same ilvl, better stats ---
+
+    [Fact]
+    public void SameIlvl_ClearlyBetterStats_IsAnUpgrade()
+    {
+        // The max-level case: every candidate is the same ilvl, so stats have to decide or the
+        // feature goes dead at cap.
+        var upgrades = GearSelector.Plan(
+            Equipped(Item(1, GearSlot.Head, 730, stats: 100)),
+            [Item(2, GearSlot.Head, 730, stats: 140)],
+            JobLevel);
+
+        var upgrade = Assert.Single(upgrades);
+        Assert.Equal(2u, upgrade.Item.ItemId);
+        Assert.Equal(0, upgrade.IlvlGain); // a pure stat swap
+    }
+
+    [Fact]
+    public void SameIlvl_MarginallyBetterStats_IsNotWorthASwap()
+    {
+        // Inside the 5% margin — swapping here would just churn.
+        var upgrades = GearSelector.Plan(
+            Equipped(Item(1, GearSlot.Head, 730, stats: 100)),
+            [Item(2, GearSlot.Head, 730, stats: 103)],
+            JobLevel);
+
+        Assert.Empty(upgrades);
+    }
+
+    [Fact]
+    public void SameIlvl_WorseStats_IsNotAnUpgrade()
+    {
+        var upgrades = GearSelector.Plan(
+            Equipped(Item(1, GearSlot.Head, 730, stats: 140)),
+            [Item(2, GearSlot.Head, 730, stats: 100)],
+            JobLevel);
+
+        Assert.Empty(upgrades);
+    }
+
+    [Fact]
+    public void LowerIlvl_IsNeverAnUpgrade_HoweverGoodTheStats()
+    {
+        // ilvl gates duty entry — trading it away for substats is a real downgrade.
+        var upgrades = GearSelector.Plan(
+            Equipped(Item(1, GearSlot.Head, 730, stats: 10)),
+            [Item(2, GearSlot.Head, 725, stats: 9999)],
+            JobLevel);
+
+        Assert.Empty(upgrades);
+    }
+
+    [Fact]
+    public void StatSwap_DoesNotBounceBack()
+    {
+        // After the swap the old piece sits in the armoury. It must not read as an upgrade over
+        // the piece that just replaced it, or the executor would swap them forever.
+        var swappedIn = Item(2, GearSlot.Head, 730, stats: 140);
+        var swappedOut = Item(1, GearSlot.Head, 730, stats: 100);
+
+        Assert.Empty(GearSelector.Plan(Equipped(swappedIn), [swappedOut], JobLevel));
+    }
+
+    [Fact]
+    public void UnresolvableStats_NeverChurn()
+    {
+        // Both score 0 (sheet lookup failed) — equal ilvl must then mean "leave it alone".
+        var upgrades = GearSelector.Plan(
+            Equipped(Item(1, GearSlot.Head, 730)),
+            [Item(2, GearSlot.Head, 730)],
+            JobLevel);
+
+        Assert.Empty(upgrades);
     }
 
     [Fact]

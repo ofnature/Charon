@@ -1009,7 +1009,17 @@ public sealed class MainWindow : Window
             ImGui.TableNextColumn();
             ImGui.TextColored(CharonTheme.AccentGold, upgrade.Item.Name);
             ImGui.TableNextColumn();
-            ImGui.TextColored(CharonTheme.StatusGreen, $"+{upgrade.IlvlGain}");
+            if (upgrade.IlvlGain > 0)
+            {
+                ImGui.TextColored(CharonTheme.StatusGreen, $"+{upgrade.IlvlGain}");
+            }
+            else
+            {
+                // Same item level, better stats for this job — the usual case at max level.
+                ImGui.TextColored(CharonTheme.AccentGold, "stats");
+                if (ImGui.IsItemHovered())
+                    ImGui.SetTooltip("Same item level, but a better stat spread for this job.");
+            }
         }
 
         ImGui.EndTable();

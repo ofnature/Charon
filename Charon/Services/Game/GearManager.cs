@@ -834,10 +834,39 @@ public sealed unsafe class GearManager
         return fits;
     }
 
+    // BaseParam row ids (verified against the sheet, not assumed).
+    private const uint ParamVitality = 3;
+    private const uint ParamPiety = 6;
+    private const uint ParamTenacity = 19;
+    private const uint ParamDirectHit = 22;
+    private const uint ParamCriticalHit = 27;
+    private const uint ParamDetermination = 44;
+    private const uint ParamSkillSpeed = 45;
+    private const uint ParamSpellSpeed = 46;
+
     /// <summary>
-    /// Tie-break score for equal-ilvl items: the job's primary stat plus half of vitality. Only
-    /// separates same-ilvl pieces (a STR vs MND ring at low levels) — 0 everywhere it can't be
-    /// resolved, which just falls through to the item-id tie-break.
+    /// "Main Attribute" / "Secondary Attribute": adaptive stats on gear that scales to whatever job
+    /// you are playing (the EXP-bonus earrings use them). They stand in for the job's own main stat
+    /// and a substat — without these, such items score near zero and lose every comparison.
+    /// </summary>
+    private const uint ParamMainAttribute = 55;
+    private const uint ParamSecondaryAttribute = 56;
+
+    // ClassJob.Role: 1 = tank, 2 = melee DPS, 3 = ranged/caster DPS, 4 = healer (verified).
+    private const byte RoleTank = 1;
+    private const byte RoleHealer = 4;
+
+    /// <summary>
+    /// How good this piece is for the job. Main stat dominates by an order of magnitude — it always
+    /// does in practice — with the offensive substats next and the role-specific ones (tenacity for
+    /// tanks, piety for healers) only counted where they mean anything. A stat the job cannot use
+    /// scores ZERO, which is what keeps caster gear off a tank at equal item level.
+    ///
+    /// Deliberately unopinionated: no per-job speed breakpoints or tier tables. This ranks gear for
+    /// leveling alts and casual cap play, not for optimizing a specific rotation. Materia is not
+    /// counted (these are the item's base values).
+    ///
+    /// Only ever compares pieces at the SAME item level — see <see cref="GearSelector"/>.
     /// </summary>
     private int StatScore(Item row, uint jobId)
     {
@@ -848,16 +877,28 @@ public sealed unsafe class GearManager
                 return 0;
 
             uint primary = job.PrimaryStat;
-            const uint vitality = 3;
+            var role = job.Role;
 
             var score = 0;
             for (var i = 0; i < row.BaseParam.Count; i++)
             {
                 var param = row.BaseParam[i].RowId;
-                if (param == primary)
-                    score += row.BaseParamValue[i] * 2;
-                else if (param == vitality)
-                    score += row.BaseParamValue[i];
+                var value = (int)row.BaseParamValue[i];
+                if (value == 0)
+                    continue;
+
+                score += param switch
+                {
+                    _ when param == primary => value * 10,
+                    ParamMainAttribute => value * 10,
+                    ParamCriticalHit or ParamDetermination or ParamDirectHit => value * 3,
+                    ParamSecondaryAttribute => value * 3,
+                    ParamTenacity when role == RoleTank => value * 3,
+                    ParamPiety when role == RoleHealer => value * 2,
+                    ParamSkillSpeed or ParamSpellSpeed => value,
+                    ParamVitality => value,
+                    _ => 0, // a stat this job cannot use is worth nothing
+                };
             }
 
             return score;

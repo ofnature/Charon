@@ -57,8 +57,9 @@ public sealed record GearUpgrade(GearSlot Slot, GearItem Item, GearItem? Replaci
 /// Picks the best available gear per slot for the current job. Pure logic — no Dalamud types.
 ///
 /// Ranking is item level descending, then a job-weighted stat score, then item id (so two boxes
-/// running the same inventory always agree). An EMPTY slot is always an upgrade; an equal-ilvl
-/// item never is (no churn for a sidegrade).
+/// running the same inventory always agree). An EMPTY slot is always an upgrade; so is a same-ilvl
+/// piece whose stats are clearly better for the job (see <see cref="Beats"/>) — without that, a
+/// max-level toon whose gear is all one item level would never see an upgrade again.
 ///
 /// The executor equips ONE upgrade per pass and re-plans afterwards, so this returning a whole
 /// list is a preview convenience — nothing downstream replays a stale batch.
@@ -159,9 +160,32 @@ public static class GearSelector
         return upgrades;
     }
 
-    /// <summary>Empty slot = always an upgrade; equal ilvl = never (a sidegrade is not worth a swap).</summary>
-    private static bool Beats(GearItem candidate, GearItem? worn) =>
-        worn == null || candidate.ItemLevel > worn.ItemLevel;
+    /// <summary>
+    /// How much better a same-ilvl piece's stats must be to justify a swap (5%). Without a margin,
+    /// two near-identical pieces would each look like an upgrade over the other and the executor
+    /// would swap them back and forth every pass.
+    /// </summary>
+    private const double StatUpgradeMargin = 0.05;
+
+    /// <summary>
+    /// Empty slot = always an upgrade. Higher item level = always an upgrade. At the SAME item
+    /// level, a clearly better stat spread for this job counts too — that is what keeps the feature
+    /// alive at max level, where every candidate is the same ilvl and nothing would otherwise ever
+    /// qualify.
+    ///
+    /// A LOWER item level never wins, however good the stats: ilvl gates duty entry, so trading it
+    /// away for substats is a downgrade with real consequences.
+    /// </summary>
+    private static bool Beats(GearItem candidate, GearItem? worn)
+    {
+        if (worn == null)
+            return true;
+
+        if (candidate.ItemLevel != worn.ItemLevel)
+            return candidate.ItemLevel > worn.ItemLevel;
+
+        return candidate.StatScore > worn.StatScore * (1 + StatUpgradeMargin);
+    }
 
     private static GearItem? Worn(IReadOnlyDictionary<GearSlot, GearItem?> equipped, GearSlot slot) =>
         equipped.TryGetValue(slot, out var item) ? item : null;

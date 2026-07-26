@@ -92,6 +92,40 @@ public sealed class ExpBonusItemsTests
     }
 
     [Fact]
+    public void Migration_TurnsOnGearIpcExecution_ForAnExisting_0_1_9_Install()
+    {
+        // A saved config overrides the C# default, so 0.1.9's persisted "false" would stick
+        // forever without this step — changing the default alone reaches only fresh installs.
+        var config = new CharonConfig { Version = 2, GearIpcExecuteEnabled = false };
+
+        Assert.True(config.Migrate());
+        Assert.True(config.GearIpcExecuteEnabled);
+    }
+
+    [Fact]
+    public void Migration_FromV2_DoesNotReseedTheKeepList()
+    {
+        // Version 2 already ran the seed; someone who unticked an EXP item must keep that.
+        var config = new CharonConfig { Version = 2 };
+
+        config.Migrate();
+
+        Assert.Empty(config.GearNeverEvictItemIds);
+    }
+
+    [Fact]
+    public void Migration_LeavesExecutionOff_IfTurnedOffAfterMigrating()
+    {
+        var config = new CharonConfig();
+        config.Migrate();
+
+        config.GearIpcExecuteEnabled = false;
+
+        Assert.False(config.Migrate());
+        Assert.False(config.GearIpcExecuteEnabled);
+    }
+
+    [Fact]
     public void Migration_DoesNotDuplicateAlreadyKeptExpGear()
     {
         var config = new CharonConfig();

@@ -13,28 +13,41 @@ public sealed class CharonConfig : IPluginConfiguration
     /// <summary>
     /// Config schema version, bumped when a load-time migration is needed.
     /// 2 = the never-evict list is seeded with EXP-bonus gear (<see cref="Features.Gear.ExpBonusItems"/>).
+    /// 3 = gear IPC execution is switched on (it shipped off for one release, pending validation).
     /// </summary>
     public int Version { get; set; } = 1;
 
     /// <summary>Newest schema version — a config below this runs <see cref="Migrate"/> on load.</summary>
-    public const int CurrentVersion = 2;
+    public const int CurrentVersion = 3;
 
     /// <summary>
     /// Bring a loaded config up to <see cref="CurrentVersion"/>. Returns true when something
-    /// changed (the caller then saves). Runs for fresh installs too, since a new config starts at
-    /// version 1 — that is what seeds the EXP-gear protection for everyone exactly once. A user who
-    /// later unticks one of those items keeps that decision: the migration never runs again.
+    /// changed (the caller then saves).
+    ///
+    /// Migrations exist because a saved config OVERRIDES a property's C# default: once a version has
+    /// written a value, changing the default in code does nothing for anyone who already ran it.
+    /// Each step runs exactly once, so a user who later reverses one of these keeps their decision.
+    /// Fresh installs start at version 1 and run every step, which is what makes new and existing
+    /// boxes end up in the same state.
     /// </summary>
     public bool Migrate()
     {
         if (Version >= CurrentVersion)
             return false;
 
-        foreach (var itemId in Features.Gear.ExpBonusItems.ItemIds)
+        if (Version < 2)
         {
-            if (!GearNeverEvictItemIds.Contains(itemId))
-                GearNeverEvictItemIds.Add(itemId);
+            foreach (var itemId in Features.Gear.ExpBonusItems.ItemIds)
+            {
+                if (!GearNeverEvictItemIds.Contains(itemId))
+                    GearNeverEvictItemIds.Add(itemId);
+            }
         }
+
+        // Shipped OFF in 0.1.9 so the equip pass could be verified in-game before plugins could
+        // trigger it. It has been, so switch the fleet on rather than making every box tick a box.
+        if (Version < 3)
+            GearIpcExecuteEnabled = true;
 
         Version = CurrentVersion;
         return true;
@@ -131,9 +144,10 @@ public sealed class CharonConfig : IPluginConfiguration
     /// <summary>
     /// Let the IPC actually EQUIP. Off = preview only: the count gate and the in-window preview stay
     /// live, EquipUpgrades just logs the plan and returns false so callers fall back to the game's
-    /// Equip Recommended. Flip this on once the previews have been verified in-game.
+    /// Equip Recommended. On by default since 0.1.10 (verified in-game); existing installs are moved
+    /// over by the version-3 migration, since their saved <c>false</c> would otherwise stick.
     /// </summary>
-    public bool GearIpcExecuteEnabled { get; set; } = false;
+    public bool GearIpcExecuteEnabled { get; set; } = true;
 
     /// <summary>Save the newly worn gear onto the active gearset after a pass.</summary>
     public bool GearUpdateGearsetAfterPass { get; set; } = true;
