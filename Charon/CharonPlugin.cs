@@ -22,8 +22,15 @@ namespace Charon;
 
 public sealed class CharonPlugin : IDalamudPlugin
 {
-    public const string PluginVersion = "0.1.12";
+    public const string PluginVersion = "0.1.13";
     private const string CommandName = "/charon";
+
+    /// <summary>
+    /// Short alias, matching the fleet's convention (/daedalus → /dae, /sealbreaker → /seal).
+    /// Verified free of native text commands: every /ch* the game ships is longer (/chatlog,
+    /// /charmed, /character, /changepose) and FFXIV does not prefix-match commands.
+    /// </summary>
+    private const string CommandAlias = "/cha";
 
     private readonly IDalamudPluginInterface _pluginInterface;
     private readonly ICommandManager _commandManager;
@@ -234,7 +241,12 @@ public sealed class CharonPlugin : IDalamudPlugin
 
         _commandManager.AddHandler(CommandName, new CommandInfo(OnCommand)
         {
-            HelpMessage = "Toggle the Charon window. /charon follow <name> to follow a toon, /charon follow stop to stop.",
+            HelpMessage = "Toggle the Charon window (short alias: /cha). "
+                          + "/charon follow <name> to follow a toon, /charon follow stop to stop.",
+        });
+        _commandManager.AddHandler(CommandAlias, new CommandInfo(OnCommand)
+        {
+            HelpMessage = "Short alias for /charon.",
         });
 
         // Auto-open the FC chest window when the game's Free Company chest opens (and close it
@@ -263,6 +275,7 @@ public sealed class CharonPlugin : IDalamudPlugin
         _addonLifecycle.UnregisterListener(AddonEvent.PreFinalize, FcChestAddonName, OnFcChestClose);
 
         _commandManager.RemoveHandler(CommandName);
+        _commandManager.RemoveHandler(CommandAlias);
         _windowSystem.RemoveAllWindows();
 
         _relay.OnMessage -= OnRelayMessage;

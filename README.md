@@ -114,7 +114,7 @@ Add the repo URL to Dalamud (Settings → Experimental → Custom Plugin Reposit
 https://raw.githubusercontent.com/ofnature/Daedalus/main/repo.json
 ```
 
-Then install **Charon** from the plugin installer. `/charon` toggles the window.
+Then install **Charon** from the plugin installer. `/charon` toggles the window — or `/cha` for short.
 
 One URL, whole family: the same repository also serves [Daedalus](https://github.com/ofnature/Daedalus) and [SealBreaker](https://github.com/ofnature/SealBreaker).
 
