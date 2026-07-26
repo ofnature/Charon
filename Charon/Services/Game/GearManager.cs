@@ -774,7 +774,9 @@ public sealed unsafe class GearManager
                 row.EquipSlotCategory.Value.OffHand != 0,
                 StatScore(row, jobId),
                 container,
-                sourceSlot);
+                sourceSlot,
+                StatsFitJob(row, jobId),
+                HasJobMainStat(row, jobId));
         }
         catch
         {
@@ -835,6 +837,16 @@ public sealed unsafe class GearManager
     }
 
     // BaseParam row ids (verified against the sheet, not assumed).
+    private const uint ParamStrength = 1;
+    private const uint ParamDexterity = 2;
+    private const uint ParamIntelligence = 4;
+    private const uint ParamMind = 5;
+    private const uint ParamGatheringPoints = 10;  // GP
+    private const uint ParamCraftingPoints = 11;   // CP
+    private const uint ParamCraftsmanship = 70;
+    private const uint ParamControl = 71;
+    private const uint ParamGathering = 72;
+    private const uint ParamPerception = 73;
     private const uint ParamVitality = 3;
     private const uint ParamPiety = 6;
     private const uint ParamTenacity = 19;
@@ -855,6 +867,101 @@ public sealed unsafe class GearManager
     // ClassJob.Role: 1 = tank, 2 = melee DPS, 3 = ranged/caster DPS, 4 = healer (verified).
     private const byte RoleTank = 1;
     private const byte RoleHealer = 4;
+
+    /// <summary>
+    /// Whether an item's STATS belong to this job, which is a separate question from whether the
+    /// game lets the job equip it. Gathering and crafting gear is frequently in the "All Classes"
+    /// category (row 1 is true for PLD and MIN alike — verified), so a combat job passes the
+    /// category gate on a ring statted for Perception and GP, and its item level then wins the
+    /// ranking outright. That is how a gathering piece gets swapped onto a Paladin.
+    ///
+    /// The test is the presence of a DoL/DoH-exclusive stat — those never appear on combat gear, so
+    /// it cannot reject a real combat piece. Gatherer and crafter jobs are left alone entirely
+    /// (Charon does not rank their gear), and anything unreadable fails OPEN, keeping today's
+    /// behaviour rather than silently emptying the candidate list.
+    /// </summary>
+    private bool StatsFitJob(Item row, uint jobId)
+    {
+        try
+        {
+            var jobs = _dataManager.GetExcelSheet<ClassJob>();
+            if (jobs == null || !jobs.TryGetRow(jobId, out var job))
+                return true;
+
+            // DoH/DoL jobs have no primary combat stat (verified: PrimaryStat 0, Role 0).
+            if (job.PrimaryStat == 0)
+                return true;
+
+            for (var i = 0; i < row.BaseParam.Count; i++)
+            {
+                if (row.BaseParamValue[i] == 0)
+                    continue;
+
+                switch (row.BaseParam[i].RowId)
+                {
+                    case ParamGathering:
+                    case ParamPerception:
+                    case ParamGatheringPoints:
+                    case ParamCraftsmanship:
+                    case ParamControl:
+                    case ParamCraftingPoints:
+                        return false; // gatherer/crafter gear — not for a combat job
+                }
+            }
+
+            return true;
+        }
+        catch
+        {
+            return true;
+        }
+    }
+
+    /// <summary>
+    /// Whether this item's MAIN stat is the one this job uses. False only when the item carries a
+    /// main stat belonging to a different job — that is dead weight, however high the item level.
+    ///
+    /// Accessories are the trap: many are "All Classes" with a role-specific main stat, so the game
+    /// lets a Paladin wear Augmented Shire Conservator's Choker (ilvl 270, Dexterity 47) and
+    /// ilvl-first ranking would take it over a lower-ilvl Strength piece.
+    ///
+    /// Neutral cases return TRUE so nothing legitimate is downranked: adaptive "Main Attribute"
+    /// gear (the EXP earrings), items with no main stat at all, and anything unreadable.
+    /// </summary>
+    private bool HasJobMainStat(Item row, uint jobId)
+    {
+        try
+        {
+            var jobs = _dataManager.GetExcelSheet<ClassJob>();
+            if (jobs == null || !jobs.TryGetRow(jobId, out var job))
+                return true;
+
+            uint primary = job.PrimaryStat;
+            if (primary == 0)
+                return true; // DoH/DoL — not ranked by main stat at all
+
+            var carriesAMainStat = false;
+            for (var i = 0; i < row.BaseParam.Count; i++)
+            {
+                if (row.BaseParamValue[i] == 0)
+                    continue;
+
+                var param = row.BaseParam[i].RowId;
+                if (param == primary || param == ParamMainAttribute)
+                    return true; // the job's own stat (or an adaptive one) — good
+
+                if (param is ParamStrength or ParamDexterity or ParamIntelligence or ParamMind)
+                    carriesAMainStat = true;
+            }
+
+            // Carries someone else's main stat and not ours; no main stat at all is neutral.
+            return !carriesAMainStat;
+        }
+        catch
+        {
+            return true;
+        }
+    }
 
     /// <summary>
     /// How good this piece is for the job. Main stat dominates by an order of magnitude — it always

@@ -32,6 +32,12 @@ public enum GearSlot
 /// The sheet lookups that need Lumina (job category, equip-slot category, stat weighting) are
 /// resolved by the adapter and arrive here already reduced to <see cref="FitsJob"/>,
 /// <see cref="Slot"/> and <see cref="StatScore"/> — that keeps selection pure and testable.
+///
+/// <see cref="FitsJob"/> and <see cref="StatsFitJob"/> are two DIFFERENT gates and both are needed:
+/// the first is whether the game lets this job equip it, the second whether the stats are for this
+/// job at all. Gathering and crafting gear is routinely in the "All Classes" category, so the game
+/// happily lets a Paladin wear a ring statted for Perception and GP — and being higher item level,
+/// it would win on rank. Verified: ClassJobCategory row 1 is true for PLD and MIN alike.
 /// </summary>
 public sealed record GearItem(
     uint ItemId,
@@ -44,7 +50,9 @@ public sealed record GearItem(
     bool BlocksOffHand,
     int StatScore = 0,
     int Container = -1,
-    short SourceSlot = -1);
+    short SourceSlot = -1,
+    bool StatsFitJob = true,
+    bool HasJobMainStat = true);
 
 /// <summary>One planned equip: put <paramref name="Item"/> into <paramref name="Slot"/>.</summary>
 public sealed record GearUpgrade(GearSlot Slot, GearItem Item, GearItem? Replacing)
@@ -86,7 +94,7 @@ public static class GearSelector
         int jobLevel)
     {
         var eligible = candidates
-            .Where(c => c.FitsJob && c.EquipLevel <= jobLevel && c.ItemId != 0)
+            .Where(c => c.FitsJob && c.StatsFitJob && c.EquipLevel <= jobLevel && c.ItemId != 0)
             .ToList();
 
         var upgrades = new List<GearUpgrade>();
@@ -190,9 +198,23 @@ public static class GearSelector
     private static GearItem? Worn(IReadOnlyDictionary<GearSlot, GearItem?> equipped, GearSlot slot) =>
         equipped.TryGetValue(slot, out var item) ? item : null;
 
-    /// <summary>ilvl, then job-weighted stats, then item id — total and deterministic across boxes.</summary>
+    /// <summary>
+    /// Main stat FIRST, then ilvl, then job-weighted stats, then item id — total and deterministic
+    /// across boxes.
+    ///
+    /// Gear carrying the wrong main stat ranks below everything else regardless of item level. A lot
+    /// of accessories are "All Classes" with a specific main stat (Augmented Shire Conservator's
+    /// Choker is ilvl 270 with Dexterity — dead weight on a Paladin), so ilvl-first ranking would
+    /// pick one of those over a lower-ilvl piece carrying the job's actual stat. Off-stat items are
+    /// still ranked, just last, so they can fill an EMPTY slot when nothing better exists — some
+    /// vitality beats a bare slot.
+    /// </summary>
     private static readonly IComparer<GearItem> Ranking = Comparer<GearItem>.Create((a, b) =>
     {
+        var byMainStat = b.HasJobMainStat.CompareTo(a.HasJobMainStat);
+        if (byMainStat != 0)
+            return byMainStat;
+
         var byIlvl = b.ItemLevel.CompareTo(a.ItemLevel);
         if (byIlvl != 0)
             return byIlvl;

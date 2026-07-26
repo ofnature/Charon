@@ -177,6 +177,118 @@ public sealed class GearSelectorTests
         Assert.Empty(upgrades);
     }
 
+    [Fact]
+    public void GatheringGear_IsNeverEquippedOnACombatJob()
+    {
+        // Gathering/crafting gear sits in the "All Classes" category, so the game DOES let a
+        // combat job wear it — it passes fitsJob. Only the stat gate stops it, and without that
+        // its higher item level wins outright.
+        var upgrades = GearSelector.Plan(
+            Equipped(Item(1, GearSlot.Body, 100)),
+            [Item(2, GearSlot.Body, 300, fitsJob: true) with { StatsFitJob = false }],
+            JobLevel);
+
+        Assert.Empty(upgrades);
+    }
+
+    [Fact]
+    public void GatheringGear_LosesEvenWhenTheSlotIsEmpty()
+    {
+        // An empty slot is otherwise always an upgrade — wrong-stat gear must still not fill it.
+        var upgrades = GearSelector.Plan(
+            new Dictionary<GearSlot, GearItem?>(),
+            [Item(2, GearSlot.Ears, 300) with { StatsFitJob = false }],
+            JobLevel);
+
+        Assert.Empty(upgrades);
+    }
+
+    [Fact]
+    public void CombatGear_IsStillChosenOverHigherIlvlGatheringGear()
+    {
+        var upgrades = GearSelector.Plan(
+            Equipped(Item(1, GearSlot.Neck, 100)),
+            [
+                Item(2, GearSlot.Neck, 300) with { StatsFitJob = false }, // higher ilvl, wrong stats
+                Item(3, GearSlot.Neck, 150),                              // the right answer
+            ],
+            JobLevel);
+
+        Assert.Equal(3u, Assert.Single(upgrades).Item.ItemId);
+    }
+
+    // --- Wrong main stat (the "All Classes" accessory trap) ---
+
+    [Fact]
+    public void RightMainStat_BeatsHigherIlvlWithTheWrongOne()
+    {
+        // Augmented Shire Conservator's Choker is ilvl 270 with Dexterity — the game lets a
+        // Paladin wear it, but the main stat is dead weight, so a lower-ilvl STR piece wins.
+        var upgrades = GearSelector.Plan(
+            Equipped(Item(1, GearSlot.Neck, 100)),
+            [
+                Item(2, GearSlot.Neck, 270) with { HasJobMainStat = false },
+                Item(3, GearSlot.Neck, 240),
+            ],
+            JobLevel);
+
+        Assert.Equal(3u, Assert.Single(upgrades).Item.ItemId);
+    }
+
+    [Fact]
+    public void WrongMainStat_StillFillsAnEmptySlot_WhenNothingElseExists()
+    {
+        // Some vitality beats a bare slot — off-stat gear is ranked last, not banned.
+        var upgrades = GearSelector.Plan(
+            new Dictionary<GearSlot, GearItem?>(),
+            [Item(2, GearSlot.Neck, 270) with { HasJobMainStat = false }],
+            JobLevel);
+
+        Assert.Single(upgrades);
+    }
+
+    [Fact]
+    public void WrongMainStat_LosesEvenAtAMuchHigherIlvl()
+    {
+        var upgrades = GearSelector.Plan(
+            Equipped(Item(1, GearSlot.Body, 100)),
+            [
+                Item(2, GearSlot.Body, 600) with { HasJobMainStat = false },
+                Item(3, GearSlot.Body, 130),
+            ],
+            JobLevel);
+
+        Assert.Equal(3u, Assert.Single(upgrades).Item.ItemId);
+    }
+
+    [Fact]
+    public void RightMainStat_PreferredForRingsToo()
+    {
+        var upgrades = GearSelector.Plan(
+            Equipped(Item(1, GearSlot.RingRight, 100), Item(2, GearSlot.RingLeft, 100)),
+            [
+                Item(3, GearSlot.RingRight, 270) with { HasJobMainStat = false },
+                Item(4, GearSlot.RingRight, 240),
+            ],
+            JobLevel);
+
+        // Worst hand takes the on-stat ring first; the off-stat one still fills the other hand.
+        Assert.Equal(2, upgrades.Count);
+        Assert.Equal(4u, upgrades.First(u => u.Item.HasJobMainStat).Item.ItemId);
+    }
+
+    [Fact]
+    public void GatheringRing_IsNotEquippedIntoEitherHand()
+    {
+        // Rings go through their own pool — the stat gate has to apply there too.
+        var upgrades = GearSelector.Plan(
+            Equipped(Item(1, GearSlot.RingRight, 100), Item(2, GearSlot.RingLeft, 100)),
+            [Item(3, GearSlot.RingRight, 300) with { StatsFitJob = false }],
+            JobLevel);
+
+        Assert.Empty(upgrades);
+    }
+
     // --- Ranking ---
 
     [Fact]
