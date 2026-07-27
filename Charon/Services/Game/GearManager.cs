@@ -21,6 +21,13 @@ public sealed record GearLogEntry(string Name, string Detail);
 public sealed record CleanupRow(uint ItemId, string Name, int StackCount, bool Kept, string ExpBonus);
 
 /// <summary>
+/// One entry on the never-evict keep list. <paramref name="InArmoury"/> is false for items that
+/// are protected but not currently in the armoury — those never show in the cleanup preview, so
+/// this list is the ONLY way to see or undo them.
+/// </summary>
+public sealed record KeptItemRow(uint ItemId, string Name, bool InArmoury, string ExpBonus);
+
+/// <summary>
 /// Gear scanning + equipping. Thin unsafe adapter around InventoryManager; the selection and
 /// cleanup decisions are pure (<see cref="GearSelector"/>, <see cref="ArmouryCleanupPlanner"/>).
 ///
@@ -97,6 +104,8 @@ public sealed unsafe class GearManager
     private DateTime _cleanupPreviewCacheUtc = DateTime.MinValue;
     private List<GearUpgrade>? _upgradePreviewCache;
     private DateTime _upgradePreviewCacheUtc = DateTime.MinValue;
+    private List<KeptItemRow>? _keptItemsCache;
+    private DateTime _keptItemsCacheUtc = DateTime.MinValue;
 
     /// <summary>What a submitted move was for — decides how it is verified and logged.</summary>
     private enum MoveKind
@@ -214,11 +223,73 @@ public sealed unsafe class GearManager
         return _cleanupPreviewCache;
     }
 
+    /// <summary>
+    /// Everything on the never-evict keep list, whether or not it is in the armoury right now.
+    /// The cleanup preview only lists armoury contents, so an item protected by a stray click and
+    /// since moved elsewhere would otherwise be invisible AND permanent — this is its way back.
+    /// </summary>
+    public IReadOnlyList<KeptItemRow> GetKeptItems()
+    {
+        if (_keptItemsCache != null && DateTime.UtcNow - _keptItemsCacheUtc < PreviewCacheLifetime)
+            return _keptItemsCache;
+
+        try
+        {
+            var inArmoury = new HashSet<uint>(ReadArmouryStacks().Select(i => i.ItemId));
+            _keptItemsCache = _keepItemIds()
+                .Distinct()
+                .Select(id => new KeptItemRow(id, ResolveItemName(id), inArmoury.Contains(id),
+                    ExpBonusItems.BonusFor(id)))
+                .OrderBy(r => r.Name, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+        }
+        catch (Exception ex)
+        {
+            _log.Warning(ex, "Keep-list read threw");
+            _keptItemsCache = new List<KeptItemRow>();
+        }
+
+        _keptItemsCacheUtc = DateTime.UtcNow;
+        return _keptItemsCache;
+    }
+
+    /// <summary>
+    /// Free slots across the four main bags — the real ceiling on a cleanup run, so the confirm
+    /// can warn before the click rather than the run stopping halfway with full bags.
+    /// </summary>
+    public int CountFreeBagSlots()
+    {
+        var free = 0;
+        foreach (var bag in PlayerBags)
+        {
+            try
+            {
+                var container = InventoryManager.Instance()->GetInventoryContainer(bag);
+                if (container == null || !container->IsLoaded)
+                    continue;
+
+                for (var i = 0; i < container->Size; i++)
+                {
+                    var item = container->GetInventorySlot(i);
+                    if (item != null && item->ItemId == 0)
+                        free++;
+                }
+            }
+            catch
+            {
+                // skip unreadable bag
+            }
+        }
+
+        return free;
+    }
+
     /// <summary>Drop the cached previews (the keep list changed, or an item just moved).</summary>
     public void InvalidatePreview()
     {
         _cleanupPreviewCache = null;
         _upgradePreviewCache = null;
+        _keptItemsCache = null;
     }
 
     /// <summary>

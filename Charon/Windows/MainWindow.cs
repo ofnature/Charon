@@ -836,6 +836,7 @@ public sealed class MainWindow : Window
 
         ImGui.Spacing();
         DrawArmouryCleanup(busy);
+        DrawKeepList();
 
         if (_gear.Status.Length > 0 && _gear.Status != "idle")
             ImGui.TextColored(CharonTheme.StatusYellow, _gear.Status);
@@ -953,10 +954,39 @@ public sealed class MainWindow : Window
 
         if (busy || evicting == 0) ImGui.BeginDisabled();
         if (ImGui.Button($"Move {evicting} to bags") && !busy && evicting > 0)
-            _gear.StartArmouryCleanup();
+            ImGui.OpenPopup("gearCleanupConfirm");
         if (busy || evicting == 0) ImGui.EndDisabled();
         CharonTheme.HelpMarker("Moves the unticked items above back into your bags.\n"
                                + "Gearset gear is never touched, and soul crystals always stay put.");
+
+        // Confirm modal — on a main's armoury this is one click from moving hundreds of items,
+        // and the only things standing between them and your bags are your saved gearsets.
+        if (ImGui.BeginPopupModal("gearCleanupConfirm", ImGuiWindowFlags.AlwaysAutoResize))
+        {
+            ImGui.TextUnformatted($"Move {evicting} armoury item(s) to your bags?");
+            ImGui.TextColored(CharonTheme.TextSecondary,
+                "Everything not referenced by a saved gearset goes, including glamour");
+            ImGui.TextColored(CharonTheme.TextSecondary,
+                "pieces and gear for jobs you have no gearset for.");
+
+            // Bag space is the practical limit — 283 items do not fit in four bags, and the run
+            // would stop partway with full bags. Say so BEFORE the click, not after.
+            var bagSpace = _gear.CountFreeBagSlots();
+            if (evicting > bagSpace)
+                ImGui.TextColored(CharonTheme.StatusYellow,
+                    $"Only {bagSpace} free bag slot(s) — it will move what fits and stop.");
+
+            ImGui.Spacing();
+            if (ImGui.Button("Confirm", new Vector2(120f, 0)))
+            {
+                _gear.StartArmouryCleanup();
+                ImGui.CloseCurrentPopup();
+            }
+            ImGui.SameLine();
+            if (ImGui.Button("Cancel", new Vector2(120f, 0)))
+                ImGui.CloseCurrentPopup();
+            ImGui.EndPopup();
+        }
 
         var keptCount = rows.Count - evicting;
         if (keptCount > 0)
@@ -965,6 +995,80 @@ public sealed class MainWindow : Window
             ImGui.TextColored(CharonTheme.TextDisabled,
                 $"{keptCount} kept");
         }
+    }
+
+    /// <summary>
+    /// The keep list in full — including items NOT currently in the armoury, which never appear in
+    /// the cleanup preview. Without this a stray Keep click is invisible and permanent: the item
+    /// leaves the armoury, its row disappears, and the protection silently persists forever.
+    /// </summary>
+    private void DrawKeepList()
+    {
+        var kept = _gear.GetKeptItems();
+
+        if (!ImGui.CollapsingHeader($"Protected from cleanup — {kept.Count} item(s)###gearKeepList"))
+            return;
+
+        if (kept.Count == 0)
+        {
+            ImGui.TextColored(CharonTheme.TextDisabled, "Nothing protected. Tick Keep on a cleanup row to add one.");
+            return;
+        }
+
+        ImGui.TextColored(CharonTheme.TextSecondary,
+            "Armoury cleanup will never move these. Ticked one by mistake? Remove it here.");
+
+        if (ImGui.BeginTable("gearKeepRows", 3,
+                ImGuiTableFlags.BordersInnerV | ImGuiTableFlags.RowBg | ImGuiTableFlags.SizingFixedFit
+                | ImGuiTableFlags.ScrollY, new Vector2(0, 140)))
+        {
+            ImGui.TableSetupColumn("##remove", ImGuiTableColumnFlags.WidthFixed, 28f);
+            ImGui.TableSetupColumn("Item", ImGuiTableColumnFlags.WidthStretch);
+            ImGui.TableSetupColumn("Where", ImGuiTableColumnFlags.WidthFixed, 80f);
+            ImGui.TableHeadersRow();
+
+            foreach (var row in kept)
+            {
+                ImGui.TableNextRow();
+                ImGui.TableNextColumn();
+                if (ImGui.SmallButton($"x##unkeep{row.ItemId}"))
+                    SetItemKept(row.ItemId, false);
+                if (ImGui.IsItemHovered())
+                    ImGui.SetTooltip("Stop protecting this item");
+
+                ImGui.TableNextColumn();
+                ImGui.TextUnformatted(row.Name);
+                if (row.ExpBonus.Length > 0)
+                {
+                    ImGui.SameLine();
+                    ImGui.TextColored(CharonTheme.AccentGold, "[EXP]");
+                    if (ImGui.IsItemHovered())
+                        ImGui.SetTooltip($"{row.ExpBonus}\nProtected by default.");
+                }
+
+                ImGui.TableNextColumn();
+                ImGui.TextColored(row.InArmoury ? CharonTheme.TextSecondary : CharonTheme.TextDisabled,
+                    row.InArmoury ? "armoury" : "elsewhere");
+            }
+
+            ImGui.EndTable();
+        }
+
+        var missingDefaults = ExpBonusItems.ItemIds
+            .Where(id => !_config.GearNeverEvictItemIds.Contains(id))
+            .ToList();
+        if (missingDefaults.Count == 0)
+            return;
+
+        if (ImGui.Button($"Restore EXP gear protection ({missingDefaults.Count})"))
+        {
+            foreach (var id in missingDefaults)
+                _config.GearNeverEvictItemIds.Add(id);
+            _save();
+            _gear.InvalidatePreview();
+        }
+        CharonTheme.HelpMarker("Re-protects the EXP-bonus gear (Brand-new Ring, the pre-order\n"
+                               + "earrings, and friends) that ships protected by default.");
     }
 
     /// <summary>Add/remove an item from the never-evict list and refresh the preview at once.</summary>
