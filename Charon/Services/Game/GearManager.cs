@@ -83,6 +83,9 @@ public sealed unsafe class GearManager
     private (uint ItemId, GearSlot Slot) _currentTarget;
     private int _targetAttempts;
 
+    /// <summary>Upgrades that refused to equip this pass — set aside so the rest still get done.</summary>
+    private readonly HashSet<(uint ItemId, GearSlot Slot)> _skipped = new();
+
     // Armoury cleanup state (its own simple queue — no re-planning needed, nothing shifts under it).
     private readonly Queue<ArmouryItem> _cleanupQueue = new();
     private int _cleanupMoved;
@@ -154,8 +157,9 @@ public sealed unsafe class GearManager
                 return new List<GearUpgrade>();
 
             var jobId = local.ClassJob.RowId;
-            var candidates = ReadCandidates(jobId);
-            return GearSelector.Plan(ReadEquipped(jobId), candidates, local.Level);
+            var (race, sex) = ReadLocalAppearance(); // read once — it cannot change mid-scan
+            var candidates = ReadCandidates(jobId, race, sex);
+            return GearSelector.Plan(ReadEquipped(jobId, race, sex), candidates, local.Level);
         }
         catch (Exception ex)
         {
@@ -262,6 +266,7 @@ public sealed unsafe class GearManager
         _equipped = 0;
         _targetAttempts = 0;
         _currentTarget = default;
+        _skipped.Clear();
         _inFlight = null;
         _passRunning = true;
         _passDeadlineUtc = DateTime.UtcNow + PassTimeout;
@@ -339,7 +344,12 @@ public sealed unsafe class GearManager
             return;
         }
 
-        var upgrades = GetUpgrades();
+        // Anything that refused to equip is set aside for the rest of this pass, so one stubborn
+        // item cannot strand the upgrades behind it (a race-locked piece used to abort everything).
+        var upgrades = GetUpgrades()
+            .Where(u => !_skipped.Contains((u.Item.ItemId, u.Slot)))
+            .ToList();
+
         if (upgrades.Count == 0)
         {
             FinishPass("done");
@@ -350,11 +360,15 @@ public sealed unsafe class GearManager
         var target = (next.Item.ItemId, next.Slot);
         if (target == _currentTarget)
         {
-            // Same upgrade still outstanding after a completed step — it is not landing.
+            // Same upgrade still outstanding after a completed step — it is not landing. Skip it
+            // and carry on with the others rather than abandoning the pass.
             if (++_targetAttempts >= MaxAttemptsPerUpgrade)
             {
-                _operationLog.Add(new GearLogEntry(next.Item.Name, "FAILED — did not equip"));
-                FinishPass($"aborted — {next.Item.Name} would not equip");
+                _operationLog.Add(new GearLogEntry(next.Item.Name, "SKIPPED — would not equip"));
+                _log.Warning("Gear: {0} would not equip into {1} — skipping it", next.Item.Name, next.Slot);
+                _skipped.Add(target);
+                _currentTarget = default;
+                _targetAttempts = 0;
                 return;
             }
         }
@@ -510,9 +524,16 @@ public sealed unsafe class GearManager
         _passRunning = false;
         _inFlight = null;
         Status = status;
+
+        // Skips are part of the result, not a footnote — an item the game refuses is the single
+        // most useful thing to surface (race-locked gear, for instance).
+        var skipped = _skipped.Count > 0
+            ? $", {_skipped.Count} skipped (would not equip)"
+            : string.Empty;
+
         LastOperation = _equipped == 0
-            ? $"Gear: nothing equipped ({status})"
-            : $"Equipped {_equipped} {(_equipped == 1 ? "piece" : "pieces")} ({status})";
+            ? $"Gear: nothing equipped ({status}{skipped})"
+            : $"Equipped {_equipped} {(_equipped == 1 ? "piece" : "pieces")} ({status}{skipped})";
 
         if (_equipped > 0 && _updateGearsetAfterPass())
             TryUpdateCurrentGearset();
@@ -577,21 +598,21 @@ public sealed unsafe class GearManager
 
     // --- Container reads ---
 
-    private Dictionary<GearSlot, GearItem?> ReadEquipped(uint jobId)
+    private Dictionary<GearSlot, GearItem?> ReadEquipped(uint jobId, byte race, byte sex)
     {
         var equipped = new Dictionary<GearSlot, GearItem?>();
 
         foreach (GearSlot slot in Enum.GetValues<GearSlot>())
         {
             var itemId = ReadSlotItemId(InventoryType.EquippedItems, (short)(int)slot);
-            equipped[slot] = itemId == 0 ? null : BuildItem(itemId, jobId, slot, -1, -1);
+            equipped[slot] = itemId == 0 ? null : BuildItem(itemId, jobId, slot, -1, -1, race, sex);
         }
 
         return equipped;
     }
 
     /// <summary>Armoury always; the main bags too unless the "armoury only" checkbox is set.</summary>
-    private List<GearItem> ReadCandidates(uint jobId)
+    private List<GearItem> ReadCandidates(uint jobId, byte race, byte sex)
     {
         var containers = _includeMainBags()
             ? ArmouryContainers.Concat(PlayerBags)
@@ -612,7 +633,7 @@ public sealed unsafe class GearManager
                     if (slot == null || slot->ItemId == 0)
                         continue;
 
-                    var item = BuildItem(slot->ItemId, jobId, null, (int)container, (short)i);
+                    var item = BuildItem(slot->ItemId, jobId, null, (int)container, (short)i, race, sex);
                     if (item != null)
                         items.Add(item);
                 }
@@ -751,7 +772,8 @@ public sealed unsafe class GearManager
     /// they are actually worn in (a ring's sheet row cannot say which hand).
     /// Returns null for anything that is not equippable gear for this job's slots.
     /// </summary>
-    private GearItem? BuildItem(uint itemId, uint jobId, GearSlot? forcedSlot, int container, short sourceSlot)
+    private GearItem? BuildItem(
+        uint itemId, uint jobId, GearSlot? forcedSlot, int container, short sourceSlot, byte race, byte sex)
     {
         try
         {
@@ -776,7 +798,8 @@ public sealed unsafe class GearManager
                 container,
                 sourceSlot,
                 StatsFitJob(row, jobId),
-                HasJobMainStat(row, jobId));
+                HasJobMainStat(row, jobId),
+                FitsRace(row, race, sex));
         }
         catch
         {
@@ -867,6 +890,71 @@ public sealed unsafe class GearManager
     // ClassJob.Role: 1 = tank, 2 = melee DPS, 3 = ranged/caster DPS, 4 = healer (verified).
     private const byte RoleTank = 1;
     private const byte RoleHealer = 4;
+
+    /// <summary>
+    /// Whether this character's race and sex may wear the item. Starting gear is frequently locked
+    /// to one race and sex ("Roegadyn Bodice" is female-Roegadyn only) yet still reads as "All
+    /// Classes" at equip level 1 — so on a fresh alt with empty slots it looks like an ideal fit,
+    /// and the game then refuses the equip without saying anything.
+    ///
+    /// The EquipRaceCategory rows are NOT ordered by race id (16-19 run Hrothgar M, Viera F,
+    /// Viera M, Hrothgar F), so the booleans are read rather than computed. Restriction 0/1 mean
+    /// unrestricted, and anything unreadable fails OPEN.
+    /// </summary>
+    private bool FitsRace(Item row, byte race, byte sex)
+    {
+        try
+        {
+            var restriction = row.EquipRestriction.RowId;
+            if (restriction <= 1)
+                return true; // 0 = none recorded, 1 = all races and sexes
+
+            var sheet = _dataManager.GetExcelSheet<EquipRaceCategory>();
+            if (sheet == null || !sheet.TryGetRow(restriction, out var category))
+                return true;
+
+            // Race sheet ids: 1 Hyur, 2 Elezen, 3 Lalafell, 4 Miqo'te, 5 Roegadyn, 6 Au Ra,
+            // 7 Hrothgar, 8 Viera.
+            var raceAllowed = race switch
+            {
+                1 => category.Hyur,
+                2 => category.Elezen,
+                3 => category.Lalafell,
+                4 => category.Miqote,
+                5 => category.Roegadyn,
+                6 => category.AuRa,
+                7 => category.Hrothgar,
+                8 => category.Viera,
+                _ => true, // unknown race — do not block on a guess
+            };
+
+            var sexAllowed = sex == 0 ? category.Male : category.Female;
+            return raceAllowed && sexAllowed;
+        }
+        catch
+        {
+            return true;
+        }
+    }
+
+    /// <summary>Local character's race and sex (sex: 0 male, 1 female). (0, 0) when unreadable.</summary>
+    private (byte Race, byte Sex) ReadLocalAppearance()
+    {
+        try
+        {
+            var local = _objectTable.LocalPlayer;
+            if (local == null || local.Address == 0)
+                return (0, 0);
+
+            var character = (FFXIVClientStructs.FFXIV.Client.Game.Character.Character*)local.Address;
+            var customize = character->DrawData.CustomizeData;
+            return (customize.Race, customize.Sex);
+        }
+        catch
+        {
+            return (0, 0);
+        }
+    }
 
     /// <summary>
     /// Whether an item's STATS belong to this job, which is a separate question from whether the

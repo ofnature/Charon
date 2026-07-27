@@ -217,6 +217,47 @@ public sealed class GearSelectorTests
         Assert.Equal(3u, Assert.Single(upgrades).Item.ItemId);
     }
 
+    // --- Race/sex restricted gear ---
+
+    [Fact]
+    public void RaceRestrictedGear_IsNeverProposed()
+    {
+        // "Roegadyn Bodice" is female-Roegadyn only, yet reads as All Classes at equip level 1 —
+        // on anyone else the game silently refuses the equip.
+        var upgrades = GearSelector.Plan(
+            Equipped(Item(1, GearSlot.Body, 1)),
+            [Item(2, GearSlot.Body, 5) with { FitsRace = false }],
+            JobLevel);
+
+        Assert.Empty(upgrades);
+    }
+
+    [Fact]
+    public void RaceRestrictedGear_DoesNotFillAnEmptySlotEither()
+    {
+        // The reported case exactly: a fresh alt with bare slots, where anything otherwise wins.
+        var upgrades = GearSelector.Plan(
+            new Dictionary<GearSlot, GearItem?>(),
+            [Item(2, GearSlot.Body, 5) with { FitsRace = false }],
+            JobLevel);
+
+        Assert.Empty(upgrades);
+    }
+
+    [Fact]
+    public void WearableGear_IsStillChosenAlongsideRestrictedGear()
+    {
+        var upgrades = GearSelector.Plan(
+            new Dictionary<GearSlot, GearItem?>(),
+            [
+                Item(2, GearSlot.Body, 15) with { FitsRace = false }, // higher ilvl, unwearable
+                Item(3, GearSlot.Body, 5),
+            ],
+            JobLevel);
+
+        Assert.Equal(3u, Assert.Single(upgrades).Item.ItemId);
+    }
+
     // --- Wrong main stat (the "All Classes" accessory trap) ---
 
     [Fact]

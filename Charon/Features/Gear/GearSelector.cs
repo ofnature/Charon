@@ -33,6 +33,11 @@ public enum GearSlot
 /// resolved by the adapter and arrive here already reduced to <see cref="FitsJob"/>,
 /// <see cref="Slot"/> and <see cref="StatScore"/> — that keeps selection pure and testable.
 ///
+/// <see cref="FitsRace"/> is a separate gate again: some starting gear is locked to one race and
+/// sex ("Roegadyn Bodice" is female-Roegadyn only) while still being "All Classes" at equip level 1,
+/// so it looks like a perfect fit for a fresh alt with empty slots. The game just refuses the equip,
+/// silently — nothing surfaces except the move not landing.
+///
 /// <see cref="FitsJob"/> and <see cref="StatsFitJob"/> are two DIFFERENT gates and both are needed:
 /// the first is whether the game lets this job equip it, the second whether the stats are for this
 /// job at all. Gathering and crafting gear is routinely in the "All Classes" category, so the game
@@ -52,7 +57,8 @@ public sealed record GearItem(
     int Container = -1,
     short SourceSlot = -1,
     bool StatsFitJob = true,
-    bool HasJobMainStat = true);
+    bool HasJobMainStat = true,
+    bool FitsRace = true);
 
 /// <summary>One planned equip: put <paramref name="Item"/> into <paramref name="Slot"/>.</summary>
 public sealed record GearUpgrade(GearSlot Slot, GearItem Item, GearItem? Replacing)
@@ -94,7 +100,7 @@ public static class GearSelector
         int jobLevel)
     {
         var eligible = candidates
-            .Where(c => c.FitsJob && c.StatsFitJob && c.EquipLevel <= jobLevel && c.ItemId != 0)
+            .Where(c => c.FitsJob && c.StatsFitJob && c.FitsRace && c.EquipLevel <= jobLevel && c.ItemId != 0)
             .ToList();
 
         var upgrades = new List<GearUpgrade>();
