@@ -4,9 +4,10 @@ using System.Numerics;
 namespace Charon.Features.Follow;
 
 /// <summary>Immutable snapshot of the follow settings, rebuilt from <see cref="CharonConfig"/>.</summary>
-public sealed record FollowConfig(float FollowDistance, bool StopInBossFight)
+public sealed record FollowConfig(float FollowDistance, bool StopInBossFight, float CombatLeash)
 {
-    public static FollowConfig From(CharonConfig config) => new(config.FollowDistance, config.FollowStopInBossFight);
+    public static FollowConfig From(CharonConfig config) =>
+        new(config.FollowDistance, config.FollowStopInBossFight, config.FollowCombatLeash);
 }
 
 /// <summary>What the follower should do this tick.</summary>
@@ -33,6 +34,10 @@ public sealed record FollowDecision(FollowAction Action, Vector3 Target, string 
 /// Hard gate (BMR parity, refined per user): pause only when IN COMBAT **and** a boss module is
 /// loaded (both true) — pre-pull (module loaded, not engaged) and normal non-boss combat keep
 /// following. The instant the boss aggroes, the caller releases movement so BMR's AI takes over.
+///
+/// Ordinary combat is not gated, but it IS given slack — see the flex leash in
+/// <see cref="Evaluate"/>. Heeling a melee toon to 2.5y while the leader moves means it never
+/// stays on its target long enough to attack.
 /// </summary>
 public sealed class FollowManager
 {
@@ -48,6 +53,14 @@ public sealed class FollowManager
 
     private FollowConfig _config;
     private Vector3? _lastLeaderPos;
+
+    /// <summary>
+    /// True while we are closing a leash break in combat. The leash needs hysteresis: if breaking
+    /// out at the leash distance also stopped at the leash distance, a follower parked exactly at
+    /// the boundary would start and stop every tick. Once the leash breaks we close all the way to
+    /// the normal follow distance, then go slack again.
+    /// </summary>
+    private bool _closingLeash;
 
     /// <summary>
     /// Where the leader stood JUST BEFORE a detected teleport jump — i.e. the spot they walked
@@ -74,6 +87,7 @@ public sealed class FollowManager
         LeaderName = leaderName?.Trim() ?? string.Empty;
         _lastLeaderPos = null;
         PortalHint = null;
+        _closingLeash = false;
     }
 
     public void Stop()
@@ -81,6 +95,7 @@ public sealed class FollowManager
         LeaderName = string.Empty;
         _lastLeaderPos = null;
         PortalHint = null;
+        _closingLeash = false;
     }
 
     /// <summary>
@@ -132,10 +147,35 @@ public sealed class FollowManager
                 $"waiting — {LeaderName} unreachable (portal/instance?)");
 
         var distance = Horizontal(selfPos, leaderPos.Value);
-        if (distance <= _config.FollowDistance + MoveDeadband)
-            return new FollowDecision(FollowAction.Hold, default, $"following {LeaderName} ({distance:F1}y)");
+        var arriveAt = _config.FollowDistance + MoveDeadband;
 
-        return new FollowDecision(FollowAction.Move, leaderPos.Value, $"following {LeaderName} ({distance:F1}y)");
+        // Flex leash: in ordinary (non-boss) combat, stop heeling the toon. Trailing 2.5y behind a
+        // moving leader drags a melee off its target and it never lands a hit. Instead go slack out
+        // to the leash distance and let it fight; only a leader genuinely leaving pulls it along.
+        // A leash tighter than the follow distance would be meaningless, so it never goes below it.
+        var leash = MathF.Max(_config.CombatLeash, arriveAt);
+        var slack = inCombat && leash > arriveAt;
+
+        if (!inCombat)
+            _closingLeash = false; // combat over — back to tight follow
+
+        // While slack and not already closing, only the leash counts; once broken, close fully.
+        var threshold = slack && !_closingLeash ? leash : arriveAt;
+
+        if (distance <= threshold)
+        {
+            _closingLeash = false;
+            return new FollowDecision(FollowAction.Hold, default, slack
+                ? $"in combat — holding position, {LeaderName} within leash ({distance:F1}/{leash:F0}y)"
+                : $"following {LeaderName} ({distance:F1}y)");
+        }
+
+        if (slack)
+            _closingLeash = true;
+
+        return new FollowDecision(FollowAction.Move, leaderPos.Value, slack
+            ? $"closing — {LeaderName} left the leash ({distance:F1}y)"
+            : $"following {LeaderName} ({distance:F1}y)");
     }
 
     /// <summary>XZ-plane distance — leaders may sit above/below on ramps and mounts.</summary>

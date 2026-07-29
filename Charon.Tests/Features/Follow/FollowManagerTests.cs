@@ -5,8 +5,10 @@ namespace Charon.Tests.Features.Follow;
 
 public sealed class FollowManagerTests
 {
-    private static FollowConfig Config(float distance = 2.5f, bool stopInBoss = true) =>
-        new(distance, stopInBoss);
+    // Leash defaults to 0 here (below FollowDistance = disabled), so the existing cases exercise
+    // plain tight-follow semantics; the leash tests pass it explicitly.
+    private static FollowConfig Config(float distance = 2.5f, bool stopInBoss = true, float combatLeash = 0f) =>
+        new(distance, stopInBoss, combatLeash);
 
     private static readonly Vector3 Origin = Vector3.Zero;
     private static Vector3 Far => new(20f, 0f, 0f);   // well beyond distance + deadband
@@ -211,5 +213,110 @@ public sealed class FollowManagerTests
         m.StartFollowing("  Korha Ishere  ");
         Assert.True(m.Following);
         Assert.Equal("Korha Ishere", m.LeaderName);
+    }
+
+    // --- Flex leash: ordinary (non-boss) combat ---
+
+    private const float Leash = 15f;
+
+    private static Vector3 At(float x) => new(x, 0f, 0f);
+
+    [Fact]
+    public void InCombat_WithinLeash_HoldsPosition_SoMeleeCanKeepAttacking()
+    {
+        // 10y out would normally be a Move — the whole point is to stop heeling the toon.
+        var m = Following(Config(combatLeash: Leash));
+
+        var d = m.Evaluate(At(10f), Origin, inCombat: true, hasActiveModule: false, localBusy: false);
+
+        Assert.Equal(FollowAction.Hold, d.Action);
+    }
+
+    [Fact]
+    public void InCombat_BeyondLeash_Closes()
+    {
+        var m = Following(Config(combatLeash: Leash));
+
+        var d = m.Evaluate(At(18f), Origin, inCombat: true, hasActiveModule: false, localBusy: false);
+
+        Assert.Equal(FollowAction.Move, d.Action);
+    }
+
+    [Fact]
+    public void InCombat_OnceLeashBreaks_ClosesAllTheWay_NotJustBackInsideTheLeash()
+    {
+        // Hysteresis: stopping at the leash boundary would restart next tick and judder.
+        var m = Following(Config(combatLeash: Leash));
+
+        m.Evaluate(At(18f), Origin, true, false, false);                 // breaks the leash
+        var still = m.Evaluate(At(12f), Origin, true, false, false);     // back inside the leash
+
+        Assert.Equal(FollowAction.Move, still.Action);
+    }
+
+    [Fact]
+    public void InCombat_ClosingStops_AtNormalFollowDistance()
+    {
+        var m = Following(Config(combatLeash: Leash));
+
+        m.Evaluate(At(18f), Origin, true, false, false);
+        var arrived = m.Evaluate(At(3f), Origin, true, false, false);
+
+        Assert.Equal(FollowAction.Hold, arrived.Action);
+    }
+
+    [Fact]
+    public void AfterClosing_GoesSlackAgain()
+    {
+        var m = Following(Config(combatLeash: Leash));
+
+        m.Evaluate(At(18f), Origin, true, false, false); // break
+        m.Evaluate(At(3f), Origin, true, false, false);  // arrive, slack restored
+        var slack = m.Evaluate(At(10f), Origin, true, false, false);
+
+        Assert.Equal(FollowAction.Hold, slack.Action);
+    }
+
+    [Fact]
+    public void LeavingCombat_ResumesTightFollow_Immediately()
+    {
+        var m = Following(Config(combatLeash: Leash));
+
+        m.Evaluate(At(10f), Origin, true, false, false); // slack, holding
+        var d = m.Evaluate(At(10f), Origin, false, false, false);
+
+        Assert.Equal(FollowAction.Move, d.Action);
+    }
+
+    [Fact]
+    public void OutOfCombat_LeashIsIgnored()
+    {
+        var m = Following(Config(combatLeash: Leash));
+
+        var d = m.Evaluate(At(6f), Origin, inCombat: false, hasActiveModule: false, localBusy: false);
+
+        Assert.Equal(FollowAction.Move, d.Action);
+    }
+
+    [Fact]
+    public void LeashTighterThanFollowDistance_IsIgnored_NoDeadZone()
+    {
+        // A 1y leash must not mean "hold at 1y" — it can never be tighter than the follow distance.
+        var m = Following(Config(distance: 2.5f, combatLeash: 1f));
+
+        var d = m.Evaluate(At(10f), Origin, true, false, false);
+
+        Assert.Equal(FollowAction.Move, d.Action);
+    }
+
+    [Fact]
+    public void BossFightGate_StillWins_OverTheLeash()
+    {
+        var m = Following(Config(combatLeash: Leash));
+
+        var d = m.Evaluate(At(18f), Origin, inCombat: true, hasActiveModule: true, localBusy: false);
+
+        Assert.Equal(FollowAction.Hold, d.Action);
+        Assert.Contains("boss", d.Status, StringComparison.OrdinalIgnoreCase);
     }
 }

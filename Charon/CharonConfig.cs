@@ -82,6 +82,13 @@ public sealed class CharonConfig : IPluginConfiguration
     /// <summary>Stop following while IN COMBAT during a boss module (both true) — hands movement to BMR.</summary>
     public bool FollowStopInBossFight { get; set; } = true;
 
+    /// <summary>
+    /// Slack radius (yalms) while in ordinary combat: the follower holds position until the leader
+    /// gets this far away, so a melee toon can stay on its target instead of being heeled out of
+    /// range. Set to the follow distance or below to disable the slack and follow tightly.
+    /// </summary>
+    public float FollowCombatLeash { get; set; } = 15f;
+
     /// <summary>Active follow leader ("" = not following). Persisted so a reload mid-follow resumes.</summary>
     public string FollowLeaderName { get; set; } = string.Empty;
 

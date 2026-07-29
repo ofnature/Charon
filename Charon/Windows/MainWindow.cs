@@ -680,6 +680,19 @@ public sealed class MainWindow : Window
         }
         CharonTheme.HelpMarker("How close a follower trails its leader before it stops moving.");
 
+        var leash = _config.FollowCombatLeash;
+        ImGui.SetNextItemWidth(160f);
+        if (ImGui.SliderFloat("Combat Leash##follow", ref leash, 2.0f, 30.0f, "%.0f y"))
+        {
+            _config.FollowCombatLeash = leash;
+            _save();
+        }
+        CharonTheme.HelpMarker("Slack while in ordinary combat: the follower holds position until you get\n"
+                               + "this far away, so a melee toon can stay on its target instead of being\n"
+                               + "dragged out of range. Once you pass it, the toon closes all the way back\n"
+                               + "to Follow Distance. Set at or below Follow Distance to follow tightly.\n"
+                               + "Boss fights are unaffected — those hand movement to BMR entirely.");
+
         var stopInBoss = _config.FollowStopInBossFight;
         if (ImGui.Checkbox("Stop in boss fights##follow", ref stopInBoss))
         {

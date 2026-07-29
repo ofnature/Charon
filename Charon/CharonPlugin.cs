@@ -22,7 +22,7 @@ namespace Charon;
 
 public sealed class CharonPlugin : IDalamudPlugin
 {
-    public const string PluginVersion = "0.1.15";
+    public const string PluginVersion = "0.1.16";
     private const string CommandName = "/charon";
 
     /// <summary>
@@ -766,10 +766,24 @@ public sealed class CharonPlugin : IDalamudPlugin
         }
     }
 
+    /// <summary>
+    /// Stop a toon following. Targeting OURSELVES must be handled locally: the relay never
+    /// delivers a frame back to its publisher, so a stop addressed to this box would simply
+    /// vanish and the follow would carry on (that is exactly what the per-toon Stop button did).
+    /// It also has to work with Daedalus absent, where Publish is a silent no-op.
+    /// </summary>
     private void CommandStopFollow(string targetName)
     {
         if (targetName.Length == 0)
             return;
+
+        var me = _objectTable.LocalPlayer?.Name.TextValue ?? string.Empty;
+        if (me.Length > 0 && targetName.Equals(me, StringComparison.OrdinalIgnoreCase))
+        {
+            StopLocalFollow();
+            return;
+        }
+
         _relay.Publish(RelayClient.FollowChannel, FollowRelay.Serialize(string.Empty, targetName, FollowRelay.ActStop));
     }
 
