@@ -68,7 +68,7 @@ Designate one toon as fleet leader and give it fleet-wide commands:
 
 - **Set it once.** Picking the leader broadcasts the choice to every Charon on the LAN, so you don't set the same name on eight clients. Either driven toon can be the leader.
 - **Leave Duty (My Party)** — the leader pulls its own party out of the duty in one click. Fleet toons in a *different* group, off running their own dungeon, are unaffected, and a party holding anyone outside the fleet stays put. Confirms first.
-- **Leadership hand-back** — a disconnect moves party leadership to another member (usually a bot) and it never comes back on its own. Whichever toon inherited it hands it back once the leader is online again.
+- **Leadership hand-back** — a disconnect moves party leadership to another member (usually a bot) and it never comes back on its own. Whichever toon inherited it hands it back once the leader is online again *and in the same zone* (the game refuses the transfer otherwise).
 - Only the designated leader is obeyed, so a stray click on an alt can't drag the fleet anywhere. Per-toon opt-outs for both behaviours.
 
 ## Heal Watch

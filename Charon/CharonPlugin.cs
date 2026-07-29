@@ -23,7 +23,7 @@ namespace Charon;
 
 public sealed class CharonPlugin : IDalamudPlugin
 {
-    public const string PluginVersion = "0.1.17";
+    public const string PluginVersion = "0.1.18";
     private const string CommandName = "/charon";
 
     /// <summary>
@@ -93,9 +93,13 @@ public sealed class CharonPlugin : IDalamudPlugin
     // a chat command — retrying it every frame would spam.
     private DateTime _lastPromoteCheckUtc = DateTime.MinValue;
     private DateTime _lastPromoteAttemptUtc = DateTime.MinValue;
+    private int _promoteAttempts;
     private string _promoteStatus = "idle";
     private static readonly TimeSpan PromoteCheckInterval = TimeSpan.FromSeconds(5);
     private static readonly TimeSpan PromoteRetryInterval = TimeSpan.FromSeconds(20);
+
+    /// <summary>A failing /leader writes a red chat error every time — cap it rather than spam.</summary>
+    private const int MaxPromoteAttempts = 3;
 
     // Heal Watch runs at 1 Hz; status surfaced in the window.
     private DateTime _lastHealScanUtc = DateTime.MinValue;
@@ -1493,26 +1497,37 @@ public sealed class CharonPlugin : IDalamudPlugin
             IsLocalPartyLeader(localName),
             _config.FleetLeaderName,
             localName,
-            ReadPartyNames(),
+            ReadPartyMembers(),
             IsFleetToonOnline);
 
-        _promoteStatus = decision.Reason;
         if (!decision.Promote)
+        {
+            _promoteStatus = decision.Reason;
+            _promoteAttempts = 0; // conditions changed — a later attempt starts fresh
             return;
+        }
 
-        // The promote may not land (leader still loading in, party in flux) — retry slowly rather
-        // than firing a chat command every check.
+        // A promote that keeps failing writes a red error line to chat every time, so it is capped
+        // rather than retried forever. Success is self-limiting: we stop being party leader, and the
+        // policy then reports "not party leader" instead.
+        if (_promoteAttempts >= MaxPromoteAttempts)
+        {
+            _promoteStatus = $"gave up after {MaxPromoteAttempts} attempts — {_config.FleetLeaderName} would not promote";
+            return;
+        }
+
         if (now - _lastPromoteAttemptUtc < PromoteRetryInterval)
         {
-            _promoteStatus = $"{decision.Reason} (waiting on the last attempt)";
+            _promoteStatus = $"{decision.Reason} (waiting on attempt {_promoteAttempts})";
             return;
         }
 
         _lastPromoteAttemptUtc = now;
-        var sent = PartyLeaderHelper.TryPromote(_config.FleetLeaderName, _log);
+        _promoteAttempts++;
+        var sent = PartyLeaderHelper.TryPromote(decision.Slot, _log);
         _promoteStatus = sent
-            ? $"sent /leader {_config.FleetLeaderName}"
-            : $"promote FAILED for {_config.FleetLeaderName}";
+            ? $"sent /leader <{decision.Slot}> for {_config.FleetLeaderName} (attempt {_promoteAttempts})"
+            : $"promote call FAILED for {_config.FleetLeaderName}";
         _log.Info("Fleet leadership: {0}", _promoteStatus);
     }
 
@@ -1533,20 +1548,35 @@ public sealed class CharonPlugin : IDalamudPlugin
         }
     }
 
-    private List<string> ReadPartyNames()
+    /// <summary>
+    /// Party members with their 1-based slot (what /leader's &lt;1&gt;…&lt;8&gt; placeholders
+    /// address) and whether they are in OUR zone — leadership can't be handed to someone elsewhere,
+    /// and the party list shows those members with unknown level and HP.
+    /// </summary>
+    private List<FleetPartyMember> ReadPartyMembers()
     {
-        var names = new List<string>();
+        var members = new List<FleetPartyMember>();
         try
         {
-            foreach (var member in _partyList)
-                names.Add(member.Name.TextValue);
+            var here = _clientState.TerritoryType;
+            for (var i = 0; i < _partyList.Length; i++)
+            {
+                var member = _partyList[i];
+                if (member == null)
+                    continue;
+
+                members.Add(new FleetPartyMember(
+                    member.Name.TextValue,
+                    i + 1,
+                    member.Territory.RowId == here));
+            }
         }
         catch
         {
             // unreadable mid-transition — the policy then finds no leader and holds
         }
 
-        return names;
+        return members;
     }
 
     /// <summary>

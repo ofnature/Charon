@@ -1,5 +1,4 @@
 using Charon.Features.Fleet;
-using Charon.Services.Game;
 
 namespace Charon.Tests.Features.Fleet;
 
@@ -8,24 +7,34 @@ public sealed class PartyLeaderPolicyTests
     private const string Leader = "My Main";
     private const string Bot = "Bot Toon";
 
-    private static readonly string[] Party = [Leader, Bot, "Second Bot"];
+    private static FleetPartyMember Member(string name, int slot, bool sameZone = true) =>
+        new(name, slot, sameZone);
+
+    private static readonly FleetPartyMember[] Party =
+    [
+        Member(Bot, 1),
+        Member(Leader, 2),
+        Member("Second Bot", 3),
+    ];
 
     private static PromoteDecision Evaluate(
         bool enabled = true,
         bool localIsPartyLeader = true,
         string fleetLeader = Leader,
         string localName = Bot,
-        IReadOnlyList<string>? party = null,
+        IReadOnlyList<FleetPartyMember>? party = null,
         bool leaderOnline = true) =>
         PartyLeaderPolicy.Evaluate(enabled, localIsPartyLeader, fleetLeader, localName,
             party ?? Party, _ => leaderOnline);
 
     [Fact]
-    public void BotHoldingLead_WithLeaderBackOnline_PromotesThem()
+    public void BotHoldingLead_WithLeaderBackAndInZone_PromotesTheirSlot()
     {
         // The whole point: a disconnect parked lead on a bot and it never returns on its own.
         var d = Evaluate();
+
         Assert.True(d.Promote);
+        Assert.Equal(2, d.Slot); // /leader addresses party slots, never names
         Assert.Contains(Leader, d.Reason);
     }
 
@@ -63,9 +72,39 @@ public sealed class PartyLeaderPolicyTests
     [Fact]
     public void LeaderNotInThisParty_DoesNothing()
     {
-        var d = Evaluate(party: [Bot, "Second Bot"]);
+        var d = Evaluate(party: [Member(Bot, 1), Member("Second Bot", 2)]);
         Assert.False(d.Promote);
         Assert.Contains("not in this party", d.Reason);
+    }
+
+    // --- Same zone: the game refuses /leader for a member who isn't here ---
+
+    [Fact]
+    public void LeaderInAnotherZone_Waits()
+    {
+        // Verified in-game: cross-zone attempts just spam "unavailable at this time".
+        var d = Evaluate(party: [Member(Bot, 1), Member(Leader, 2, sameZone: false)]);
+
+        Assert.False(d.Promote);
+        Assert.Contains("another zone", d.Reason);
+    }
+
+    [Fact]
+    public void LeaderComesBackToOurZone_ThenPromotes()
+    {
+        var away = Evaluate(party: [Member(Bot, 1), Member(Leader, 2, sameZone: false)]);
+        var here = Evaluate(party: [Member(Bot, 1), Member(Leader, 2, sameZone: true)]);
+
+        Assert.False(away.Promote);
+        Assert.True(here.Promote);
+    }
+
+    [Fact]
+    public void SlotOutsideOneToEight_IsRefused()
+    {
+        var d = Evaluate(party: [Member(Leader, 0)]);
+        Assert.False(d.Promote);
+        Assert.Contains("no usable party slot", d.Reason);
     }
 
     // --- Nobody promotes themselves ---
@@ -89,30 +128,14 @@ public sealed class PartyLeaderPolicyTests
     [Fact]
     public void NameMatchingIsCaseInsensitive()
     {
-        Assert.False(Evaluate(fleetLeader: "my main", localName: Leader).Promote);
-        Assert.True(Evaluate(party: ["MY MAIN", Bot]).Promote);
+        var d = Evaluate(party: [Member(Bot, 1), Member("MY MAIN", 2)]);
+        Assert.True(d.Promote);
+        Assert.Equal(2, d.Slot);
     }
 
-    // --- Name safety: the name goes into a chat command ---
-
-    [Theory]
-    [InlineData("Korha Ishere")]
-    [InlineData("Y'shtola Rhul")]
-    [InlineData("Jean-Luc Picard")]
-    public void RealCharacterNames_AreAccepted(string name)
+    [Fact]
+    public void NoSlotIsReportedWhenNotPromoting()
     {
-        Assert.True(PartyLeaderHelper.IsSafeName(name));
-    }
-
-    [Theory]
-    [InlineData("")]
-    [InlineData("Bad\nName")]              // newline could chain a second command
-    [InlineData("Name /leave")]            // embedded slash command
-    [InlineData("Name; /shutdown")]
-    [InlineData("Toon<t>")]                // chat placeholder
-    [InlineData("Way too long a name to ever be a real character name")]
-    public void UnsafeNames_AreRefused(string name)
-    {
-        Assert.False(PartyLeaderHelper.IsSafeName(name));
+        Assert.Equal(0, Evaluate(enabled: false).Slot);
     }
 }
