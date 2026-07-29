@@ -117,6 +117,35 @@ public sealed class CharonConfig : IPluginConfiguration
     /// <summary>Hardcast raise dead toons (no swiftcast — fine for parked leveling bots).</summary>
     public bool HealRaiseDead { get; set; } = true;
 
+    /// <summary>
+    /// Accept the revival prompt when a raise lands. Without this an unattended toon stays dead —
+    /// the raise resolves and the prompt sits unanswered.
+    /// </summary>
+    public bool AutoAcceptRevival { get; set; } = true;
+
+    /// <summary>
+    /// Addon name of the revival prompt, learned at runtime the first time one appears while dead
+    /// with a raise pending (not documented in ClientStructs).
+    /// </summary>
+    public string RevivalPromptAddonName { get; set; } = string.Empty;
+
+    // Fleet Leader
+    /// <summary>
+    /// Character designated as fleet leader — the only toon whose fleet commands (currently Leave
+    /// Duty) this box obeys. Set the same name on every box; a box whose own name matches it shows
+    /// the leader controls.
+    /// </summary>
+    public string FleetLeaderName { get; set; } = string.Empty;
+
+    /// <summary>Obey the fleet leader's Leave Duty broadcast.</summary>
+    public bool FleetLeaveDutyEnabled { get; set; } = true;
+
+    /// <summary>
+    /// Hand party leadership back to the fleet leader when this toon is holding it. A disconnect
+    /// moves leadership to another member (usually a bot), and it does not return on its own.
+    /// </summary>
+    public bool FleetAutoPromoteLeader { get; set; } = true;
+
     // Auto Accept
     public bool AutoAcceptEnabled { get; set; } = false;
 

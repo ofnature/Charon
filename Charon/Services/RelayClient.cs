@@ -26,6 +26,9 @@ public sealed class RelayClient : IDisposable
     /// <summary>Fleet Follow commands (FollowMessage JSON — leader/target/act).</summary>
     public const string FollowChannel = "charon.follow";
 
+    /// <summary>Fleet-leader designation and fleet-wide commands (FleetMessage JSON).</summary>
+    public const string FleetChannel = "charon.fleet";
+
     /// <summary>Rally-to-flag broadcasts (roadmap #6 — not yet implemented).</summary>
     public const string RallyChannel = "charon.rally";
 

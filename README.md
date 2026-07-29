@@ -4,7 +4,7 @@
 
 # Charon
 
-**The ferryman for your fleet.** A Dalamud plugin for FFXIV, companion to [Daedalus](https://github.com/ofnature/Daedalus) — party assembly, auto pillion with smart seat scanning, whitelisted auto group invite, follow teleport, fleet follow, duty-pop and trade automation, a heal-watch babysitter for leveling alts, automatic gear upgrades, and FC chest management.
+**The ferryman for your fleet.** A Dalamud plugin for FFXIV, companion to [Daedalus](https://github.com/ofnature/Daedalus) — party assembly, auto pillion with smart seat scanning, whitelisted auto group invite, follow teleport, fleet follow, duty-pop and trade automation, a heal-watch babysitter for leveling alts, automatic gear upgrades, fleet-leader commands, and FC chest management.
 
 Built for multibox setups: invite the fleet, group up, mount up, teleport out, follow you around, keep the bots alive, and manage the FC chest — without touching seven other keyboards.
 
@@ -62,6 +62,15 @@ BossMod-Reborn-style follow, commanded across the fleet: from your main, tell ev
 - **Takes your portal:** in raids with portal stones between arenas, followers walk to the exact spot you ported from and click the same stone — no stopping and re-issuing follow on seven boxes. If a leader ends up somewhere genuinely unwalkable, followers hold with a clear status instead of running at a wall, and resume the moment you're reachable again.
 - Pairs with Follow Teleport (zone away and the alts teleport to you, then follow resumes) and yields cleanly to auto-pillion when you mount up. `/charon follow <name>` drives one box directly.
 
+## Fleet Leader
+
+Designate one toon as fleet leader and give it fleet-wide commands:
+
+- **Set it once.** Picking the leader broadcasts the choice to every Charon on the LAN, so you don't set the same name on eight clients. Either driven toon can be the leader.
+- **Leave Duty (My Party)** — the leader pulls its own party out of the duty in one click. Fleet toons in a *different* group, off running their own dungeon, are unaffected, and a party holding anyone outside the fleet stays put. Confirms first.
+- **Leadership hand-back** — a disconnect moves party leadership to another member (usually a bot) and it never comes back on its own. Whichever toon inherited it hands it back once the leader is online again.
+- Only the designated leader is obeyed, so a stray click on an alt can't drag the fleet anywhere. Per-toon opt-outs for both behaviours.
+
 ## Heal Watch
 
 A healer toon babysits the whole fleet from Daedalus LAN vitals — **including toons outside its party**. Built for leveling low-HP alts (looking at you, 9k-HP Blue Mages):
@@ -73,6 +82,7 @@ A healer toon babysits the whole fleet from Daedalus LAN vitals — **including 
 - Heals anyone dropping below the threshold; an emergency threshold jumps the queue.
 - **Maintains the job's HoT/shield** (WHM Regen, SCH Galvanize, AST Aspected Benefic) on damaged toons — never clips a running status, recasts only inside the expiry window.
 - **Hardcast raises** dead toons (no swiftcast needed), and never double-raises anyone with a raise already pending.
+- **Accepts the revival** on the raised toon. Unattended characters have nobody to click the prompt, so without this the raise resolves and the bot stays on the floor. Only ever fires while dead with a raise incoming — it never guesses at other dialogs.
 - Live HP is re-checked before every cast (LAN vitals are detection only), and Heal Watch stands down automatically whenever the Daedalus rotation is enabled.
 
 ## FC Chest Management

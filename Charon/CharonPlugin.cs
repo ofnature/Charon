@@ -10,6 +10,7 @@ using Dalamud.Plugin;
 using Dalamud.Plugin.Services;
 using Charon.Features.AutoAccept;
 using Charon.Features.AutoPillion;
+using Charon.Features.Fleet;
 using Charon.Features.Follow;
 using Charon.Features.GroupManagement;
 using Charon.Features.HealWatch;
@@ -22,7 +23,7 @@ namespace Charon;
 
 public sealed class CharonPlugin : IDalamudPlugin
 {
-    public const string PluginVersion = "0.1.16";
+    public const string PluginVersion = "0.1.17";
     private const string CommandName = "/charon";
 
     /// <summary>
@@ -50,6 +51,7 @@ public sealed class CharonPlugin : IDalamudPlugin
     private readonly GroupInviteManager _inviteManager;
     private readonly GroupInviteInterop _inviteInterop;
     private readonly TeleportOfferInterop _teleportOffer;
+    private readonly RevivalPromptInterop _revivalPrompt;
     private readonly DutyPopInterop _dutyPop;
     private readonly TradeInterop _trade;
     private readonly MountStateReader _mountReader;
@@ -82,6 +84,18 @@ public sealed class CharonPlugin : IDalamudPlugin
     private const int MaxPortalAttempts = 6;
     private const float PortalSearchRadius = 12f;   // how far from the leader's pre-jump spot to look
     private const float PortalInteractRange = 4.5f; // game interact range
+
+    // Fleet leave-duty: scheduled exit (staggered) and the Debug status line.
+    private DateTime? _pendingDutyLeaveUtc;
+    private string _dutyExitStatus = "idle";
+
+    // Leadership hand-back. Checked on a slow throttle: leadership changes are rare, and /leader is
+    // a chat command — retrying it every frame would spam.
+    private DateTime _lastPromoteCheckUtc = DateTime.MinValue;
+    private DateTime _lastPromoteAttemptUtc = DateTime.MinValue;
+    private string _promoteStatus = "idle";
+    private static readonly TimeSpan PromoteCheckInterval = TimeSpan.FromSeconds(5);
+    private static readonly TimeSpan PromoteRetryInterval = TimeSpan.FromSeconds(20);
 
     // Heal Watch runs at 1 Hz; status surfaced in the window.
     private DateTime _lastHealScanUtc = DateTime.MinValue;
@@ -206,6 +220,14 @@ public sealed class CharonPlugin : IDalamudPlugin
             () => _config.TeleportOfferAddonName,
             name => { _config.TeleportOfferAddonName = name; SaveConfig(); },
             log);
+        _revivalPrompt = new RevivalPromptInterop(
+            addonLifecycle,
+            gameGui,
+            () => _config.AutoAcceptRevival,
+            IsRaisePendingOnLocal,
+            () => _config.RevivalPromptAddonName,
+            name => { _config.RevivalPromptAddonName = name; SaveConfig(); },
+            log);
         _pillionManager = new PillionManager(
             Features.AutoPillion.PillionConfig.From(_config),
             SendPillionInvite,
@@ -224,15 +246,18 @@ public sealed class CharonPlugin : IDalamudPlugin
         _mainWindow = new MainWindow(_config, SaveConfig, _whitelist, _daedalusIpc, _pillionManager, _inviteManager,
             _healWatch, _groupInvites, _fcChest, _gear, _followManager, ReadRawSeatOccupancy, () => _boardingStatus,
             () => $"{_followStatus} · offer: {_teleportOffer.Status}",
+            () => _revivalPrompt.Status,
             () => _healStatus,
             () => _followFleetStatus,
             () => _dutyPop.Status,
             () => _trade.PartnerName.Length > 0 ? $"{_trade.Status} (partner: {_trade.PartnerName})" : _trade.Status,
             () => $"{_gear.Status} · IPC: {_gearIpc.Status}",
+            () => $"{_dutyExitStatus} · lead: {_promoteStatus}",
             () => _partyList.Length,
             IsInMyParty,
             () => _objectTable.LocalPlayer?.Name.TextValue ?? string.Empty,
-            new MainWindow.FollowCommands(CommandFollow, CommandStopFollow, CommandFollowAll, CommandStopFollowAll));
+            new MainWindow.FollowCommands(CommandFollow, CommandStopFollow, CommandFollowAll, CommandStopFollowAll),
+            new MainWindow.FleetCommands(CommandSetFleetLeader, CommandFleetLeaveDuty));
         _mainWindow.IsOpen = _config.MainWindowVisible;
         _windowSystem.AddWindow(_mainWindow);
 
@@ -281,6 +306,7 @@ public sealed class CharonPlugin : IDalamudPlugin
         _relay.OnMessage -= OnRelayMessage;
         _gearIpc.Dispose();
         _dutyPop.Dispose();
+        _revivalPrompt.Dispose();
         _teleportOffer.Dispose();
         _inviteInterop.Dispose();
         _relay.Dispose();
@@ -357,10 +383,13 @@ public sealed class CharonPlugin : IDalamudPlugin
 
         _inviteInterop.Poll(now);
         _teleportOffer.Update(now);
+        _revivalPrompt.Update(now);
         _dutyPop.Update(now);
         _trade.Update(now);
         UpdateFollowTeleport(now);
         UpdateFleetFollow(now);
+        UpdateDutyExit(now);
+        UpdateLeaderPromotion(now);
         UpdateHealWatch(now);
         _groupInvites.Update(now);
         _fcChest.Update(now);
@@ -1118,6 +1147,35 @@ public sealed class CharonPlugin : IDalamudPlugin
         }
     }
 
+    /// <summary>
+    /// Local toon is dead with a raise incoming — status 148, the same raise-pending marker Heal
+    /// Watch uses to avoid double-raising. This is the gate for accepting the revival prompt.
+    /// </summary>
+    private bool IsRaisePendingOnLocal()
+    {
+        try
+        {
+            var local = _objectTable.LocalPlayer;
+            if (local == null || !local.IsDead)
+                return false;
+
+            foreach (var status in local.StatusList)
+            {
+                if (status.StatusId == RaisePendingStatusId)
+                    return true;
+            }
+        }
+        catch
+        {
+            // status list unreadable mid-transition — never guess
+        }
+
+        return false;
+    }
+
+    /// <summary>"Raise" pending status — a raise has landed and the prompt is (or is about to be) up.</summary>
+    private const uint RaisePendingStatusId = 148;
+
     /// <summary>Trust gate shared by the trade mirror: LAN roster (+ manual whitelist per config).</summary>
     private bool IsTrustedToon(string characterName)
     {
@@ -1291,6 +1349,243 @@ public sealed class CharonPlugin : IDalamudPlugin
             OnPillionAssignmentReceived(json);
         else if (channel == RelayClient.FollowChannel)
             OnFollowCommandReceived(json);
+        else if (channel == RelayClient.FleetChannel)
+            OnFleetCommandReceived(json);
+    }
+
+    /// <summary>Fleet channel dispatch: leader designation, or a fleet-wide command.</summary>
+    private void OnFleetCommandReceived(string json)
+    {
+        var message = FleetRelay.Parse(json);
+        if (message == null)
+            return;
+
+        switch (message.Act)
+        {
+            case FleetRelay.ActSetLeader:
+                OnFleetLeaderDesignated(message);
+                break;
+            case FleetRelay.ActLeaveDuty:
+                OnFleetLeaveDuty(message);
+                break;
+        }
+    }
+
+    /// <summary>
+    /// Another box designated the fleet leader. Adopting it here is what saves setting the same
+    /// name by hand on every client — trust-gated so an unknown frame can't repoint the fleet.
+    /// </summary>
+    private void OnFleetLeaderDesignated(FleetMessage message)
+    {
+        var localName = _objectTable.LocalPlayer?.Name.TextValue ?? string.Empty;
+        var decision = FleetLeaderPolicy.Evaluate(
+            message.From, message.Leader, localName, _config.FleetLeaderName, IsTrustedToon);
+
+        _dutyExitStatus = decision.Reason;
+        if (!decision.Accept)
+        {
+            _log.Debug("Fleet leader designation: {0}", decision.Reason);
+            return;
+        }
+
+        _config.FleetLeaderName = message.Leader;
+        SaveConfig();
+        _log.Info("Fleet leader set to {0} (broadcast by {1})", message.Leader, message.From);
+    }
+
+    /// <summary>
+    /// The fleet leader told everyone to leave the duty. Gated by <see cref="DutyExitPolicy"/>:
+    /// the issuer must be OUR configured fleet leader and the party must be all-fleet, so a stray
+    /// broadcast cannot empty a duty and a matched party is never walked out on.
+    /// </summary>
+    private void OnFleetLeaveDuty(FleetMessage message)
+    {
+        var localName = _objectTable.LocalPlayer?.Name.TextValue ?? string.Empty;
+        var members = new List<string>();
+        try
+        {
+            foreach (var member in _partyList)
+                members.Add(member.Name.TextValue);
+        }
+        catch
+        {
+            // party list unreadable mid-transition — the policy sees an empty party and allows it
+        }
+
+        var decision = DutyExitPolicy.Evaluate(
+            _config.FleetLeaveDutyEnabled,
+            _condition[ConditionFlag.BoundByDuty],
+            message.Leader,
+            _config.FleetLeaderName,
+            localName,
+            members,
+            IsTrustedToon);
+
+        _dutyExitStatus = decision.Reason;
+        if (!decision.Leave)
+        {
+            _log.Debug("Fleet leave-duty ignored: {0}", decision.Reason);
+            return;
+        }
+
+        // Stagger so eight clients don't all call it on the same server tick.
+        _pendingDutyLeaveUtc = DateTime.UtcNow + TimeSpan.FromSeconds(0.3 + _followJitter.NextDouble() * 1.2);
+        _log.Info("Fleet leave-duty from {0} — leaving shortly", message.Leader);
+    }
+
+    /// <summary>
+    /// Designate the fleet leader here AND push it to every other box, so the name only has to be
+    /// chosen once. Applied locally first — the relay never delivers our own frame back to us.
+    /// </summary>
+    private void CommandSetFleetLeader(string leaderName)
+    {
+        _config.FleetLeaderName = leaderName;
+        SaveConfig();
+
+        var me = _objectTable.LocalPlayer?.Name.TextValue ?? string.Empty;
+        if (me.Length == 0 || leaderName.Length == 0)
+            return; // clearing is local-only: nothing to broadcast
+
+        _relay.Publish(RelayClient.FleetChannel,
+            FleetRelay.Serialize(me, FleetRelay.ActSetLeader, leaderName));
+        _dutyExitStatus = $"fleet leader set to {leaderName} (broadcast)";
+        _log.Info("Fleet leader broadcast: {0}", leaderName);
+    }
+
+    /// <summary>Fleet leader side: broadcast the command, and leave locally (the relay never self-delivers).</summary>
+    private void CommandFleetLeaveDuty()
+    {
+        var me = _objectTable.LocalPlayer?.Name.TextValue ?? string.Empty;
+        if (me.Length == 0)
+            return;
+
+        _relay.Publish(RelayClient.FleetChannel,
+            FleetRelay.Serialize(me, FleetRelay.ActLeaveDuty, me));
+
+        // Our own frame never comes back to us — leave here, exactly like the per-toon Stop fix.
+        if (_condition[ConditionFlag.BoundByDuty])
+        {
+            var ok = DutyLeaveHelper.TryLeaveDuty(_log);
+            _dutyExitStatus = ok ? "leaving duty (issued by us)" : "leave-duty call FAILED";
+        }
+        else
+        {
+            _dutyExitStatus = "broadcast sent (we are not in a duty)";
+        }
+
+        _log.Info("Fleet leave-duty broadcast: {0}", _dutyExitStatus);
+    }
+
+    /// <summary>
+    /// Hand party leadership back to the fleet leader. Runs on whichever box currently HOLDS
+    /// leadership, because only the leader can promote — a disconnect parks it on a bot and it never
+    /// comes back on its own.
+    /// </summary>
+    private void UpdateLeaderPromotion(DateTime now)
+    {
+        if (now - _lastPromoteCheckUtc < PromoteCheckInterval)
+            return;
+        _lastPromoteCheckUtc = now;
+
+        var localName = _objectTable.LocalPlayer?.Name.TextValue ?? string.Empty;
+        var decision = PartyLeaderPolicy.Evaluate(
+            _config.FleetAutoPromoteLeader,
+            IsLocalPartyLeader(localName),
+            _config.FleetLeaderName,
+            localName,
+            ReadPartyNames(),
+            IsFleetToonOnline);
+
+        _promoteStatus = decision.Reason;
+        if (!decision.Promote)
+            return;
+
+        // The promote may not land (leader still loading in, party in flux) — retry slowly rather
+        // than firing a chat command every check.
+        if (now - _lastPromoteAttemptUtc < PromoteRetryInterval)
+        {
+            _promoteStatus = $"{decision.Reason} (waiting on the last attempt)";
+            return;
+        }
+
+        _lastPromoteAttemptUtc = now;
+        var sent = PartyLeaderHelper.TryPromote(_config.FleetLeaderName, _log);
+        _promoteStatus = sent
+            ? $"sent /leader {_config.FleetLeaderName}"
+            : $"promote FAILED for {_config.FleetLeaderName}";
+        _log.Info("Fleet leadership: {0}", _promoteStatus);
+    }
+
+    /// <summary>True when the named character currently holds party leadership.</summary>
+    private bool IsLocalPartyLeader(string localName)
+    {
+        try
+        {
+            if (localName.Length == 0 || _partyList.Length == 0)
+                return false;
+
+            var leader = _partyList[(int)_partyList.PartyLeaderIndex];
+            return leader != null && leader.Name.TextValue.Equals(localName, StringComparison.OrdinalIgnoreCase);
+        }
+        catch
+        {
+            return false; // party list unreadable — never act on a guess
+        }
+    }
+
+    private List<string> ReadPartyNames()
+    {
+        var names = new List<string>();
+        try
+        {
+            foreach (var member in _partyList)
+                names.Add(member.Name.TextValue);
+        }
+        catch
+        {
+            // unreadable mid-transition — the policy then finds no leader and holds
+        }
+
+        return names;
+    }
+
+    /// <summary>
+    /// LAN-roster liveness. A disconnected toon STAYS in the party, so party membership alone can't
+    /// tell us they're back — the roster heartbeat can. Unknown toons count as online (fail-open),
+    /// so this still works with Daedalus absent.
+    /// </summary>
+    private bool IsFleetToonOnline(string characterName)
+    {
+        try
+        {
+            var toon = _daedalusIpc.GetLanPartyMembers()
+                .FirstOrDefault(t => t.CharacterName.Equals(characterName, StringComparison.OrdinalIgnoreCase));
+            return toon?.IsOnline ?? true;
+        }
+        catch
+        {
+            return true;
+        }
+    }
+
+    /// <summary>Run a scheduled duty exit (checked every frame — cheap).</summary>
+    private void UpdateDutyExit(DateTime now)
+    {
+        if (_pendingDutyLeaveUtc == null || now < _pendingDutyLeaveUtc)
+            return;
+
+        _pendingDutyLeaveUtc = null;
+
+        // Re-check the gate: the duty may have ended on its own during the stagger.
+        if (!_condition[ConditionFlag.BoundByDuty])
+        {
+            _dutyExitStatus = "duty already ended";
+            return;
+        }
+
+        var ok = DutyLeaveHelper.TryLeaveDuty(_log);
+        _dutyExitStatus = ok ? "left duty (fleet leader command)" : "leave-duty call FAILED";
+        _log.Info("Fleet leave-duty: {0}", _dutyExitStatus);
     }
 
     /// <summary>Receiver side: a follow command addressed to our character starts/stops following.</summary>

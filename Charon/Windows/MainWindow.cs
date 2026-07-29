@@ -29,6 +29,7 @@ public sealed class MainWindow : Window
         AutoPillion,
         HealWatch,
         GroupMgmt,
+        FleetLeader,
         Follow,
         FcChest,
         Gear,
@@ -42,6 +43,14 @@ public sealed class MainWindow : Window
         Action<string> Stop,
         Action FollowAll,
         Action StopAll);
+
+    /// <summary>
+    /// Fleet-leader callbacks. <paramref name="SetLeader"/> designates the leader here AND pushes it
+    /// to every other box, so the name is only ever chosen once.
+    /// </summary>
+    public sealed record FleetCommands(
+        Action<string> SetLeader,
+        Action LeaveDuty);
 
     private const float SidebarWidth = 140f;
     private static readonly Vector4 AccentWash = new(0.85f, 0.65f, 0.20f, 0.10f);
@@ -60,15 +69,18 @@ public sealed class MainWindow : Window
     private readonly Func<IReadOnlyList<(int Seat, uint EntityId, string Name)>> _rawSeatOccupancy;
     private readonly Func<string> _boardingStatus;
     private readonly Func<string> _followStatus;
+    private readonly Func<string> _revivalStatus;
     private readonly Func<string> _healStatus;
     private readonly Func<string> _followFleetStatus;
     private readonly Func<string> _dutyPopStatus;
     private readonly Func<string> _tradeStatus;
     private readonly Func<string> _gearStatus;
+    private readonly Func<string> _dutyExitStatus;
     private readonly Func<int> _partySize;
     private readonly Func<string, bool> _isInParty;
     private readonly Func<string> _localName;
     private readonly FollowCommands _followCommands;
+    private readonly FleetCommands _fleetCommands;
 
     private Section _section = Section.General;
     private string _addName = string.Empty;
@@ -108,15 +120,18 @@ public sealed class MainWindow : Window
         Func<IReadOnlyList<(int Seat, uint EntityId, string Name)>> rawSeatOccupancy,
         Func<string> boardingStatus,
         Func<string> followStatus,
+        Func<string> revivalStatus,
         Func<string> healStatus,
         Func<string> followFleetStatus,
         Func<string> dutyPopStatus,
         Func<string> tradeStatus,
         Func<string> gearStatus,
+        Func<string> dutyExitStatus,
         Func<int> partySize,
         Func<string, bool> isInParty,
         Func<string> localName,
-        FollowCommands followCommands)
+        FollowCommands followCommands,
+        FleetCommands fleetCommands)
         : base("Charon##CharonMain")
     {
         _config = config;
@@ -133,15 +148,18 @@ public sealed class MainWindow : Window
         _rawSeatOccupancy = rawSeatOccupancy;
         _boardingStatus = boardingStatus;
         _followStatus = followStatus;
+        _revivalStatus = revivalStatus;
         _healStatus = healStatus;
         _followFleetStatus = followFleetStatus;
         _dutyPopStatus = dutyPopStatus;
         _tradeStatus = tradeStatus;
         _gearStatus = gearStatus;
+        _dutyExitStatus = dutyExitStatus;
         _partySize = partySize;
         _isInParty = isInParty;
         _localName = localName;
         _followCommands = followCommands;
+        _fleetCommands = fleetCommands;
 
         Size = new Vector2(600, 440);
         SizeCondition = ImGuiCond.FirstUseEver;
@@ -182,6 +200,7 @@ public sealed class MainWindow : Window
 
         DrawCategoryHeader("FLEET");
         DrawNavItem("Group Mgmt", Section.GroupMgmt, null);
+        DrawNavItem("Fleet Leader", Section.FleetLeader, _config.FleetLeaderName.Length > 0);
         DrawNavItem("Follow", Section.Follow, _followManager.Following);
         DrawNavItem("FC Chest", Section.FcChest, null);
         DrawNavItem("Gear", Section.Gear, _config.GearIpcExecuteEnabled);
@@ -247,6 +266,7 @@ public sealed class MainWindow : Window
             case Section.AutoPillion: DrawAutoPillionSection(); break;
             case Section.HealWatch: DrawHealWatchSection(); break;
             case Section.GroupMgmt: DrawGroupSection(); break;
+            case Section.FleetLeader: DrawFleetLeaderSection(); break;
             case Section.Follow: DrawFollowSection(); break;
             case Section.FcChest: DrawFcChestSection(); break;
             case Section.Gear: DrawGearSection(); break;
@@ -529,6 +549,20 @@ public sealed class MainWindow : Window
         }
         CharonTheme.HelpMarker("Hardcast raise on dead fleet toons (no swiftcast).\nSkips anyone who already has a raise pending.");
 
+        // The receiving half of a raise: without this an unattended toon never answers the prompt,
+        // so the raise is spent and the bot stays down. Belongs beside Raise even though it acts on
+        // THIS toon rather than others.
+        var acceptRevival = _config.AutoAcceptRevival;
+        if (ImGui.Checkbox("Accept revival when raised##healwatch", ref acceptRevival))
+        {
+            _config.AutoAcceptRevival = acceptRevival;
+            _save();
+        }
+        CharonTheme.HelpMarker("Answer the revival prompt on THIS toon when a raise lands.\n"
+                               + "Unattended toons have nobody to click it, so the raise is wasted\n"
+                               + "and they stay on the floor. Only ever fires while dead with a\n"
+                               + "raise incoming — never guesses at other dialogs.");
+
         ImGui.Spacing();
         ImGui.TextColored(CharonTheme.TextSecondary, ScrambleIn(_healStatus()));
 
@@ -800,6 +834,162 @@ public sealed class MainWindow : Window
             ImGui.TextColored(CharonTheme.TextDisabled,
                 "Cross-box follow needs the Daedalus LAN relay. /charon follow <name> drives this box locally.");
     }
+
+    // --- Fleet Leader ---
+
+    /// <summary>
+    /// Designate one toon as fleet leader and give it fleet-wide commands. The designation is what
+    /// makes the commands safe: every box only obeys the leader it has configured, so a stray
+    /// broadcast from an alt can't drag the fleet out of a duty.
+    /// </summary>
+    private void DrawFleetLeaderSection()
+    {
+        DrawPageHeader("Fleet Leader");
+
+        var localName = _localName();
+        var leader = _config.FleetLeaderName;
+        var isLeader = leader.Length > 0 && leader.Equals(localName, StringComparison.OrdinalIgnoreCase);
+
+        if (leader.Length == 0)
+        {
+            ImGui.TextColored(CharonTheme.StatusYellow, "No fleet leader set.");
+            ImGui.TextColored(CharonTheme.TextDisabled,
+                "Set the SAME toon on every box — that's the only toon whose commands are obeyed.");
+        }
+        else
+        {
+            ImGui.TextColored(isLeader ? CharonTheme.StatusGreen : CharonTheme.TextSecondary,
+                isLeader ? $"● Fleet leader: {Display(leader)} (this toon)" : $"Fleet leader: {Display(leader)}");
+        }
+
+        ImGui.Spacing();
+
+        // Pick from the LAN roster. Choosing here BROADCASTS to every box, so the leader only has
+        // to be chosen once instead of set by hand on eight clients.
+        var roster = _roster.GetLanPartyMembers();
+        ImGui.SetNextItemWidth(200f);
+        if (ImGui.BeginCombo("Fleet leader##pickleader", leader.Length > 0 ? Display(leader) : "(none)"))
+        {
+            if (ImGui.Selectable("(none)", leader.Length == 0))
+                SetFleetLeader(string.Empty);
+
+            // This toon first, even when the LAN roster is unavailable.
+            if (localName.Length > 0 && !roster.Any(t => t.CharacterName.Equals(localName, StringComparison.OrdinalIgnoreCase)))
+            {
+                if (ImGui.Selectable($"{Display(localName)} (this toon)", isLeader))
+                    SetFleetLeader(localName);
+            }
+
+            foreach (var toon in roster)
+            {
+                if (toon.CharacterName.Length == 0)
+                    continue;
+
+                var isThisToon = toon.CharacterName.Equals(localName, StringComparison.OrdinalIgnoreCase);
+                var label = isThisToon
+                    ? $"{Display(toon.CharacterName)} (this toon)"
+                    : Display(toon.CharacterName);
+
+                if (ImGui.Selectable($"{label}##leaderopt{toon.CharacterName}",
+                        toon.CharacterName.Equals(leader, StringComparison.OrdinalIgnoreCase)))
+                    SetFleetLeader(toon.CharacterName);
+
+                if (!toon.IsOnline)
+                {
+                    ImGui.SameLine();
+                    ImGui.TextColored(CharonTheme.TextDisabled, "(offline)");
+                }
+            }
+
+            ImGui.EndCombo();
+        }
+        CharonTheme.HelpMarker("Picking here sets the fleet leader on THIS box and broadcasts it to\n"
+                               + "every other Charon on the LAN, so you only choose once.\n"
+                               + "Clearing it is local only.");
+
+        if (roster.Count == 0)
+            ImGui.TextColored(CharonTheme.TextDisabled,
+                "No LAN roster — only this toon is listed. Is Daedalus running with the LAN coordinator on?");
+
+        ImGui.Spacing();
+        ImGui.Separator();
+        ImGui.Spacing();
+
+        // --- Fleet commands (leader only) ---
+        ImGui.TextColored(CharonTheme.TextSecondary, "Fleet commands");
+
+        if (!isLeader)
+        {
+            ImGui.TextColored(CharonTheme.TextDisabled, leader.Length == 0
+                ? "Set a fleet leader to use these."
+                : $"Only {Display(leader)} can issue these. This toon obeys them.");
+        }
+        else
+        {
+            ImGui.PushStyleColor(ImGuiCol.Button, CharonTheme.AccentGold);
+            ImGui.PushStyleColor(ImGuiCol.ButtonHovered, CharonTheme.AccentGold);
+            ImGui.PushStyleColor(ImGuiCol.ButtonActive, CharonTheme.AccentDim);
+            ImGui.PushStyleColor(ImGuiCol.Text, CharonTheme.BgDeep);
+            if (ImGui.Button("Leave Duty (My Party)", new Vector2(-1f, 0f)))
+                ImGui.OpenPopup("fleetLeaveDutyConfirm");
+            ImGui.PopStyleColor(4);
+            CharonTheme.HelpMarker("Leave the current duty on this toon and everyone in YOUR PARTY.\n"
+                                   + "Toons in a different group — off running their own dungeon —\n"
+                                   + "are not affected, and a party holding anyone outside the fleet\n"
+                                   + "stays put.");
+
+            if (ImGui.BeginPopupModal("fleetLeaveDutyConfirm", ImGuiWindowFlags.AlwaysAutoResize))
+            {
+                ImGui.TextUnformatted("Leave the current duty on everyone in your party?");
+                ImGui.TextColored(CharonTheme.TextSecondary,
+                    "Fleet toons in a DIFFERENT group are not affected.");
+                ImGui.TextColored(CharonTheme.TextSecondary,
+                    "A party holding anyone outside the fleet stays put.");
+                ImGui.Spacing();
+
+                if (ImGui.Button("Leave Duty", new Vector2(120f, 0)))
+                {
+                    _fleetCommands.LeaveDuty();
+                    ImGui.CloseCurrentPopup();
+                }
+                ImGui.SameLine();
+                if (ImGui.Button("Cancel", new Vector2(120f, 0)))
+                    ImGui.CloseCurrentPopup();
+                ImGui.EndPopup();
+            }
+        }
+
+        ImGui.Spacing();
+        var obey = _config.FleetLeaveDutyEnabled;
+        if (ImGui.Checkbox("Obey the fleet leader's Leave Duty", ref obey))
+        {
+            _config.FleetLeaveDutyEnabled = obey;
+            _save();
+        }
+        CharonTheme.HelpMarker("Untick on a toon that should never be pulled out of a duty automatically.");
+
+        var promote = _config.FleetAutoPromoteLeader;
+        if (ImGui.Checkbox("Give party lead back to the fleet leader", ref promote))
+        {
+            _config.FleetAutoPromoteLeader = promote;
+            _save();
+        }
+        CharonTheme.HelpMarker("A disconnect moves party leadership to another member — usually a bot —\n"
+                               + "and it never comes back on its own. When this toon is holding lead and\n"
+                               + "the fleet leader is back online in the party, it hands it over.\n"
+                               + "Only the current party leader can promote, so this acts on whichever\n"
+                               + "box inherited it.");
+
+        ImGui.Spacing();
+        ImGui.TextColored(CharonTheme.TextDisabled, $"Last: {ScrambleIn(_dutyExitStatus())}");
+
+        if (!_roster.IsAvailable)
+            ImGui.TextColored(CharonTheme.TextDisabled,
+                "Fleet commands need the Daedalus LAN relay — without it only this toon responds.");
+    }
+
+    /// <summary>Designate the leader — the plugin applies it here and broadcasts it to the fleet.</summary>
+    private void SetFleetLeader(string characterName) => _fleetCommands.SetLeader(characterName);
 
     // --- FC Chest Management ---
 
@@ -1284,9 +1474,11 @@ public sealed class MainWindow : Window
         ImGui.TextColored(CharonTheme.TextSecondary, $"Follow: {ScrambleIn(_followStatus())}");
         ImGui.TextColored(CharonTheme.TextSecondary, $"Fleet Follow: {ScrambleIn(_followFleetStatus())}");
         ImGui.TextColored(CharonTheme.TextSecondary, $"Heal Watch: {ScrambleIn(_healStatus())}");
+        ImGui.TextColored(CharonTheme.TextSecondary, $"Revival prompt: {_revivalStatus()}");
         ImGui.TextColored(CharonTheme.TextSecondary, $"Duty pop: {_dutyPopStatus()}");
         ImGui.TextColored(CharonTheme.TextSecondary, $"Trade: {ScrambleIn(_tradeStatus())}");
         ImGui.TextColored(CharonTheme.TextSecondary, $"Gear: {_gearStatus()}");
+        ImGui.TextColored(CharonTheme.TextSecondary, $"Fleet duty exit: {ScrambleIn(_dutyExitStatus())}");
         if (_inviteManager.AcceptPending)
             ImGui.TextColored(CharonTheme.StatusYellow, "Invite accept pending (delay running)");
 
