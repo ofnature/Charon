@@ -981,7 +981,7 @@ public sealed class MainWindow : Window
                                + "box inherited it.");
 
         ImGui.Spacing();
-        ImGui.TextColored(CharonTheme.TextDisabled, $"Last: {ScrambleIn(_dutyExitStatus())}");
+        DrawStatusLine($"Last: {ScrambleIn(_dutyExitStatus())}", CharonTheme.TextDisabled);
 
         if (!_roster.IsAvailable)
             ImGui.TextColored(CharonTheme.TextDisabled,
@@ -1464,23 +1464,36 @@ public sealed class MainWindow : Window
 
     // --- Debug ---
 
+    /// <summary>
+    /// A Debug status line that WRAPS. These lines are the primary in-game diagnostic and they grow
+    /// long (a status plus a reason plus a name), so clipping at the window edge hides exactly the
+    /// part that explains why something isn't acting.
+    /// </summary>
+    private static void DrawStatusLine(string text, Vector4? color = null)
+    {
+        ImGui.PushStyleColor(ImGuiCol.Text, color ?? CharonTheme.TextSecondary);
+        ImGui.PushTextWrapPos(0f); // wrap at the content region edge
+        ImGui.TextUnformatted(text);
+        ImGui.PopTextWrapPos();
+        ImGui.PopStyleColor();
+    }
+
     private void DrawDebugSection()
     {
         DrawPageHeader("Debug");
 
-        ImGui.TextColored(CharonTheme.TextSecondary,
-            $"Daedalus IPC: {(_roster.IsAvailable ? "connected" : "unavailable — manual whitelist only")}");
-        ImGui.TextColored(CharonTheme.TextSecondary, $"Boarding: {ScrambleIn(_boardingStatus())}");
-        ImGui.TextColored(CharonTheme.TextSecondary, $"Follow: {ScrambleIn(_followStatus())}");
-        ImGui.TextColored(CharonTheme.TextSecondary, $"Fleet Follow: {ScrambleIn(_followFleetStatus())}");
-        ImGui.TextColored(CharonTheme.TextSecondary, $"Heal Watch: {ScrambleIn(_healStatus())}");
-        ImGui.TextColored(CharonTheme.TextSecondary, $"Revival prompt: {_revivalStatus()}");
-        ImGui.TextColored(CharonTheme.TextSecondary, $"Duty pop: {_dutyPopStatus()}");
-        ImGui.TextColored(CharonTheme.TextSecondary, $"Trade: {ScrambleIn(_tradeStatus())}");
-        ImGui.TextColored(CharonTheme.TextSecondary, $"Gear: {_gearStatus()}");
-        ImGui.TextColored(CharonTheme.TextSecondary, $"Fleet duty exit: {ScrambleIn(_dutyExitStatus())}");
+        DrawStatusLine($"Daedalus IPC: {(_roster.IsAvailable ? "connected" : "unavailable — manual whitelist only")}");
+        DrawStatusLine($"Boarding: {ScrambleIn(_boardingStatus())}");
+        DrawStatusLine($"Follow: {ScrambleIn(_followStatus())}");
+        DrawStatusLine($"Fleet Follow: {ScrambleIn(_followFleetStatus())}");
+        DrawStatusLine($"Heal Watch: {ScrambleIn(_healStatus())}");
+        DrawStatusLine($"Revival prompt: {_revivalStatus()}");
+        DrawStatusLine($"Duty pop: {_dutyPopStatus()}");
+        DrawStatusLine($"Trade: {ScrambleIn(_tradeStatus())}");
+        DrawStatusLine($"Gear: {_gearStatus()}");
+        DrawStatusLine($"Fleet duty exit: {ScrambleIn(_dutyExitStatus())}");
         if (_inviteManager.AcceptPending)
-            ImGui.TextColored(CharonTheme.StatusYellow, "Invite accept pending (delay running)");
+            DrawStatusLine("Invite accept pending (delay running)", CharonTheme.StatusYellow);
 
         DrawHealLog();
 

@@ -28,13 +28,12 @@ public sealed class PartyLeaderPolicyTests
             party ?? Party, _ => leaderOnline);
 
     [Fact]
-    public void BotHoldingLead_WithLeaderBackAndInZone_PromotesTheirSlot()
+    public void BotHoldingLead_WithLeaderBackAndInZone_Promotes()
     {
         // The whole point: a disconnect parked lead on a bot and it never returns on its own.
         var d = Evaluate();
 
         Assert.True(d.Promote);
-        Assert.Equal(2, d.Slot); // /leader addresses party slots, never names
         Assert.Contains(Leader, d.Reason);
     }
 
@@ -99,14 +98,6 @@ public sealed class PartyLeaderPolicyTests
         Assert.True(here.Promote);
     }
 
-    [Fact]
-    public void SlotOutsideOneToEight_IsRefused()
-    {
-        var d = Evaluate(party: [Member(Leader, 0)]);
-        Assert.False(d.Promote);
-        Assert.Contains("no usable party slot", d.Reason);
-    }
-
     // --- Nobody promotes themselves ---
 
     [Fact]
@@ -130,12 +121,11 @@ public sealed class PartyLeaderPolicyTests
     {
         var d = Evaluate(party: [Member(Bot, 1), Member("MY MAIN", 2)]);
         Assert.True(d.Promote);
-        Assert.Equal(2, d.Slot);
     }
 
     [Fact]
-    public void NoSlotIsReportedWhenNotPromoting()
+    public void NotPromotingAlwaysCarriesAReason()
     {
-        Assert.Equal(0, Evaluate(enabled: false).Slot);
+        Assert.NotEmpty(Evaluate(enabled: false).Reason);
     }
 }

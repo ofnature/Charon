@@ -23,7 +23,7 @@ namespace Charon;
 
 public sealed class CharonPlugin : IDalamudPlugin
 {
-    public const string PluginVersion = "0.1.18";
+    public const string PluginVersion = "0.1.19";
     private const string CommandName = "/charon";
 
     /// <summary>
@@ -41,6 +41,7 @@ public sealed class CharonPlugin : IDalamudPlugin
     private readonly IClientState _clientState;
     private readonly IAetheryteList _aetheryteList;
     private readonly ICondition _condition;
+    private readonly ITargetManager _targetManager;
     private readonly IPluginLog _log;
 
     private readonly CharonConfig _config;
@@ -100,6 +101,17 @@ public sealed class CharonPlugin : IDalamudPlugin
 
     /// <summary>A failing /leader writes a red chat error every time — cap it rather than spam.</summary>
     private const int MaxPromoteAttempts = 3;
+
+    /// <summary>The cap expires: a permanent give-up stops all logging too, leaving nothing to read.</summary>
+    private static readonly TimeSpan PromoteGiveUpCooldown = TimeSpan.FromMinutes(5);
+
+    /// <summary>Fleet leader the attempt counter belongs to — re-picking one means "try again".</summary>
+    private string _promoteLeaderSeen = string.Empty;
+
+    // Promoting needs the leader targeted (/leader takes placeholders, not names), so the previous
+    // target is put back a tick later.
+    private Dalamud.Game.ClientState.Objects.Types.IGameObject? _targetToRestore;
+    private DateTime? _restoreTargetAtUtc;
 
     // Heal Watch runs at 1 Hz; status surfaced in the window.
     private DateTime _lastHealScanUtc = DateTime.MinValue;
@@ -171,6 +183,7 @@ public sealed class CharonPlugin : IDalamudPlugin
         IClientState clientState,
         IAetheryteList aetheryteList,
         ICondition condition,
+        ITargetManager targetManager,
         IDataManager dataManager,
         IAddonLifecycle addonLifecycle,
         IGameGui gameGui,
@@ -184,6 +197,7 @@ public sealed class CharonPlugin : IDalamudPlugin
         _clientState = clientState;
         _aetheryteList = aetheryteList;
         _condition = condition;
+        _targetManager = targetManager;
         _log = log;
 
         _config = pluginInterface.GetPluginConfig() as CharonConfig ?? new CharonConfig();
@@ -394,6 +408,7 @@ public sealed class CharonPlugin : IDalamudPlugin
         UpdateFleetFollow(now);
         UpdateDutyExit(now);
         UpdateLeaderPromotion(now);
+        RestoreTargetIfDue(now);
         UpdateHealWatch(now);
         _groupInvites.Update(now);
         _fcChest.Update(now);
@@ -1507,13 +1522,34 @@ public sealed class CharonPlugin : IDalamudPlugin
             return;
         }
 
+        // Re-picking the fleet leader is an explicit "try again" — otherwise the cap below would
+        // stick and nothing, including the diagnostics, would ever run again.
+        if (!_config.FleetLeaderName.Equals(_promoteLeaderSeen, StringComparison.OrdinalIgnoreCase))
+        {
+            _promoteLeaderSeen = _config.FleetLeaderName;
+            _promoteAttempts = 0;
+        }
+
         // A promote that keeps failing writes a red error line to chat every time, so it is capped
         // rather than retried forever. Success is self-limiting: we stop being party leader, and the
         // policy then reports "not party leader" instead.
         if (_promoteAttempts >= MaxPromoteAttempts)
         {
-            _promoteStatus = $"gave up after {MaxPromoteAttempts} attempts — {_config.FleetLeaderName} would not promote";
-            return;
+            // Capped, but NOT permanently — a give-up that never expires is a dead end: no further
+            // attempts, no further logging, and no way to diagnose without reloading the plugin.
+            if (now - _lastPromoteAttemptUtc >= PromoteGiveUpCooldown)
+            {
+                _promoteAttempts = 0;
+                _log.Info("Fleet leadership: cooldown elapsed — trying to promote {0} again",
+                    _config.FleetLeaderName);
+            }
+            else
+            {
+                var wait = PromoteGiveUpCooldown - (now - _lastPromoteAttemptUtc);
+                _promoteStatus = $"paused after {MaxPromoteAttempts} attempts — retrying in {wait.TotalMinutes:F0}m "
+                                 + $"({_config.FleetLeaderName} would not promote)";
+                return;
+            }
         }
 
         if (now - _lastPromoteAttemptUtc < PromoteRetryInterval)
@@ -1524,11 +1560,112 @@ public sealed class CharonPlugin : IDalamudPlugin
 
         _lastPromoteAttemptUtc = now;
         _promoteAttempts++;
-        var sent = PartyLeaderHelper.TryPromote(decision.Slot, _log);
+        AttemptPromote(now, $"attempt {_promoteAttempts}");
+    }
+
+    /// <summary>
+    /// Target the fleet leader and fire /leader. Shared by the automatic pass and the Test button;
+    /// logs every step, because the target IS the command's argument and a silent failure there is
+    /// indistinguishable from a bad command.
+    /// </summary>
+    private void AttemptPromote(DateTime now, string label)
+    {
+        // Address by TARGET, not party slot: Dalamud's party index does not match the game's
+        // <1>-<8> numbering (the leader at in-game slot 2 came back as index 0).
+        var leaderObject = FindPlayerByName(_config.FleetLeaderName);
+        if (leaderObject == null)
+        {
+            _promoteStatus = $"waiting — {_config.FleetLeaderName} not loaded nearby (cannot target)";
+            _log.Debug("Fleet leadership: {0} — object table has {1} player(s)",
+                _promoteStatus, CountLoadedPlayers());
+            return;
+        }
+
+        LogPartyTable();
+
+        var sent = PartyLeaderHelper.TryPromote(leaderObject, _targetManager, _log, out var previous);
+        if (sent)
+        {
+            // /leader resolves against the target AT EXECUTION, so restoring too early would promote
+            // whatever we put back instead. The command runs within a frame or two; wait well past
+            // that rather than racing it.
+            _targetToRestore = previous;
+            _restoreTargetAtUtc = now + TimeSpan.FromSeconds(3);
+        }
+
         _promoteStatus = sent
-            ? $"sent /leader <{decision.Slot}> for {_config.FleetLeaderName} (attempt {_promoteAttempts})"
-            : $"promote call FAILED for {_config.FleetLeaderName}";
+            ? $"targeted {_config.FleetLeaderName} and sent /leader ({label})"
+            : $"promote FAILED for {_config.FleetLeaderName} — target would not stick ({label})";
         _log.Info("Fleet leadership: {0}", _promoteStatus);
+    }
+
+    /// <summary>
+    /// Dump the party as Dalamud sees it, so its index order can be compared against the game's own
+    /// party-list numbering. That mismatch is what broke the slot-based promote.
+    /// </summary>
+    private void LogPartyTable()
+    {
+        try
+        {
+            var here = _clientState.TerritoryType;
+            var leaderIndex = (int)_partyList.PartyLeaderIndex;
+            for (var i = 0; i < _partyList.Length; i++)
+            {
+                var member = _partyList[i];
+                if (member == null)
+                    continue;
+
+                // Mark the leader from PartyLeaderIndex rather than leaving it to be read off the
+                // party list UI — that is the only unambiguous before/after signal for a promote.
+                _log.Debug("  party index {0} = {1} · territory {2}{3}{4}",
+                    i, member.Name.TextValue, member.Territory.RowId,
+                    member.Territory.RowId == here ? " (here)" : "",
+                    i == leaderIndex ? "  <<< PARTY LEADER" : "");
+            }
+        }
+        catch (Exception ex)
+        {
+            _log.Debug(ex, "Party table dump failed");
+        }
+    }
+
+    /// <summary>Loaded player objects — tells us whether "not found" means out of range or a name mismatch.</summary>
+    private int CountLoadedPlayers()
+    {
+        var count = 0;
+        try
+        {
+            foreach (var obj in _objectTable)
+            {
+                if (obj is Dalamud.Game.ClientState.Objects.SubKinds.IPlayerCharacter)
+                    count++;
+            }
+        }
+        catch
+        {
+            return -1;
+        }
+
+        return count;
+    }
+
+    /// <summary>Put the target back after a promote, so we don't leave a bot staring at the leader.</summary>
+    private void RestoreTargetIfDue(DateTime now)
+    {
+        if (_restoreTargetAtUtc == null || now < _restoreTargetAtUtc)
+            return;
+
+        _restoreTargetAtUtc = null;
+        try
+        {
+            _targetManager.Target = _targetToRestore;
+        }
+        catch
+        {
+            // target gone (died, despawned) — leaving it be is harmless
+        }
+
+        _targetToRestore = null;
     }
 
     /// <summary>True when the named character currently holds party leadership.</summary>

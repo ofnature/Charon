@@ -11,10 +11,8 @@ namespace Charon.Features.Fleet;
 /// </summary>
 public sealed record FleetPartyMember(string Name, int Slot, bool SameZone);
 
-/// <summary>
-/// Whether to hand party leadership back, which party slot to promote, and why not if not.
-/// </summary>
-public sealed record PromoteDecision(bool Promote, int Slot, string Reason);
+/// <summary>Whether to hand party leadership back, and why not if not.</summary>
+public sealed record PromoteDecision(bool Promote, string Reason);
 
 /// <summary>
 /// Decides whether to promote the fleet leader back to party leader. Pure logic.
@@ -32,8 +30,6 @@ public sealed record PromoteDecision(bool Promote, int Slot, string Reason);
 /// </summary>
 public static class PartyLeaderPolicy
 {
-    private const int NoSlot = 0;
-
     /// <param name="localIsPartyLeader">This character currently holds party leadership.</param>
     /// <param name="fleetLeader">Configured fleet leader (see <see cref="FleetLeaderPolicy"/>).</param>
     /// <param name="party">Current party, including ourselves, with slots and zone presence.</param>
@@ -47,36 +43,32 @@ public static class PartyLeaderPolicy
         Func<string, bool> isOnline)
     {
         if (!enabled)
-            return new PromoteDecision(false, NoSlot, "disabled");
+            return new PromoteDecision(false, "disabled");
 
         if (fleetLeader.Length == 0)
-            return new PromoteDecision(false, NoSlot, "no fleet leader set");
+            return new PromoteDecision(false, "no fleet leader set");
 
         // Nobody can promote themselves. If we ARE the fleet leader we either already hold it or we
         // are waiting for whichever box inherited leadership to hand it back.
         if (localName.Length > 0 && fleetLeader.Equals(localName, StringComparison.OrdinalIgnoreCase))
-            return new PromoteDecision(false, NoSlot, localIsPartyLeader
+            return new PromoteDecision(false, localIsPartyLeader
                 ? "we are the fleet leader and hold party lead"
                 : "waiting — another box holds party lead");
 
         if (!localIsPartyLeader)
-            return new PromoteDecision(false, NoSlot, "not party leader — cannot promote");
+            return new PromoteDecision(false, "not party leader — cannot promote");
 
         var target = party.FirstOrDefault(m => m.Name.Equals(fleetLeader, StringComparison.OrdinalIgnoreCase));
         if (target == null)
-            return new PromoteDecision(false, NoSlot, $"{fleetLeader} is not in this party");
+            return new PromoteDecision(false, $"{fleetLeader} is not in this party");
 
         // A disconnected toon STAYS in the party, so presence alone doesn't mean they're back.
         if (!isOnline(target.Name))
-            return new PromoteDecision(false, NoSlot, $"waiting — {fleetLeader} is still offline");
+            return new PromoteDecision(false, $"waiting — {fleetLeader} is still offline");
 
         if (!target.SameZone)
-            return new PromoteDecision(false, NoSlot, $"waiting — {fleetLeader} is in another zone");
+            return new PromoteDecision(false, $"waiting — {fleetLeader} is in another zone");
 
-        if (target.Slot is < 1 or > 8)
-            return new PromoteDecision(false, NoSlot, $"{fleetLeader} has no usable party slot");
-
-        return new PromoteDecision(true, target.Slot,
-            $"promoting {fleetLeader} back to party leader (slot {target.Slot})");
+        return new PromoteDecision(true, $"promoting {fleetLeader} back to party leader");
     }
 }
