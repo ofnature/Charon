@@ -3,7 +3,7 @@
   <PropertyGroup>
     <AssemblyName>Charon</AssemblyName>
     <RootNamespace>Charon</RootNamespace>
-    <Version>0.1.19</Version>
+    <Version>0.1.20</Version>
     <DalamudLibPath>$(AppData)\XIVLauncher\addon\Hooks\dev\</DalamudLibPath>
   </PropertyGroup>
 
@@ -13,5 +13,25 @@
       <_Parameter1>Charon.Tests</_Parameter1>
     </AssemblyAttribute>
   </ItemGroup>
+
+  <!--
+    Dev-plugin reload race: Dalamud watches the DLL and reloads the moment it changes, then reads
+    Charon.json alongside it. The compiler writes the DLL FIRST and DalamudPackager writes the
+    manifest several seconds later, so the reload can read a manifest that is still open and fail
+    with "The process cannot access the file 'Charon.json'". Nothing retries after that, so the
+    plugin sits in a load-error state until it is toggled or the client restarts.
+
+    Touching the DLL after the manifest is written makes the DLL the LAST file to change, so the
+    watcher's event always finds a complete manifest next to it. Observed gap when this bit: 4.5s.
+
+    Must hook the PACKAGER's targets, not "Build": DalamudPackager registers
+    DefaultDalamudPackagerDebug/Release on AfterTargets="Build" too, and SDK targets run after
+    project-defined ones — so AfterTargets="Build" here still fired before the manifest was written
+    (verified: DLL 00:47:54.390, manifest 00:47:54.863).
+  -->
+  <Target Name="TouchAssemblyAfterPackaging"
+          AfterTargets="DefaultDalamudPackagerDebug;DefaultDalamudPackagerRelease">
+    <Touch Files="$(TargetPath)" />
+  </Target>
 
 </Project>

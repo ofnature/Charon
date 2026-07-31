@@ -14,6 +14,7 @@ using Charon.Features.Fleet;
 using Charon.Features.Follow;
 using Charon.Features.GroupManagement;
 using Charon.Features.HealWatch;
+using Charon.Features.Loot;
 using Charon.Ipc;
 using Charon.Services;
 using Charon.Services.Game;
@@ -23,7 +24,7 @@ namespace Charon;
 
 public sealed class CharonPlugin : IDalamudPlugin
 {
-    public const string PluginVersion = "0.1.19";
+    public const string PluginVersion = "0.1.20";
     private const string CommandName = "/charon";
 
     /// <summary>
@@ -62,6 +63,7 @@ public sealed class CharonPlugin : IDalamudPlugin
     private readonly InviteManager _groupInvites;
     private readonly FcChestManager _fcChest;
     private readonly GearManager _gear;
+    private readonly CollectionScanner _collection;
     private readonly GearEquipperIpc _gearIpc;
     private readonly FollowManager _followManager;
     private readonly BossModClient _bossMod;
@@ -221,6 +223,7 @@ public sealed class CharonPlugin : IDalamudPlugin
             },
             log: message => _log.Debug("[GroupMgmt] {0}", message));
         _fcChest = new FcChestManager(gameGui, dataManager, log);
+        _collection = new CollectionScanner(dataManager, clientState, condition, log);
         _gear = new GearManager(clientState, objectTable, dataManager, condition,
             () => !_config.GearArmouryOnly, () => _config.GearUpdateGearsetAfterPass,
             () => _config.GearNeverEvictItemIds, log);
@@ -271,6 +274,9 @@ public sealed class CharonPlugin : IDalamudPlugin
             () => _trade.PartnerName.Length > 0 ? $"{_trade.Status} (partner: {_trade.PartnerName})" : _trade.Status,
             () => $"{_gear.Status} · IPC: {_gearIpc.Status}",
             () => $"{_dutyExitStatus} · lead: {_promoteStatus}",
+            DescribeAccount,
+            () => _collection.Status,
+            _collection,
             () => _partyList.Length,
             IsInMyParty,
             () => _objectTable.LocalPlayer?.Name.TextValue ?? string.Empty,
@@ -1194,6 +1200,29 @@ public sealed class CharonPlugin : IDalamudPlugin
 
     /// <summary>"Raise" pending status — a raise has landed and the prompt is (or is about to be) up.</summary>
     private const uint RaisePendingStatusId = 148;
+
+    /// <summary>
+    /// Account type, for the Debug line. Free trial can't trade, use the market board, or join a
+    /// Free Company — which changes what loot is worth rolling on (an already-learned tradeable
+    /// collectible is gil to a paid toon and dead weight to a trial one) and means the FC chest and
+    /// trade mirror can never work on those boxes.
+    ///
+    /// Read live from ConditionFlag.OnFreeTrial rather than configured per box: game state can't
+    /// drift out of sync, and there is nothing to set on eight clients.
+    /// </summary>
+    private string DescribeAccount()
+    {
+        try
+        {
+            return _condition[ConditionFlag.OnFreeTrial]
+                ? "FREE TRIAL — no trading, market board, or FC"
+                : "full account";
+        }
+        catch
+        {
+            return "unknown (condition flag unreadable)";
+        }
+    }
 
     /// <summary>Trust gate shared by the trade mirror: LAN roster (+ manual whitelist per config).</summary>
     private bool IsTrustedToon(string characterName)

@@ -4,7 +4,7 @@
 
 # Charon
 
-**The ferryman for your fleet.** A Dalamud plugin for FFXIV, companion to [Daedalus](https://github.com/ofnature/Daedalus) — party assembly, auto pillion with smart seat scanning, whitelisted auto group invite, follow teleport, fleet follow, duty-pop and trade automation, a heal-watch babysitter for leveling alts, automatic gear upgrades, fleet-leader commands, and FC chest management.
+**The ferryman for your fleet.** A Dalamud plugin for FFXIV, companion to [Daedalus](https://github.com/ofnature/Daedalus) — party assembly, auto pillion with smart seat scanning, whitelisted auto group invite, follow teleport, fleet follow, duty-pop and trade automation, a heal-watch babysitter for leveling alts, automatic gear upgrades, fleet-leader commands, collectible sweeping, and FC chest management.
 
 Built for multibox setups: invite the fleet, group up, mount up, teleport out, follow you around, keep the bots alive, and manage the FC chest — without touching seven other keyboards.
 
@@ -110,6 +110,15 @@ Leveling alts wear whatever dropped three dungeons ago. Charon finds the upgrade
 - **Clean armoury** — lists every armoury item that no saved gearset uses, then moves them back to your bags on one button. Each row has a **Keep** tick to protect that item permanently (glamour pieces, spare weapons), and a separate **Protected from cleanup** list shows everything you've protected — including items not currently in the armoury — so a stray tick is always visible and undoable. Moving items asks for confirmation first, and warns when you don't have the bag space for the whole sweep. **EXP-bonus gear is protected out of the box** — Brand-new Ring, Friendship Circlet, the pre-order earrings (Ala Mhigan / Aetheryte / Menphina's / Azeyma's) and friends are tagged `[EXP]` and pre-ticked, since they belong to no gearset and several can never be re-obtained. Gearset gear is never touched, soul crystals always stay put, and if your gearsets haven't loaded yet nothing is evicted at all.
 - **Fleet-wide over IPC:** SealBreaker asks Charon to gear up after a duty and *before* Expert Delivery, so drops get worn instead of turned in. Callers that can't reach Charon fall back to the game's Equip Recommended, so nothing breaks when it isn't installed. There's a switch to decline plugin requests (preview only) if you'd rather drive it by hand.
 - Never runs in combat, in a duty, mid-cast, or while zoning.
+
+## Collect
+
+Quest rewards, trust runs and AutoDuty runs hand you items directly — no loot roll involved — so an unattended toon quietly accumulates unlearned minions, mounts and orchestrion rolls for weeks.
+
+- **Lists what you're holding but haven't learned**, with a Collect button on each row. Nothing is ever consumed without a click.
+- **Only real one-time unlocks are offered.** The game reports an ordinary potion as "not unlocked" exactly like a genuinely unlearned collectible, so Charon works from a verified allowlist — minions, mounts, emotes and hairstyles, orchestrion rolls, and phantom job soul shards. Anything it doesn't recognise is logged rather than offered.
+- **Duplicates never appear.** The game won't relearn something you own, so anything worth selling is left alone by construction.
+- **Phantom job shards are zone-aware** — listed anywhere so you can see you have one, but only collectable in the Occult Crescent where they actually work.
 
 ## Daedalus Integration
 

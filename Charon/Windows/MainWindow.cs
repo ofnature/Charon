@@ -10,6 +10,7 @@ using Charon.Features.Follow;
 using Charon.Features.Gear;
 using Charon.Features.GroupManagement;
 using Charon.Features.HealWatch;
+using Charon.Features.Loot;
 using Charon.Services;
 using Charon.Services.Game;
 
@@ -33,6 +34,7 @@ public sealed class MainWindow : Window
         Follow,
         FcChest,
         Gear,
+        Collect,
         TrustedList,
         Debug,
     }
@@ -76,6 +78,9 @@ public sealed class MainWindow : Window
     private readonly Func<string> _tradeStatus;
     private readonly Func<string> _gearStatus;
     private readonly Func<string> _dutyExitStatus;
+    private readonly Func<string> _accountStatus;
+    private readonly Func<string> _collectStatus;
+    private readonly CollectionScanner _collection;
     private readonly Func<int> _partySize;
     private readonly Func<string, bool> _isInParty;
     private readonly Func<string> _localName;
@@ -127,6 +132,9 @@ public sealed class MainWindow : Window
         Func<string> tradeStatus,
         Func<string> gearStatus,
         Func<string> dutyExitStatus,
+        Func<string> accountStatus,
+        Func<string> collectStatus,
+        CollectionScanner collection,
         Func<int> partySize,
         Func<string, bool> isInParty,
         Func<string> localName,
@@ -155,6 +163,9 @@ public sealed class MainWindow : Window
         _tradeStatus = tradeStatus;
         _gearStatus = gearStatus;
         _dutyExitStatus = dutyExitStatus;
+        _accountStatus = accountStatus;
+        _collectStatus = collectStatus;
+        _collection = collection;
         _partySize = partySize;
         _isInParty = isInParty;
         _localName = localName;
@@ -204,6 +215,7 @@ public sealed class MainWindow : Window
         DrawNavItem("Follow", Section.Follow, _followManager.Following);
         DrawNavItem("FC Chest", Section.FcChest, null);
         DrawNavItem("Gear", Section.Gear, _config.GearIpcExecuteEnabled);
+        DrawNavItem("Collect", Section.Collect, null);
         DrawNavItem("Trusted List", Section.TrustedList, null);
         ImGui.Spacing();
 
@@ -270,6 +282,7 @@ public sealed class MainWindow : Window
             case Section.Follow: DrawFollowSection(); break;
             case Section.FcChest: DrawFcChestSection(); break;
             case Section.Gear: DrawGearSection(); break;
+            case Section.Collect: DrawCollectSection(); break;
             case Section.TrustedList: DrawTrustedSection(); break;
             case Section.Debug: DrawDebugSection(); break;
         }
@@ -1332,6 +1345,64 @@ public sealed class MainWindow : Window
         ImGui.EndTable();
     }
 
+    // --- Collect (unlearned collectibles) ---
+
+    /// <summary>
+    /// Collectibles sitting unlearned in the bags, each with its own Collect button. These arrive
+    /// with no looting involved — MSQ rewards, trust runs, AutoDuty runs — so an unattended toon
+    /// accumulates them for weeks. Nothing is consumed without a click.
+    /// </summary>
+    private void DrawCollectSection()
+    {
+        DrawPageHeader("Collect");
+
+        var rows = _collection.GetUnlearned();
+
+        ImGui.TextColored(CharonTheme.TextSecondary, rows.Count == 0
+            ? "Nothing unlearned in the bags."
+            : $"{rows.Count} collectible(s) in the bags you haven't learned:");
+        CharonTheme.HelpMarker("Mounts, minions, Triple Triad cards, orchestrion rolls, emotes and "
+                               + "hairstyles you don't own yet. Duplicates never appear — the game "
+                               + "won't relearn one, so anything worth selling stays untouched.");
+
+        if (rows.Count > 0 && ImGui.BeginTable("collectRows", 3,
+                ImGuiTableFlags.BordersInnerV | ImGuiTableFlags.RowBg | ImGuiTableFlags.SizingFixedFit
+                | ImGuiTableFlags.ScrollY, new Vector2(0, 220)))
+        {
+            ImGui.TableSetupColumn("Item", ImGuiTableColumnFlags.WidthStretch);
+            ImGui.TableSetupColumn("Type", ImGuiTableColumnFlags.WidthFixed, 120f);
+            ImGui.TableSetupColumn("##action", ImGuiTableColumnFlags.WidthFixed, 74f);
+            ImGui.TableHeadersRow();
+
+            foreach (var row in rows)
+            {
+                ImGui.TableNextRow();
+                ImGui.TableNextColumn();
+                ImGui.TextUnformatted(row.Name);
+                ImGui.TableNextColumn();
+                ImGui.TextColored(CharonTheme.TextSecondary, row.Category);
+                ImGui.TableNextColumn();
+                var here = _collection.CanCollectHere(row);
+                if (!here) ImGui.BeginDisabled();
+                if (ImGui.SmallButton($"Collect##collect{row.Container}_{row.Slot}") && here)
+                    _collection.TryCollect(row.ItemId, row.ActionKind, highQuality: false);
+                if (!here) ImGui.EndDisabled();
+                if (!here && ImGui.IsItemHovered())
+                    ImGui.SetTooltip("Only usable in the Occult Crescent (South Horn or North Horn)");
+            }
+
+            ImGui.EndTable();
+        }
+
+        ImGui.Spacing();
+        if (ImGui.Button("Refresh"))
+            _collection.Invalidate();
+        CharonTheme.HelpMarker("The list refreshes on its own every second — this is only for impatience.");
+
+        ImGui.Spacing();
+        DrawStatusLine(_collection.Status, CharonTheme.TextDisabled);
+    }
+
     // --- Trusted Characters ---
 
     private void DrawTrustedSection()
@@ -1482,6 +1553,7 @@ public sealed class MainWindow : Window
     {
         DrawPageHeader("Debug");
 
+        DrawStatusLine($"Account: {_accountStatus()}");
         DrawStatusLine($"Daedalus IPC: {(_roster.IsAvailable ? "connected" : "unavailable — manual whitelist only")}");
         DrawStatusLine($"Boarding: {ScrambleIn(_boardingStatus())}");
         DrawStatusLine($"Follow: {ScrambleIn(_followStatus())}");
@@ -1491,6 +1563,7 @@ public sealed class MainWindow : Window
         DrawStatusLine($"Duty pop: {_dutyPopStatus()}");
         DrawStatusLine($"Trade: {ScrambleIn(_tradeStatus())}");
         DrawStatusLine($"Gear: {_gearStatus()}");
+        DrawStatusLine($"Collect: {_collectStatus()}");
         DrawStatusLine($"Fleet duty exit: {ScrambleIn(_dutyExitStatus())}");
         if (_inviteManager.AcceptPending)
             DrawStatusLine("Invite accept pending (delay running)", CharonTheme.StatusYellow);
