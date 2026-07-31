@@ -24,7 +24,7 @@ namespace Charon;
 
 public sealed class CharonPlugin : IDalamudPlugin
 {
-    public const string PluginVersion = "0.1.20";
+    public const string PluginVersion = "0.1.21";
     private const string CommandName = "/charon";
 
     /// <summary>
@@ -114,6 +114,16 @@ public sealed class CharonPlugin : IDalamudPlugin
     // target is put back a tick later.
     private Dalamud.Game.ClientState.Objects.Types.IGameObject? _targetToRestore;
     private DateTime? _restoreTargetAtUtc;
+
+    // Auto sprint: out of combat, only while actually moving. Position is sampled on a throttle to
+    // decide "moving" — sprinting on the spot burns a 60s cooldown for nothing.
+    private DateTime _lastSprintCheckUtc = DateTime.MinValue;
+    private System.Numerics.Vector3? _lastSprintSamplePos;
+    private string _sprintStatus = "idle";
+    private static readonly TimeSpan SprintCheckInterval = TimeSpan.FromSeconds(1);
+
+    /// <summary>Movement between samples below this is standing still (drift, turning on the spot).</summary>
+    private const float SprintMovementEpsilon = 1.5f;
 
     // Heal Watch runs at 1 Hz; status surfaced in the window.
     private DateTime _lastHealScanUtc = DateTime.MinValue;
@@ -276,6 +286,7 @@ public sealed class CharonPlugin : IDalamudPlugin
             () => $"{_dutyExitStatus} · lead: {_promoteStatus}",
             DescribeAccount,
             () => _collection.Status,
+            () => _sprintStatus,
             _collection,
             () => _partyList.Length,
             IsInMyParty,
@@ -413,6 +424,7 @@ public sealed class CharonPlugin : IDalamudPlugin
         UpdateFollowTeleport(now);
         UpdateFleetFollow(now);
         UpdateDutyExit(now);
+        UpdateAutoSprint(now);
         UpdateLeaderPromotion(now);
         RestoreTargetIfDue(now);
         UpdateHealWatch(now);
@@ -1762,6 +1774,44 @@ public sealed class CharonPlugin : IDalamudPlugin
         {
             return true;
         }
+    }
+
+    /// <summary>
+    /// Sprint whenever out of combat and moving. Availability is left to the game (GetActionStatus),
+    /// so cooldown, zone rules and instanced-duty sprint behaviour are all handled without Charon
+    /// modelling any of it.
+    /// </summary>
+    private void UpdateAutoSprint(DateTime now)
+    {
+        if (now - _lastSprintCheckUtc < SprintCheckInterval)
+            return;
+        _lastSprintCheckUtc = now;
+
+        var local = _objectTable.LocalPlayer;
+        if (local == null)
+        {
+            _sprintStatus = "no player";
+            _lastSprintSamplePos = null;
+            return;
+        }
+
+        // "Moving" = position changed since the last sample. Simpler and more honest than guessing
+        // at movement state flags, and it naturally covers nav-driven and player-driven movement.
+        var previous = _lastSprintSamplePos;
+        _lastSprintSamplePos = local.Position;
+        var moving = previous != null
+                     && System.Numerics.Vector3.Distance(previous.Value, local.Position) > SprintMovementEpsilon;
+
+        var decision = SprintPolicy.Evaluate(
+            _config.AutoSprintEnabled,
+            _condition[ConditionFlag.InCombat],
+            _condition[ConditionFlag.Mounted],
+            moving,
+            SprintHelper.IsReady());
+
+        _sprintStatus = decision.Reason;
+        if (decision.Sprint)
+            SprintHelper.TrySprint(_log);
     }
 
     /// <summary>Run a scheduled duty exit (checked every frame — cheap).</summary>

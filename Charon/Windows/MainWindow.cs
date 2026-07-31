@@ -80,6 +80,7 @@ public sealed class MainWindow : Window
     private readonly Func<string> _dutyExitStatus;
     private readonly Func<string> _accountStatus;
     private readonly Func<string> _collectStatus;
+    private readonly Func<string> _sprintStatus;
     private readonly CollectionScanner _collection;
     private readonly Func<int> _partySize;
     private readonly Func<string, bool> _isInParty;
@@ -134,6 +135,7 @@ public sealed class MainWindow : Window
         Func<string> dutyExitStatus,
         Func<string> accountStatus,
         Func<string> collectStatus,
+        Func<string> sprintStatus,
         CollectionScanner collection,
         Func<int> partySize,
         Func<string, bool> isInParty,
@@ -165,6 +167,7 @@ public sealed class MainWindow : Window
         _dutyExitStatus = dutyExitStatus;
         _accountStatus = accountStatus;
         _collectStatus = collectStatus;
+        _sprintStatus = sprintStatus;
         _collection = collection;
         _partySize = partySize;
         _isInParty = isInParty;
@@ -759,6 +762,16 @@ public sealed class MainWindow : Window
         CharonTheme.HelpMarker("Check the navmesh before pathing. If the leader took a portal or teleport\n"
                                + "stone and landed somewhere you can't walk to, hold instead of running at\n"
                                + "a wall — and resume the moment they're reachable again.");
+
+        var autoSprint = _config.AutoSprintEnabled;
+        if (ImGui.Checkbox("Sprint out of combat##follow", ref autoSprint))
+        {
+            _config.AutoSprintEnabled = autoSprint;
+            _save();
+        }
+        CharonTheme.HelpMarker("Sprint whenever this toon is moving and out of combat, so followers "
+                               + "keep up instead of walking. Never in combat (the rotation owns the "
+                               + "action queue there) and never while mounted.");
 
         var takePortals = _config.FollowTakePortals;
         if (ImGui.Checkbox("Take the leader's portal##follow", ref takePortals))
@@ -1564,6 +1577,7 @@ public sealed class MainWindow : Window
         DrawStatusLine($"Trade: {ScrambleIn(_tradeStatus())}");
         DrawStatusLine($"Gear: {_gearStatus()}");
         DrawStatusLine($"Collect: {_collectStatus()}");
+        DrawStatusLine($"Sprint: {_sprintStatus()}");
         DrawStatusLine($"Fleet duty exit: {ScrambleIn(_dutyExitStatus())}");
         if (_inviteManager.AcceptPending)
             DrawStatusLine("Invite accept pending (delay running)", CharonTheme.StatusYellow);

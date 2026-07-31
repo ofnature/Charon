@@ -98,6 +98,12 @@ public sealed class CharonConfig : IPluginConfiguration
     /// <summary>When the leader ports out of reach, walk to the object they used and click it too.</summary>
     public bool FollowTakePortals { get; set; } = true;
 
+    /// <summary>
+    /// Sprint whenever out of combat and actually moving. Never in combat (the rotation owns the
+    /// action queue there) and never mounted (a mount is already faster).
+    /// </summary>
+    public bool AutoSprintEnabled { get; set; } = true;
+
     // Heal Watch
     /// <summary>Healer toon tops up fleet toons from LAN vitals (out-of-party healing).</summary>
     public bool HealWatchEnabled { get; set; } = false;
