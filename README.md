@@ -112,6 +112,16 @@ Leveling alts wear whatever dropped three dungeons ago. Charon finds the upgrade
 - **Fleet-wide over IPC:** SealBreaker asks Charon to gear up after a duty and *before* Expert Delivery, so drops get worn instead of turned in. Callers that can't reach Charon fall back to the game's Equip Recommended, so nothing breaks when it isn't installed. There's a switch to decline plugin requests (preview only) if you'd rather drive it by hand.
 - Never runs in combat, in a duty, mid-cast, or while zoning.
 
+## Loot Rolls (preview)
+
+Charon works out Need / Greed / Pass for everything on the loot window and **shows you what it would do** — it doesn't roll yet. Rolling arrives once the decisions have been checked against real drops.
+
+- **Ordered rules, first match wins.** Read down the list and the first matching row is the answer, rather than a pile of independent toggles whose combined effect nobody can predict.
+- **Nothing to switch on and off.** The rules are written to be right in every situation: an unowned collectible is always worth Need, gear your job can't wear is always a Pass. There's no per-run state to forget.
+- **Polite by default.** Need is downgraded to Greed whenever anyone outside your fleet is in the party.
+- **Knows what a duplicate is worth.** An already-unlocked collectible is Greed on an account that can sell it and Pass on a free trial one, decided automatically.
+- Gear decisions share the Gear Equipper's rules, so loot and equipping can never disagree about what's wearable.
+
 ## Collect
 
 Quest rewards, trust runs and AutoDuty runs hand you items directly — no loot roll involved — so an unattended toon quietly accumulates unlearned minions, mounts and orchestrion rolls for weeks.

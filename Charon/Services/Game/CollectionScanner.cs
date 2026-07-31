@@ -89,6 +89,32 @@ public sealed unsafe class CollectionScanner
         return _cache;
     }
 
+    /// <summary>
+    /// Whether an item we do NOT own yet is a recognised collectible, and whether its unlock is
+    /// already earned. Used by loot rolling so "already unlocked" means the same thing there as in
+    /// the Collect list.
+    /// </summary>
+    public (bool IsCollectible, bool AlreadyUnlocked, bool IsTradeable) AssessForLoot(uint itemId)
+    {
+        try
+        {
+            var sheet = _dataManager.GetExcelSheet<Item>();
+            if (sheet == null || !sheet.TryGetRow(itemId, out var row) || row.ItemAction.RowId == 0)
+                return (false, false, false);
+
+            var kind = row.ItemAction.Value.Action.RowId;
+            if (!CollectibleKinds.Known.Contains(kind))
+                return (false, false, !row.IsUntradable);
+
+            var state = ReadUnlockState(itemId);
+            return (true, state == UnlockOwned, !row.IsUntradable);
+        }
+        catch
+        {
+            return (false, false, false);
+        }
+    }
+
     /// <summary>Drop the cache (an item was just learned, or the user asked for a refresh).</summary>
     public void Invalidate() => _cache = null;
 

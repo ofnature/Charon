@@ -10,6 +10,15 @@ using Lumina.Excel.Sheets;
 
 namespace Charon.Services.Game;
 
+/// <summary>How a prospective item (loot, not yet owned) looks against what this toon wears.</summary>
+public sealed record LootGearAssessment(
+    bool IsGear,
+    bool CanEquip,
+    bool IsUpgrade,
+    bool WorseThanEquipped,
+    int ItemLevelsBelowEquipped,
+    bool IsGlamour);
+
 /// <summary>One executed gear step, for the section's log.</summary>
 public sealed record GearLogEntry(string Name, string Detail);
 
@@ -282,6 +291,48 @@ public sealed unsafe class GearManager
         }
 
         return free;
+    }
+
+
+    /// <summary>
+    /// Assess an item we do NOT own yet — a loot drop — against the current job and what is worn in
+    /// its slot. Reuses the same gates as the equipper (job category, stat suitability, race lock,
+    /// equip level) so loot rolls and equipping can never disagree about what is wearable.
+    /// </summary>
+    public LootGearAssessment AssessForLoot(uint itemId)
+    {
+        try
+        {
+            var local = _objectTable.LocalPlayer;
+            if (local == null)
+                return new LootGearAssessment(false, false, false, false, 0, false);
+
+            var jobId = local.ClassJob.RowId;
+            var (race, sex) = ReadLocalAppearance();
+            var candidate = BuildItem(itemId, jobId, null, -1, -1, race, sex);
+            if (candidate == null)
+                return new LootGearAssessment(false, false, false, false, 0, false);
+
+            var glamour = candidate.ItemLevel <= 1;
+            var canEquip = candidate.FitsJob && candidate.StatsFitJob && candidate.FitsRace
+                           && candidate.EquipLevel <= local.Level;
+
+            var wornId = ReadSlotItemId(InventoryType.EquippedItems, (short)(int)candidate.Slot);
+            var worn = wornId == 0 ? null : BuildItem(wornId, jobId, candidate.Slot, -1, -1, race, sex);
+            var wornIlvl = worn?.ItemLevel ?? 0;
+
+            // Same upgrade test the equipper uses: empty slot always, higher ilvl always.
+            var isUpgrade = canEquip && (worn == null || candidate.ItemLevel > wornIlvl);
+            var worse = worn != null && candidate.ItemLevel < wornIlvl;
+            var below = worn == null ? 0 : System.Math.Max(0, wornIlvl - candidate.ItemLevel);
+
+            return new LootGearAssessment(true, canEquip, isUpgrade, worse, below, glamour);
+        }
+        catch (Exception ex)
+        {
+            _log.Warning(ex, "Loot gear assessment threw for item {0}", itemId);
+            return new LootGearAssessment(false, false, false, false, 0, false);
+        }
     }
 
     /// <summary>Drop the cached previews (the keep list changed, or an item just moved).</summary>

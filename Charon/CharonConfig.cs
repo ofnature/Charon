@@ -135,6 +135,16 @@ public sealed class CharonConfig : IPluginConfiguration
     /// </summary>
     public string RevivalPromptAddonName { get; set; } = string.Empty;
 
+    // Loot rolling
+    /// <summary>
+    /// Watch the loot window and work out what to roll. READ-ONLY for now — decisions are shown and
+    /// logged, nothing is clicked, until item resolution has been checked against real drops.
+    /// </summary>
+    public bool LootRollEnabled { get; set; } = true;
+
+    /// <summary>Pass on gear more than this many item levels below what this job wears.</summary>
+    public int LootPassBelowIlvlGap { get; set; } = 30;
+
     // Fleet Leader
     /// <summary>
     /// Character designated as fleet leader — the only toon whose fleet commands (currently Leave

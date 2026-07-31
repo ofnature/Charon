@@ -24,7 +24,7 @@ namespace Charon;
 
 public sealed class CharonPlugin : IDalamudPlugin
 {
-    public const string PluginVersion = "0.1.21";
+    public const string PluginVersion = "0.1.22";
     private const string CommandName = "/charon";
 
     /// <summary>
@@ -64,6 +64,7 @@ public sealed class CharonPlugin : IDalamudPlugin
     private readonly FcChestManager _fcChest;
     private readonly GearManager _gear;
     private readonly CollectionScanner _collection;
+    private readonly LootWatcher _lootWatcher;
     private readonly GearEquipperIpc _gearIpc;
     private readonly FollowManager _followManager;
     private readonly BossModClient _bossMod;
@@ -237,6 +238,12 @@ public sealed class CharonPlugin : IDalamudPlugin
         _gear = new GearManager(clientState, objectTable, dataManager, condition,
             () => !_config.GearArmouryOnly, () => _config.GearUpdateGearsetAfterPass,
             () => _config.GearNeverEvictItemIds, log);
+        _lootWatcher = new LootWatcher(dataManager, _gear, _collection,
+            () => _config.LootRollEnabled,
+            () => !_condition[ConditionFlag.OnFreeTrial],
+            HasNonFleetPartyMembers,
+            () => _config.LootPassBelowIlvlGap,
+            log);
         _gearIpc = new GearEquipperIpc(pluginInterface, _gear,
             () => _config.GearIpcEnabled, () => _config.GearIpcExecuteEnabled, log);
         _bossMod = new BossModClient(pluginInterface);
@@ -287,6 +294,8 @@ public sealed class CharonPlugin : IDalamudPlugin
             DescribeAccount,
             () => _collection.Status,
             () => _sprintStatus,
+            () => _lootWatcher.Status,
+            _lootWatcher,
             _collection,
             () => _partyList.Length,
             IsInMyParty,
@@ -431,6 +440,7 @@ public sealed class CharonPlugin : IDalamudPlugin
         _groupInvites.Update(now);
         _fcChest.Update(now);
         _gear.Update(now);
+        _lootWatcher.Update(now);
         _pillionManager.Update(now);
         _inviteManager.Update(now);
     }
@@ -1234,6 +1244,34 @@ public sealed class CharonPlugin : IDalamudPlugin
         {
             return "unknown (condition flag unreadable)";
         }
+    }
+
+    /// <summary>
+    /// True when anyone in the party is NOT a fleet toon. Loot rolling downgrades Need to Greed in
+    /// that case — eight bots hitting Need on a stranger's drop is how you get reported.
+    /// </summary>
+    private bool HasNonFleetPartyMembers()
+    {
+        try
+        {
+            var localName = _objectTable.LocalPlayer?.Name.TextValue ?? string.Empty;
+            var trusted = BuildTrustedNames(localName);
+
+            foreach (var member in _partyList)
+            {
+                var name = member.Name.TextValue;
+                if (name.Length > 0
+                    && !name.Equals(localName, StringComparison.OrdinalIgnoreCase)
+                    && !trusted.Contains(name))
+                    return true;
+            }
+        }
+        catch
+        {
+            return true; // unreadable party — assume strangers and stay polite
+        }
+
+        return false;
     }
 
     /// <summary>Trust gate shared by the trade mirror: LAN roster (+ manual whitelist per config).</summary>

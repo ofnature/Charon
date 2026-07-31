@@ -35,6 +35,7 @@ public sealed class MainWindow : Window
         FcChest,
         Gear,
         Collect,
+        Loot,
         TrustedList,
         Debug,
     }
@@ -81,6 +82,8 @@ public sealed class MainWindow : Window
     private readonly Func<string> _accountStatus;
     private readonly Func<string> _collectStatus;
     private readonly Func<string> _sprintStatus;
+    private readonly Func<string> _lootStatus;
+    private readonly LootWatcher _lootWatcher;
     private readonly CollectionScanner _collection;
     private readonly Func<int> _partySize;
     private readonly Func<string, bool> _isInParty;
@@ -136,6 +139,8 @@ public sealed class MainWindow : Window
         Func<string> accountStatus,
         Func<string> collectStatus,
         Func<string> sprintStatus,
+        Func<string> lootStatus,
+        LootWatcher lootWatcher,
         CollectionScanner collection,
         Func<int> partySize,
         Func<string, bool> isInParty,
@@ -168,6 +173,8 @@ public sealed class MainWindow : Window
         _accountStatus = accountStatus;
         _collectStatus = collectStatus;
         _sprintStatus = sprintStatus;
+        _lootStatus = lootStatus;
+        _lootWatcher = lootWatcher;
         _collection = collection;
         _partySize = partySize;
         _isInParty = isInParty;
@@ -219,6 +226,7 @@ public sealed class MainWindow : Window
         DrawNavItem("FC Chest", Section.FcChest, null);
         DrawNavItem("Gear", Section.Gear, _config.GearIpcExecuteEnabled);
         DrawNavItem("Collect", Section.Collect, null);
+        DrawNavItem("Loot", Section.Loot, _config.LootRollEnabled);
         DrawNavItem("Trusted List", Section.TrustedList, null);
         ImGui.Spacing();
 
@@ -286,6 +294,7 @@ public sealed class MainWindow : Window
             case Section.FcChest: DrawFcChestSection(); break;
             case Section.Gear: DrawGearSection(); break;
             case Section.Collect: DrawCollectSection(); break;
+            case Section.Loot: DrawLootSection(); break;
             case Section.TrustedList: DrawTrustedSection(); break;
             case Section.Debug: DrawDebugSection(); break;
         }
@@ -1358,6 +1367,77 @@ public sealed class MainWindow : Window
         ImGui.EndTable();
     }
 
+    // --- Loot (read-only preview) ---
+
+    /// <summary>
+    /// What Charon WOULD roll on the current loot window. Nothing is clicked — this exists to check
+    /// item resolution and the rules against real drops before rolling is ever enabled.
+    /// </summary>
+    private void DrawLootSection()
+    {
+        DrawPageHeader("Loot");
+
+        ImGui.TextColored(CharonTheme.StatusYellow, "Read-only: decisions are shown, nothing is rolled.");
+        ImGui.Spacing();
+
+        var watching = _config.LootRollEnabled;
+        if (ImGui.Checkbox("Work out rolls for loot", ref watching))
+        {
+            _config.LootRollEnabled = watching;
+            _save();
+        }
+        CharonTheme.HelpMarker("Evaluate the loot window and show what each item would get. "
+                               + "Turning this off stops it thinking about loot entirely.");
+
+        var gap = _config.LootPassBelowIlvlGap;
+        ImGui.SetNextItemWidth(160f);
+        if (ImGui.SliderInt("Pass below (item levels)##loot", ref gap, 0, 100))
+        {
+            _config.LootPassBelowIlvlGap = gap;
+            _save();
+        }
+        CharonTheme.HelpMarker("Gear more than this many item levels below what this job wears is passed on.");
+
+        ImGui.Spacing();
+        var pending = _lootWatcher.Pending;
+        if (pending.Count == 0)
+        {
+            ImGui.TextColored(CharonTheme.TextDisabled, "No loot pending.");
+        }
+        else if (ImGui.BeginTable("lootRows", 3,
+                     ImGuiTableFlags.BordersInnerV | ImGuiTableFlags.RowBg | ImGuiTableFlags.SizingFixedFit))
+        {
+            ImGui.TableSetupColumn("Item", ImGuiTableColumnFlags.WidthStretch);
+            ImGui.TableSetupColumn("Would", ImGuiTableColumnFlags.WidthFixed, 70f);
+            ImGui.TableSetupColumn("Why", ImGuiTableColumnFlags.WidthFixed, 220f);
+            ImGui.TableHeadersRow();
+
+            foreach (var row in pending)
+            {
+                ImGui.TableNextRow();
+                ImGui.TableNextColumn();
+                ImGui.TextUnformatted(row.Name);
+                ImGui.TableNextColumn();
+                ImGui.TextColored(RollColour(row.Action), row.Action.ToString());
+                ImGui.TableNextColumn();
+                ImGui.TextColored(CharonTheme.TextSecondary, row.Reason);
+            }
+
+            ImGui.EndTable();
+        }
+
+        ImGui.Spacing();
+        DrawStatusLine(_lootStatus(), CharonTheme.TextDisabled);
+    }
+
+    private static Vector4 RollColour(Charon.Features.Loot.RollAction action) => action switch
+    {
+        Charon.Features.Loot.RollAction.Need => CharonTheme.StatusGreen,
+        Charon.Features.Loot.RollAction.Greed => CharonTheme.AccentGold,
+        Charon.Features.Loot.RollAction.Pass => CharonTheme.TextDisabled,
+        _ => CharonTheme.TextSecondary,
+    };
+
     // --- Collect (unlearned collectibles) ---
 
     /// <summary>
@@ -1578,6 +1658,7 @@ public sealed class MainWindow : Window
         DrawStatusLine($"Gear: {_gearStatus()}");
         DrawStatusLine($"Collect: {_collectStatus()}");
         DrawStatusLine($"Sprint: {_sprintStatus()}");
+        DrawStatusLine($"Loot: {_lootStatus()}");
         DrawStatusLine($"Fleet duty exit: {ScrambleIn(_dutyExitStatus())}");
         if (_inviteManager.AcceptPending)
             DrawStatusLine("Invite accept pending (delay running)", CharonTheme.StatusYellow);
