@@ -14,7 +14,7 @@ public sealed class FollowMessage
     [JsonPropertyName("target")]
     public string Target { get; set; } = string.Empty;
 
-    /// <summary>"start" or "stop".</summary>
+    /// <summary>"start", "stop", or "state".</summary>
     [JsonPropertyName("act")]
     public string Act { get; set; } = string.Empty;
 }
@@ -29,6 +29,16 @@ public static class FollowRelay
     public const string ActStart = "start";
     public const string ActStop = "stop";
 
+    /// <summary>
+    /// A toon REPORTING its own follow state rather than being commanded: <c>Target</c> is the
+    /// sender and <c>Leader</c> is whoever it currently follows (empty when it follows nobody).
+    ///
+    /// Follow state lives on each toon's own client, so the fleet view has no way to show who the
+    /// other seven are trailing unless they say so. Announced on every change, on load, and on a
+    /// slow refresh — a display that is silently stale is worse than no display at all.
+    /// </summary>
+    public const string ActState = "state";
+
     public static string Serialize(string leader, string target, string act) =>
         JsonSerializer.Serialize(new FollowMessage { Leader = leader, Target = target, Act = act });
 
@@ -42,7 +52,7 @@ public static class FollowRelay
             var message = JsonSerializer.Deserialize<FollowMessage>(json);
             if (message == null
                 || message.Target.Length == 0
-                || (message.Act != ActStart && message.Act != ActStop)
+                || (message.Act != ActStart && message.Act != ActStop && message.Act != ActState)
                 || (message.Act == ActStart && message.Leader.Length == 0))
                 return null;
             return message;

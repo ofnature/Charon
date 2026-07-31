@@ -89,6 +89,7 @@ public sealed class MainWindow : Window
     private readonly Func<string, bool> _isInParty;
     private readonly Func<string> _localName;
     private readonly FollowCommands _followCommands;
+    private readonly Func<string, string?> _reportedFollowLeader;
     private readonly FleetCommands _fleetCommands;
 
     private Section _section = Section.General;
@@ -146,6 +147,7 @@ public sealed class MainWindow : Window
         Func<string, bool> isInParty,
         Func<string> localName,
         FollowCommands followCommands,
+        Func<string, string?> reportedFollowLeader,
         FleetCommands fleetCommands)
         : base("Charon##CharonMain")
     {
@@ -180,6 +182,7 @@ public sealed class MainWindow : Window
         _isInParty = isInParty;
         _localName = localName;
         _followCommands = followCommands;
+        _reportedFollowLeader = reportedFollowLeader;
         _fleetCommands = fleetCommands;
 
         Size = new Vector2(600, 440);
@@ -825,12 +828,13 @@ public sealed class MainWindow : Window
         {
             ImGui.TextColored(CharonTheme.TextDisabled, "No LAN roster — is Daedalus running with the LAN coordinator on?");
         }
-        else if (ImGui.BeginTable("followparty", 3,
+        else if (ImGui.BeginTable("followparty", 4,
                      ImGuiTableFlags.BordersInnerV | ImGuiTableFlags.RowBg | ImGuiTableFlags.SizingFixedFit))
         {
             ImGui.TableSetupColumn("##dot", ImGuiTableColumnFlags.WidthFixed, 16f);
             ImGui.TableSetupColumn("Name", ImGuiTableColumnFlags.WidthFixed, 160f);
-            ImGui.TableSetupColumn("##action", ImGuiTableColumnFlags.WidthStretch);
+            ImGui.TableSetupColumn("##action", ImGuiTableColumnFlags.WidthFixed, 120f);
+            ImGui.TableSetupColumn("Following", ImGuiTableColumnFlags.WidthStretch);
 
             foreach (var toon in roster)
             {
@@ -860,6 +864,18 @@ public sealed class MainWindow : Window
                     if (ImGui.SmallButton($"Stop##s{toon.CharacterName}"))
                         _followCommands.Stop(toon.CharacterName);
                 }
+
+                // Who that toon is following, as reported by its own box. Null means it hasn't
+                // reported recently — shown as unknown rather than guessed at, since a stale leader
+                // is worse than admitting we don't know.
+                ImGui.TableNextColumn();
+                var following = _reportedFollowLeader(toon.CharacterName);
+                if (following == null)
+                    ImGui.TextColored(CharonTheme.TextDisabled, toon.IsOnline ? "?" : "");
+                else if (following.Length == 0)
+                    ImGui.TextColored(CharonTheme.TextDisabled, "—");
+                else
+                    ImGui.TextColored(CharonTheme.StatusGreen, $"→ {Display(following)}");
             }
 
             ImGui.EndTable();

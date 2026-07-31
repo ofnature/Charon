@@ -24,7 +24,7 @@ namespace Charon;
 
 public sealed class CharonPlugin : IDalamudPlugin
 {
-    public const string PluginVersion = "0.1.22";
+    public const string PluginVersion = "0.1.23";
     private const string CommandName = "/charon";
 
     /// <summary>
@@ -69,6 +69,19 @@ public sealed class CharonPlugin : IDalamudPlugin
     private readonly FollowManager _followManager;
     private readonly BossModClient _bossMod;
     private readonly InteractHelper _interact;
+
+    // Who each fleet toon is following, as reported by that toon's own box. Follow state is local to
+    // each client, so the only way to show it here is for every box to say so.
+    private readonly Dictionary<string, (string Leader, DateTime SeenUtc)> _followStates =
+        new(StringComparer.OrdinalIgnoreCase);
+
+    private DateTime _lastFollowStateBroadcastUtc = DateTime.MinValue;
+
+    /// <summary>Re-announce periodically so a box that started late still learns the others.</summary>
+    private static readonly TimeSpan FollowStateInterval = TimeSpan.FromSeconds(30);
+
+    /// <summary>A report older than this is dropped rather than shown as current.</summary>
+    private static readonly TimeSpan FollowStateStale = TimeSpan.FromSeconds(95);
 
     // Fleet Follow: our own nav-path bookkeeping (separate from the pillion path state).
     private bool _followNavIssued;
@@ -301,6 +314,7 @@ public sealed class CharonPlugin : IDalamudPlugin
             IsInMyParty,
             () => _objectTable.LocalPlayer?.Name.TextValue ?? string.Empty,
             new MainWindow.FollowCommands(CommandFollow, CommandStopFollow, CommandFollowAll, CommandStopFollowAll),
+            GetReportedFollowLeader,
             new MainWindow.FleetCommands(CommandSetFleetLeader, CommandFleetLeaveDuty));
         _mainWindow.IsOpen = _config.MainWindowVisible;
         _windowSystem.AddWindow(_mainWindow);
@@ -434,6 +448,7 @@ public sealed class CharonPlugin : IDalamudPlugin
         UpdateFleetFollow(now);
         UpdateDutyExit(now);
         UpdateAutoSprint(now);
+        UpdateFollowStateBroadcast(now);
         UpdateLeaderPromotion(now);
         RestoreTargetIfDue(now);
         UpdateHealWatch(now);
@@ -880,6 +895,7 @@ public sealed class CharonPlugin : IDalamudPlugin
         _followManager.StartFollowing(leaderName);
         _config.FollowLeaderName = _followManager.LeaderName;
         SaveConfig();
+        PublishFollowState();
     }
 
     private void StopLocalFollow()
@@ -888,6 +904,45 @@ public sealed class CharonPlugin : IDalamudPlugin
         _config.FollowLeaderName = string.Empty;
         SaveConfig();
         StopFollowNavIfOurs();
+        PublishFollowState();
+    }
+
+    /// <summary>
+    /// Tell the fleet who this toon is following. Sent on every change and on a slow refresh, so a
+    /// box that loaded later still fills in — and so the display can expire anything it stops
+    /// hearing about rather than showing a stale leader forever.
+    /// </summary>
+    private void PublishFollowState()
+    {
+        var me = _objectTable.LocalPlayer?.Name.TextValue ?? string.Empty;
+        if (me.Length == 0)
+            return;
+
+        _lastFollowStateBroadcastUtc = DateTime.UtcNow;
+        _relay.Publish(RelayClient.FollowChannel,
+            FollowRelay.Serialize(_followManager.LeaderName, me, FollowRelay.ActState));
+    }
+
+    private void UpdateFollowStateBroadcast(DateTime now)
+    {
+        if (now - _lastFollowStateBroadcastUtc >= FollowStateInterval)
+            PublishFollowState();
+    }
+
+    /// <summary>
+    /// Who a fleet toon is following, for the LAN party table. Empty when it follows nobody; null
+    /// when that box has not reported recently enough to trust.
+    /// </summary>
+    private string? GetReportedFollowLeader(string characterName)
+    {
+        var me = _objectTable.LocalPlayer?.Name.TextValue ?? string.Empty;
+        if (characterName.Equals(me, StringComparison.OrdinalIgnoreCase))
+            return _followManager.LeaderName; // our own state is authoritative and immediate
+
+        if (!_followStates.TryGetValue(characterName, out var state))
+            return null;
+
+        return DateTime.UtcNow - state.SeenUtc > FollowStateStale ? null : state.Leader;
     }
 
     private void UpdatePillionSession(DateTime now)
@@ -1876,9 +1931,26 @@ public sealed class CharonPlugin : IDalamudPlugin
     private void OnFollowCommandReceived(string json)
     {
         var message = FollowRelay.Parse(json);
-        var me = _objectTable.LocalPlayer?.Name.TextValue ?? string.Empty;
-        if (message == null || me.Length == 0 || !message.Target.Equals(me, StringComparison.OrdinalIgnoreCase))
+        if (message == null)
             return;
+
+        // Recorded before the addressed-to-us check below: state frames are ABOUT their sender.
+        if (message.Act == FollowRelay.ActState)
+        {
+            _followStates[message.Target] = (message.Leader, DateTime.UtcNow);
+            return;
+        }
+
+        var me = _objectTable.LocalPlayer?.Name.TextValue ?? string.Empty;
+        if (me.Length == 0 || !message.Target.Equals(me, StringComparison.OrdinalIgnoreCase))
+            return;
+
+        // A state report is not a command — record it and stop. It describes the SENDER.
+        if (message.Act == FollowRelay.ActState)
+        {
+            _followStates[message.Target] = (message.Leader, DateTime.UtcNow);
+            return;
+        }
 
         if (message.Act == FollowRelay.ActStop)
         {
