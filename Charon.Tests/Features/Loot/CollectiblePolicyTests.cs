@@ -158,6 +158,17 @@ public sealed class CollectiblePolicyTests
     }
 
     [Fact]
+    public void OccultRecordNotes_AreListedAndCollectableAnywhere()
+    {
+        // Adjacent to the shard kind and also Occult Crescent content, but its tooltip carries no
+        // "only on the Occult Crescent" line — so it is deliberately NOT zone-gated.
+        var note = Item(1, "Notes on the Cloister Demon", "Miscellany", CollectibleKinds.OccultRecordNote);
+
+        Assert.Single(CollectiblePolicy.Unlearned([note]));
+        Assert.True(CollectiblePolicy.CanCollectHere(note, 478u));
+    }
+
+    [Fact]
     public void OrdinaryKinds_AreCollectableAnywhere()
     {
         var minion = Item(1, "Wind-up Sun", "Minion", CollectibleKinds.Minion);

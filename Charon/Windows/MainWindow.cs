@@ -419,6 +419,16 @@ public sealed class MainWindow : Window
         }
         CharonTheme.HelpMarker("Unanswered seat assignments are marked declined after this long.\nDeclined seats are never re-invited.");
 
+        var notifyFull = _config.PillionFullNotify;
+        if (ImGui.Checkbox("Notify when the mount is full##pillion", ref notifyFull))
+        {
+            _config.PillionFullNotify = notifyFull;
+            _save();
+        }
+        CharonTheme.HelpMarker("Pop a notification once every passenger seat is taken, so you know "
+                               + "the fleet is aboard without counting riders. Shows on the mount "
+                               + "owner's screen only, once per mount-up.");
+
         ImGui.Spacing();
         ImGui.Separator();
         ImGui.Spacing();

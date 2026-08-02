@@ -36,6 +36,17 @@ public static class CollectibleKinds
     public const uint OrchestrionRoll = 25183;
 
     /// <summary>
+    /// Occult Record note ("Use to add to the Occult Record"). VERIFIED: Notes on the Cloister
+    /// Demon (item 47728).
+    ///
+    /// NOT zone-gated, unlike its neighbour <see cref="PhantomJobShard"/>: the shard's tooltip
+    /// carries an explicit "Can only be used on the Occult Crescent" line and this one does not.
+    /// That difference is the evidence — if a note turns out to fail outside the zone, the fix is to
+    /// add it to <see cref="ZoneRestricted"/> rather than to assume it now.
+    /// </summary>
+    public const uint OccultRecordNote = 43141;
+
+    /// <summary>
     /// Phantom job soul shard. VERIFIED: Mystic Knight's Soul Shard (logged from a live bag).
     /// Usable ONLY in the Occult Crescent — see <see cref="ZoneRestricted"/>.
     /// </summary>
@@ -71,6 +82,7 @@ public static class CollectibleKinds
         Mount,
         EmoteOrHairstyle,
         OrchestrionRoll,
+        OccultRecordNote,
         PhantomJobShard,
     };
 
@@ -81,6 +93,7 @@ public static class CollectibleKinds
         Mount => "mount",
         EmoteOrHairstyle => "emote or hairstyle",
         OrchestrionRoll => "orchestrion roll",
+        OccultRecordNote => "occult record",
         PhantomJobShard => "phantom job",
         _ => string.Empty,
     };

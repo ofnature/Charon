@@ -192,8 +192,18 @@ public sealed unsafe class FcChestManager
     /// <summary>Entrust inventory stacks of items already seeded on the page. Returns moves queued.</summary>
     public int StartEntrust(int page)
     {
+        // The button is disabled when this gate fails, but the confirm modal can outlive it — walk
+        // away from the chest with the dialog open and Confirm would otherwise do nothing silently.
         if (Busy || !FcChestPlanner.CanExecute(IsChestOpen(), IsPageLoaded(page)))
+        {
+            LastOperation = Busy
+                ? "Entrust: another operation is still running"
+                : !IsChestOpen()
+                    ? "Entrust: the FC chest isn't open"
+                    : $"Entrust: Page {page} hasn't loaded — view that tab in the chest once";
+            OperationJustFinished = true;
             return 0;
+        }
 
         var moves = FcChestPlanner.PlanEntrust(ReadBags(), ReadPage(page));
         BeginOperation(moves, PageType(page), withdrawing: false, page);
@@ -204,7 +214,15 @@ public sealed unsafe class FcChestManager
     public int StartWithdraw(int page)
     {
         if (Busy || !FcChestPlanner.CanExecute(IsChestOpen(), IsPageLoaded(page)))
+        {
+            LastOperation = Busy
+                ? "Withdraw: another operation is still running"
+                : !IsChestOpen()
+                    ? "Withdraw: the FC chest isn't open"
+                    : $"Withdraw: Page {page} hasn't loaded — view that tab in the chest once";
+            OperationJustFinished = true;
             return 0;
+        }
 
         var moves = FcChestPlanner.PlanWithdraw(ReadPage(page));
         BeginOperation(moves, PageType(page), withdrawing: true, page);

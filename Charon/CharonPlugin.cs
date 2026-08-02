@@ -24,7 +24,7 @@ namespace Charon;
 
 public sealed class CharonPlugin : IDalamudPlugin
 {
-    public const string PluginVersion = "0.1.23";
+    public const string PluginVersion = "0.1.24";
     private const string CommandName = "/charon";
 
     /// <summary>
@@ -43,6 +43,7 @@ public sealed class CharonPlugin : IDalamudPlugin
     private readonly IAetheryteList _aetheryteList;
     private readonly ICondition _condition;
     private readonly ITargetManager _targetManager;
+    private readonly INotificationManager _notifications;
     private readonly IPluginLog _log;
 
     private readonly CharonConfig _config;
@@ -163,6 +164,9 @@ public sealed class CharonPlugin : IDalamudPlugin
     private const int MaxBoardingAttempts = 8;
     private static readonly TimeSpan BoardingRetryInterval = TimeSpan.FromSeconds(1.25);
 
+    /// <summary>Fired once per mount-up when every seat fills, so the driver knows to ride off.</summary>
+    private bool _notifiedMountFull;
+
     /// <summary>Human-readable passenger-boarding state, shown in the Debug section.</summary>
     private string _boardingStatus = "idle";
 
@@ -213,6 +217,7 @@ public sealed class CharonPlugin : IDalamudPlugin
         IDataManager dataManager,
         IAddonLifecycle addonLifecycle,
         IGameGui gameGui,
+        INotificationManager notifications,
         IPluginLog log)
     {
         _pluginInterface = pluginInterface;
@@ -224,6 +229,7 @@ public sealed class CharonPlugin : IDalamudPlugin
         _aetheryteList = aetheryteList;
         _condition = condition;
         _targetManager = targetManager;
+        _notifications = notifications;
         _log = log;
 
         _config = pluginInterface.GetPluginConfig() as CharonConfig ?? new CharonConfig();
@@ -955,6 +961,7 @@ public sealed class CharonPlugin : IDalamudPlugin
             {
                 _pillionManager.OnDismounted();
                 _previousOccupants = Array.Empty<uint>();
+                _notifiedMountFull = false;
             }
             return;
         }
@@ -963,6 +970,7 @@ public sealed class CharonPlugin : IDalamudPlugin
         {
             _pillionManager.SetCandidates(BuildCandidates());
             _pillionManager.OnMounted(snapshot.MountId, snapshot.PassengerSeats, now);
+            _notifiedMountFull = false;
             _previousOccupants = new uint[snapshot.SeatOccupantEntityIds.Length];
             _lastCandidateRefreshUtc = now;
         }
@@ -974,6 +982,39 @@ public sealed class CharonPlugin : IDalamudPlugin
         }
 
         DiffSeatOccupancy(snapshot.SeatOccupantEntityIds);
+        NotifyIfMountFull();
+    }
+
+    /// <summary>
+    /// Tell the driver when the mount is full. Fires ONCE per mount-up on the owner's box only —
+    /// they are the one who needs to know the fleet is aboard, and a repeating toast would be worse
+    /// than none. Reset on dismount and on the next mount-up.
+    /// </summary>
+    private void NotifyIfMountFull()
+    {
+        if (_notifiedMountFull || !_config.PillionFullNotify)
+            return;
+
+        var seats = _pillionManager.PassengerSeats;
+        if (seats < 1 || _pillionManager.SeatsFilled < seats)
+            return;
+
+        _notifiedMountFull = true;
+        try
+        {
+            _notifications.AddNotification(new Dalamud.Interface.ImGuiNotification.Notification
+            {
+                Title = "Mount full",
+                Content = $"All {seats} passenger seats are taken — ready to ride.",
+                Type = Dalamud.Interface.ImGuiNotification.NotificationType.Success,
+            });
+        }
+        catch (Exception ex)
+        {
+            _log.Warning(ex, "Mount-full notification failed");
+        }
+
+        _log.Info("Pillion: all {0} seats filled", seats);
     }
 
     /// <summary>Turn occupancy changes into seat events for the manager (index 0 = passenger seat 1).</summary>

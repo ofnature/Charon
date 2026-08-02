@@ -62,6 +62,12 @@ public sealed class CharonConfig : IPluginConfiguration
     /// <summary>Seconds before an unanswered seat invite is marked declined.</summary>
     public float SeatTimeout { get; set; } = 5.0f;
 
+    /// <summary>
+    /// Pop a notification on the mount owner's screen when every passenger seat is taken, so the
+    /// driver knows the fleet is aboard without counting riders.
+    /// </summary>
+    public bool PillionFullNotify { get; set; } = true;
+
     /// <summary>Only invite Daedalus LAN party members (skip the manual whitelist for pillion).</summary>
     public bool LanMembersOnly { get; set; } = true;
 

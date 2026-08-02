@@ -19,6 +19,7 @@ Existing auto-pillion tools default everyone to seat 2 and spam it when taken. C
 - **Passengers board themselves** — each client detects a trusted party member mounting a multi-seat mount nearby, deterministically computes its own seat (rank-by-name over the toons actually present, k-th toon takes the k-th free seat), and boards through the game's native Ride Pillion call. No seat collisions, works with zero messaging.
 - **Owner-commanded seats over the LAN** — with the Daedalus LAN relay running, the mount owner broadcasts authoritative seat assignments (cross-machine included); observation-based self-boarding remains the always-working fallback.
 - **Walks to the mount first** via [vnavmesh](https://github.com/awgil/ffxiv_navmesh) when out of range (optional — works without it if the toons already stand nearby).
+- **Tells you when it's full** — a notification pops on the driver's screen once every passenger seat is taken, so you can ride off without counting riders.
 - Party-gated (a game rule), configurable invite delay and seat timeout, live rider list in the window.
 
 ## Group Management
