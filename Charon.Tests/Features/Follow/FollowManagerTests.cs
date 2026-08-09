@@ -143,29 +143,74 @@ public sealed class FollowManagerTests
     public void NoteLeaderPosition_DetectsTeleportJump()
     {
         var m = Following();
-        Assert.False(m.NoteLeaderPosition(Origin));                       // first sighting
-        Assert.False(m.NoteLeaderPosition(new Vector3(5f, 0f, 0f)));      // walked
-        Assert.True(m.NoteLeaderPosition(new Vector3(500f, 0f, 0f)));     // portal
+        Assert.False(m.NoteLeaderPosition(Origin, Origin));                       // first sighting
+        Assert.False(m.NoteLeaderPosition(new Vector3(5f, 0f, 0f), Origin));      // walked
+        Assert.True(m.NoteLeaderPosition(new Vector3(500f, 0f, 0f), Origin));     // portal
+    }
+
+    // --- Vanishing: a rift across the zone leaves NO jump to measure ---
+
+    [Fact]
+    public void LeaderVanishingFromRightBesideUs_IsATransition()
+    {
+        // A Spatial Rift moves the leader clean out of the object table, so there is no second
+        // position to compare. Standing next to us one tick and not existing the next is not
+        // something walking can do. This used to be ignored, which stranded the follower.
+        var m = Following();
+        m.NoteLeaderPosition(new Vector3(3f, 0f, 0f), Origin);
+
+        Assert.True(m.NoteLeaderPosition(null, Origin));
+        Assert.Equal(new Vector3(3f, 0f, 0f), m.PortalHint);
     }
 
     [Fact]
-    public void NoteLeaderPosition_LeaderVanishing_IsNotAJump()
+    public void LeaderVanishingFarAway_IsJustRenderRange()
     {
+        // They were already leaving. Clicking whatever object happens to be out there would be a
+        // guess, and guessing at interactables is exactly what the hint exists to avoid.
         var m = Following();
-        m.NoteLeaderPosition(Origin);
-        Assert.False(m.NoteLeaderPosition(null)); // out of range ≠ teleport
+        m.NoteLeaderPosition(new Vector3(200f, 0f, 0f), Origin);
+
+        Assert.False(m.NoteLeaderPosition(null, Origin));
+        Assert.Null(m.PortalHint);
+    }
+
+    [Fact]
+    public void LeaderVanishing_FiresOnce_NotEveryTick()
+    {
+        // The hint must survive, but the transition must not re-trigger while they stay gone —
+        // otherwise the attempt counter would be meaningless.
+        var m = Following();
+        m.NoteLeaderPosition(new Vector3(2f, 0f, 0f), Origin);
+        Assert.True(m.NoteLeaderPosition(null, Origin));
+
+        Assert.False(m.NoteLeaderPosition(null, Origin));
+        Assert.False(m.NoteLeaderPosition(null, Origin));
+        Assert.NotNull(m.PortalHint);
+    }
+
+    [Fact]
+    public void LeaderNotInZone_StillHolds_WhileThePortalIsHandledByTheCaller()
+    {
+        // Evaluate itself is unchanged: no position means Hold. Taking the rift is the caller's
+        // job, driven off PortalHint — the pure layer never touches game objects.
+        var m = Following();
+        var d = m.Evaluate(null, Origin, inCombat: false, hasActiveModule: false, localBusy: false);
+
+        Assert.Equal(FollowAction.Hold, d.Action);
+        Assert.Contains("not in zone", d.Status);
     }
 
     [Fact]
     public void PortalHint_RecordsWhereLeaderStoodBeforeJumping()
     {
         var m = Following();
-        m.NoteLeaderPosition(Origin);
+        m.NoteLeaderPosition(Origin, Origin);
         var atPortal = new Vector3(10f, 0f, 0f);
-        m.NoteLeaderPosition(atPortal);          // walked to the portal
+        m.NoteLeaderPosition(atPortal, Origin);  // walked to the portal
         Assert.Null(m.PortalHint);
 
-        m.NoteLeaderPosition(new Vector3(800f, 0f, 0f)); // used it
+        m.NoteLeaderPosition(new Vector3(800f, 0f, 0f), Origin); // used it
         Assert.Equal(atPortal, m.PortalHint);    // hint = the spot they clicked from
     }
 
@@ -173,15 +218,15 @@ public sealed class FollowManagerTests
     public void PortalHint_ClearedExplicitlyAndOnSessionChange()
     {
         var m = Following();
-        m.NoteLeaderPosition(Origin);
-        m.NoteLeaderPosition(new Vector3(800f, 0f, 0f));
+        m.NoteLeaderPosition(Origin, Origin);
+        m.NoteLeaderPosition(new Vector3(800f, 0f, 0f), Origin);
         Assert.NotNull(m.PortalHint);
 
         m.ClearPortalHint();
         Assert.Null(m.PortalHint);
 
-        m.NoteLeaderPosition(Origin);
-        m.NoteLeaderPosition(new Vector3(800f, 0f, 0f));
+        m.NoteLeaderPosition(Origin, Origin);
+        m.NoteLeaderPosition(new Vector3(800f, 0f, 0f), Origin);
         m.Stop();
         Assert.Null(m.PortalHint);
     }
@@ -190,11 +235,11 @@ public sealed class FollowManagerTests
     public void NoteLeaderPosition_ResetsOnStartAndStop()
     {
         var m = Following();
-        m.NoteLeaderPosition(Origin);
+        m.NoteLeaderPosition(Origin, Origin);
         m.Stop();
         m.StartFollowing("Someone Else");
         // First sighting after a fresh session must not read as a jump.
-        Assert.False(m.NoteLeaderPosition(new Vector3(900f, 0f, 0f)));
+        Assert.False(m.NoteLeaderPosition(new Vector3(900f, 0f, 0f), Origin));
     }
 
     [Fact]

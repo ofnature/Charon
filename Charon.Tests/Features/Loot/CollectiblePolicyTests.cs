@@ -196,6 +196,17 @@ public sealed class CollectiblePolicyTests
     }
 
     [Fact]
+    public void Facewear_IsListed()
+    {
+        // The whole "The Faces We Wear" family shares one action, so recognising it covers all 53.
+        var rows = CollectiblePolicy.Unlearned([
+            Item(45006, "The Faces We Wear - Slim Frame Glasses", "Miscellany", CollectibleKinds.Facewear),
+        ]);
+
+        Assert.Single(rows);
+    }
+
+    [Fact]
     public void OrdinaryKinds_AreCollectableAnywhere()
     {
         var minion = Item(1, "Wind-up Sun", "Minion", CollectibleKinds.Minion);

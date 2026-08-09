@@ -51,6 +51,17 @@ public sealed class FollowManager
     /// </summary>
     internal const float TeleportJumpYalms = 30f;
 
+    /// <summary>
+    /// How close the leader must have been standing to US for their DISAPPEARANCE to read as a
+    /// transition rather than simply walking out of range.
+    ///
+    /// A Spatial Rift (and any portal that moves you clean across a large zone) drops the leader
+    /// out of the object table entirely, so there is no "jump" to measure — one tick they are
+    /// beside you, the next they do not exist. Someone who walked out of range was far away and
+    /// getting farther first; someone who was 5y from you and then gone did not walk anywhere.
+    /// </summary>
+    internal const float VanishNearYalms = 30f;
+
     private FollowConfig _config;
     private Vector3? _lastLeaderPos;
 
@@ -99,17 +110,36 @@ public sealed class FollowManager
     }
 
     /// <summary>
-    /// Feed the leader's position each tick. Returns true when it JUMPED — the leader took a
-    /// portal / teleport stone / lift rather than walking, so the caller should re-check
+    /// Feed the leader's position each tick. Returns true when they TRANSITIONED — took a portal,
+    /// spatial rift, teleport stone or lift rather than walking — so the caller should re-check
     /// reachability immediately instead of trusting a cached result.
+    ///
+    /// Two shapes, because a transition does not always leave the leader visible:
+    /// - they jump more than <see cref="TeleportJumpYalms"/> in one tick (short hop, same map);
+    /// - they VANISH from the object table while standing right next to us, which is what a rift
+    ///   across a large zone looks like. That case used to read as "walked out of range" and was
+    ///   ignored, so the follower stood there reporting "not in zone" forever.
     /// </summary>
-    public bool NoteLeaderPosition(Vector3? leaderPos)
+    /// <param name="selfPos">Our own position — the yardstick for whether a disappearance is credible.</param>
+    public bool NoteLeaderPosition(Vector3? leaderPos, Vector3 selfPos)
     {
         var previous = _lastLeaderPos;
         _lastLeaderPos = leaderPos;
 
-        if (previous == null || leaderPos == null)
-            return false; // first sighting or leader vanished — nothing to compare
+        if (previous == null)
+            return false; // first sighting — nothing to compare
+
+        if (leaderPos == null)
+        {
+            // Gone from the object table. Only a disappearance from CLOSE BY is a transition; from
+            // far away it is ordinary render-range loss and clicking things would be a guess.
+            // Fires once: _lastLeaderPos is now null, so the next tick takes the branch above.
+            if (Vector3.Distance(previous.Value, selfPos) > VanishNearYalms)
+                return false;
+
+            PortalHint = previous;
+            return true;
+        }
 
         if (Vector3.Distance(previous.Value, leaderPos.Value) <= TeleportJumpYalms)
             return false;

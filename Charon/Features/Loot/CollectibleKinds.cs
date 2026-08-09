@@ -57,6 +57,13 @@ public static class CollectibleKinds
     public const uint FashionAccessory = 20086;
 
     /// <summary>
+    /// Facewear — the "The Faces We Wear" glasses, goggles and eyepatches. VERIFIED across the whole
+    /// 53-item family (Slim Frame Glasses 45006, Monocles 44264, Holospecs 50455 …), every one
+    /// sharing this action with an all-zero Data: the item itself is the unlock.
+    /// </summary>
+    public const uint Facewear = 37312;
+
+    /// <summary>
     /// Occult Record note ("Use to add to the Occult Record"). VERIFIED: Notes on the Cloister
     /// Demon (item 47728).
     ///
@@ -107,6 +114,7 @@ public static class CollectibleKinds
         OrchestrionRoll,
         TripleTriadCard,
         FashionAccessory,
+        Facewear,
         OccultRecordNote,
         PhantomJobShard,
     };
@@ -120,6 +128,7 @@ public static class CollectibleKinds
         OrchestrionRoll => "orchestrion roll",
         TripleTriadCard => "triple triad card",
         FashionAccessory => "fashion accessory",
+        Facewear => "facewear",
         OccultRecordNote => "occult record",
         PhantomJobShard => "phantom job",
         _ => string.Empty,

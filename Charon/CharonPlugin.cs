@@ -24,7 +24,7 @@ namespace Charon;
 
 public sealed class CharonPlugin : IDalamudPlugin
 {
-    public const string PluginVersion = "0.1.25";
+    public const string PluginVersion = "0.1.26";
     private const string CommandName = "/charon";
 
     /// <summary>
@@ -102,6 +102,20 @@ public sealed class CharonPlugin : IDalamudPlugin
     private const int MaxPortalAttempts = 6;
     private const float PortalSearchRadius = 12f;   // how far from the leader's pre-jump spot to look
     private const float PortalInteractRange = 4.5f; // game interact range
+
+    // Announcing OUR OWN transitions so followers don't have to infer them (see FollowRelay.ActPortal).
+    private System.Numerics.Vector3? _lastSelfPos;
+    private uint _lastSelfTerritory;
+    private const float SelfJumpYalms = 30f;        // same threshold the follower's inference uses
+    private const float SelfObjectRadius = 10f;     // an interactable this close = what we used
+
+    // A leader's announced transition, as received. Authoritative, so it overrides the inferred
+    // hint — and unlike the inference it fires even when the leader is still walkable, which is
+    // the case inference can never catch.
+    private System.Numerics.Vector3? _announcedPortalPos;
+    private uint _announcedPortalDataId;
+    private DateTime _announcedPortalUtc = DateTime.MinValue;
+    private static readonly TimeSpan AnnouncedPortalLife = TimeSpan.FromSeconds(25);
 
     // Fleet leave-duty: scheduled exit (staggered) and the Debug status line.
     private DateTime? _pendingDutyLeaveUtc;
@@ -451,6 +465,7 @@ public sealed class CharonPlugin : IDalamudPlugin
         _dutyPop.Update(now);
         _trade.Update(now);
         UpdateFollowTeleport(now);
+        PublishOwnTransition(); // before the follower runs: our own jump is news for everyone else
         UpdateFleetFollow(now);
         UpdateDutyExit(now);
         UpdateAutoSprint(now);
@@ -658,9 +673,10 @@ public sealed class CharonPlugin : IDalamudPlugin
         var leader = FindPlayerByName(_followManager.LeaderName);
         System.Numerics.Vector3? leaderPos = leader?.Position;
 
-        // A big one-tick position jump = portal / teleport stone / lift, not walking. Re-verify
-        // reachability at once rather than pathing at a spot we may not be able to walk to.
-        var teleported = _followManager.NoteLeaderPosition(leaderPos);
+        // A big one-tick position jump — or vanishing from right beside us — = portal / spatial
+        // rift / lift, not walking. Re-verify reachability at once rather than pathing at a spot
+        // we may not be able to walk to.
+        var teleported = _followManager.NoteLeaderPosition(leaderPos, local.Position);
         if (teleported)
             _log.Debug("Follow: {0} jumped position (portal?) — re-checking reachability", _followManager.LeaderName);
 
@@ -682,8 +698,27 @@ public sealed class CharonPlugin : IDalamudPlugin
 
         // Leader ported somewhere we can't walk (raid arena transition): take the same portal
         // instead of stranding here. Only in exactly that state, and only near where they stood.
-        if (decision.Action == FollowAction.Hold && !_leaderReachable
-            && _config.FollowTakePortals && _followManager.PortalHint != null)
+        // Not while busy: mid-zone the object table is being torn down, and clicking then would
+        // burn attempts on the transition we already started.
+        var canTakePortal = _config.FollowTakePortals && !localBusy;
+
+        // The leader SAID they used something. That beats every inference: it needs no jump to
+        // measure, survives them leaving the object table, and fires even when they landed
+        // somewhere we could still technically walk to — the case inference cannot detect at all.
+        if (canTakePortal && HasFreshAnnouncedPortal(now))
+        {
+            if (TryTakeLeaderPortal(local.Position, _announcedPortalPos!.Value, now, _announcedPortalDataId))
+                return;
+        }
+
+        // Fallback for anything unannounced. Two ways a portal strands us and either qualifies:
+        // the leader is visible but on a disconnected navmesh island, OR they are gone from the
+        // object table entirely. The second used to be excluded — reachability reads fail-open
+        // true when there is no position to test — so a rift left the follower parked forever.
+        var strandedByPortal = !_leaderReachable || leaderPos == null;
+
+        if (decision.Action == FollowAction.Hold && strandedByPortal && canTakePortal
+            && _followManager.PortalHint != null)
         {
             if (TryTakeLeaderPortal(local.Position, _followManager.PortalHint.Value, now))
                 return; // driving toward / clicking the portal this tick
@@ -696,12 +731,93 @@ public sealed class CharonPlugin : IDalamudPlugin
     }
 
     /// <summary>
+    /// Watch our OWN position for a transition and tell the fleet where it happened. Runs on every
+    /// box, follower or not, because any toon can be somebody's leader.
+    ///
+    /// Gated on an interactable actually being there: a position jump with no EventObj beside it is
+    /// an aetheryte teleport, a duty entry or a return — none of which a follower can reproduce by
+    /// clicking something, and announcing them would just burn attempts. (Aetherytes are their own
+    /// ObjectKind, so they never match.)
+    /// </summary>
+    private void PublishOwnTransition()
+    {
+        var local = _objectTable.LocalPlayer;
+        if (local == null)
+        {
+            _lastSelfPos = null;
+            return;
+        }
+
+        var previous = _lastSelfPos;
+        var previousTerritory = _lastSelfTerritory;
+        _lastSelfPos = local.Position;
+        _lastSelfTerritory = _clientState.TerritoryType;
+
+        if (previous == null)
+            return; // first tick after login/zone — nothing to compare
+
+        var changedZone = previousTerritory != _lastSelfTerritory;
+        var jumped = System.Numerics.Vector3.Distance(previous.Value, local.Position) > SelfJumpYalms;
+        if (!changedZone && !jumped)
+            return;
+
+        // The object we used is at the spot we LEFT, which is where our followers still are.
+        var used = FindInteractableNear(previous.Value, SelfObjectRadius);
+        if (used == null)
+            return;
+
+        var me = local.Name.TextValue;
+        if (me.Length == 0)
+            return;
+
+        _relay.Publish(RelayClient.FollowChannel,
+            FollowRelay.SerializePortal(me, previous.Value.X, previous.Value.Y, previous.Value.Z, used.BaseId));
+        _log.Info("Announced transition via '{0}' (base {1}) to the fleet", used.Name.TextValue, used.BaseId);
+    }
+
+    /// <summary>
+    /// Our leader announced they used something to go somewhere. Record it as the authoritative
+    /// portal hint and reset the attempt counter — this is a NEW episode, not a continuation of
+    /// whatever we failed to click before.
+    ///
+    /// Ignored unless it came from the toon we are actually following: the relay is a LAN
+    /// broadcast, so every box hears every transition in the fleet.
+    /// </summary>
+    private void OnLeaderTransitionAnnounced(Ipc.FollowMessage message)
+    {
+        if (!_followManager.Following
+            || !message.Target.Equals(_followManager.LeaderName, StringComparison.OrdinalIgnoreCase))
+            return;
+
+        _announcedPortalPos = new System.Numerics.Vector3(message.X, message.Y, message.Z);
+        _announcedPortalDataId = message.DataId;
+        _announcedPortalUtc = DateTime.UtcNow;
+        _portalAttempts = 0;
+        _log.Info("{0} announced a transition (object {1}) — taking it", message.Target, message.DataId);
+    }
+
+    /// <summary>Is the leader's announced transition still worth acting on?</summary>
+    private bool HasFreshAnnouncedPortal(DateTime now) =>
+        _announcedPortalPos != null && now - _announcedPortalUtc < AnnouncedPortalLife;
+
+    private void ClearAnnouncedPortal()
+    {
+        _announcedPortalPos = null;
+        _announcedPortalDataId = 0;
+    }
+
+    /// <summary>
     /// Take the portal/lift the leader just used. The hint is where they STOOD before jumping —
     /// they walked to the thing and clicked it — so we look for an interactable right there
     /// rather than guessing at whatever object happens to be near us. Walks over if needed,
     /// then interacts. Returns true while it is driving this (caller skips normal follow).
     /// </summary>
-    private bool TryTakeLeaderPortal(System.Numerics.Vector3 selfPos, System.Numerics.Vector3 portalHint, DateTime now)
+    /// <param name="preferDataId">
+    /// The object the leader named, when they announced the transition. Matched first so we click
+    /// the SAME thing rather than merely something nearby; falls back to nearest if it is gone.
+    /// </param>
+    private bool TryTakeLeaderPortal(System.Numerics.Vector3 selfPos, System.Numerics.Vector3 portalHint,
+        DateTime now, uint preferDataId = 0)
     {
         if (_portalAttempts >= MaxPortalAttempts)
         {
@@ -709,7 +825,7 @@ public sealed class CharonPlugin : IDalamudPlugin
             return false;
         }
 
-        var portal = FindInteractableNear(portalHint, PortalSearchRadius);
+        var portal = FindInteractableNear(portalHint, PortalSearchRadius, preferDataId);
         if (portal == null)
         {
             _followFleetStatus = $"waiting — {_followManager.LeaderName} ported (no portal found here)";
@@ -737,14 +853,26 @@ public sealed class CharonPlugin : IDalamudPlugin
             ? $"clicked {portal.Name.TextValue} (attempt {_portalAttempts})"
             : $"portal click FAILED (attempt {_portalAttempts})";
         _log.Info("Follow portal: {0}", _followFleetStatus);
+
+        // Retire the announcement on a successful click: from here the transition either works or
+        // the inference path picks it up. Leaving it live would keep re-taking the same portal.
+        if (clicked)
+            ClearAnnouncedPortal();
+
         return true;
     }
 
-    /// <summary>Nearest targetable EventObj to a point — raid portals/lifts are EventObjs.</summary>
+    /// <summary>
+    /// Nearest targetable EventObj to a point — raid portals, rifts and lifts are all EventObjs.
+    /// When the leader named one, an exact <paramref name="preferDataId"/> match wins over a
+    /// closer object of some other kind.
+    /// </summary>
     private Dalamud.Game.ClientState.Objects.Types.IGameObject? FindInteractableNear(
-        System.Numerics.Vector3 point, float radius)
+        System.Numerics.Vector3 point, float radius, uint preferDataId = 0)
     {
         Dalamud.Game.ClientState.Objects.Types.IGameObject? best = null;
+        Dalamud.Game.ClientState.Objects.Types.IGameObject? named = null;
+        var namedDistance = radius;
         var bestDistance = radius;
 
         foreach (var obj in _objectTable)
@@ -758,9 +886,15 @@ public sealed class CharonPlugin : IDalamudPlugin
                 bestDistance = distance;
                 best = obj;
             }
+
+            if (preferDataId != 0 && obj.BaseId == preferDataId && distance < namedDistance)
+            {
+                namedDistance = distance;
+                named = obj;
+            }
         }
 
-        return best;
+        return named ?? best;
     }
 
     /// <summary>
@@ -898,6 +1032,8 @@ public sealed class CharonPlugin : IDalamudPlugin
     /// <summary>Start/stop the LOCAL follower directly (relay receive + /charon follow command).</summary>
     private void StartLocalFollow(string leaderName)
     {
+        ClearAnnouncedPortal(); // a new leader's session must not inherit the old one's portal
+        _portalAttempts = 0;
         _followManager.StartFollowing(leaderName);
         _config.FollowLeaderName = _followManager.LeaderName;
         SaveConfig();
@@ -906,6 +1042,7 @@ public sealed class CharonPlugin : IDalamudPlugin
 
     private void StopLocalFollow()
     {
+        ClearAnnouncedPortal();
         _followManager.Stop();
         _config.FollowLeaderName = string.Empty;
         SaveConfig();
@@ -1979,6 +2116,13 @@ public sealed class CharonPlugin : IDalamudPlugin
         if (message.Act == FollowRelay.ActState)
         {
             _followStates[message.Target] = (message.Leader, DateTime.UtcNow);
+            return;
+        }
+
+        // Also about its sender rather than addressed to anyone — only whoever follows them cares.
+        if (message.Act == FollowRelay.ActPortal)
+        {
+            OnLeaderTransitionAnnounced(message);
             return;
         }
 
