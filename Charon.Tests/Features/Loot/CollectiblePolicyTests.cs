@@ -135,6 +135,20 @@ public sealed class CollectiblePolicyTests
         Assert.Empty(rows);
     }
 
+    [Fact]
+    public void IndividualTriadCards_AreListed_UnlikeTheirPacks()
+    {
+        // The pair that made this worth its own test: a card registers once (3357), a pack opens
+        // into random cards (2120). Excluding packs silently excluded every card too, so an
+        // Unobtained/Unregistered card sitting in the bags reported "nothing unlearned".
+        var rows = CollectiblePolicy.Unlearned([
+            Item(46814, "Eald'narche Card", "Triple Triad Card", CollectibleKinds.TripleTriadCard),
+            Item(10130, "Gold Triad Card", "Miscellany", kind: 2120),
+        ]);
+
+        Assert.Equal("Eald'narche Card", Assert.Single(rows).Name);
+    }
+
     // --- Zone-restricted kinds: listed everywhere, collectable only where they work ---
 
     [Fact]
@@ -166,6 +180,19 @@ public sealed class CollectiblePolicyTests
 
         Assert.Single(CollectiblePolicy.Unlearned([note]));
         Assert.True(CollectiblePolicy.CanCollectHere(note, 478u));
+    }
+
+    [Fact]
+    public void FashionAccessories_AreListed()
+    {
+        // Parasols and lanterns share one kind. Some are worth millions on the market board and
+        // collecting consumes them — which is safe only because Collect is a per-item manual click.
+        var rows = CollectiblePolicy.Unlearned([
+            Item(1, "Antique Lantern", "Miscellany", CollectibleKinds.FashionAccessory),
+            Item(2, "Neon Parasol", "Miscellany", CollectibleKinds.FashionAccessory),
+        ]);
+
+        Assert.Equal(2, rows.Count);
     }
 
     [Fact]

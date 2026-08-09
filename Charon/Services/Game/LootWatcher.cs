@@ -123,7 +123,8 @@ public sealed unsafe class LootWatcher
                 gear.WorseThanEquipped,
                 gear.ItemLevelsBelowEquipped,
                 gear.IsGlamour,
-                HasWeeklyLockout: false);
+                HasWeeklyLockout: false,
+                gear.EquipBlocker);
 
             var decision = LootRollPolicy.Evaluate(item, context);
             rows.Add(new LootRollPreview(itemId, name, decision.Action, decision.Reason));
@@ -133,9 +134,11 @@ public sealed unsafe class LootWatcher
             if (_logged.Add(itemId))
             {
                 _log.Info("Loot: '{0}' (item {1}) → WOULD {2} · {3}", name, itemId, decision.Action, decision.Reason);
-                _log.Info("      collectible={0} owned={1} tradeable={2} · gear={3} canEquip={4} upgrade={5} worse={6} below={7}",
+                _log.Info("      collectible={0} owned={1} tradeable={2} · gear={3} canEquip={4}{5} upgrade={6} worse={7} below={8}",
                     isCollectible, alreadyUnlocked, tradeable,
-                    gear.IsGear, gear.CanEquip, gear.IsUpgrade, gear.WorseThanEquipped, gear.ItemLevelsBelowEquipped);
+                    gear.IsGear, gear.CanEquip,
+                    gear.EquipBlocker.Length > 0 ? $" ({gear.EquipBlocker})" : string.Empty,
+                    gear.IsUpgrade, gear.WorseThanEquipped, gear.ItemLevelsBelowEquipped);
             }
         }
 

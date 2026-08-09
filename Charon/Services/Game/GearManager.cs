@@ -10,14 +10,22 @@ using Lumina.Excel.Sheets;
 
 namespace Charon.Services.Game;
 
-/// <summary>How a prospective item (loot, not yet owned) looks against what this toon wears.</summary>
+/// <summary>
+/// How a prospective item (loot, not yet owned) looks against what this toon wears.
+///
+/// <paramref name="EquipBlocker"/> names WHICH gate refused it, and is empty when it can be worn.
+/// Four separate gates feed <paramref name="CanEquip"/> and they fail for very different reasons —
+/// a Lv100 drop on a level-90 toon is not the same as a healer necklace on a tank — so collapsing
+/// them into one "can't wear it" line makes a correct decision look like a bug.
+/// </summary>
 public sealed record LootGearAssessment(
     bool IsGear,
     bool CanEquip,
     bool IsUpgrade,
     bool WorseThanEquipped,
     int ItemLevelsBelowEquipped,
-    bool IsGlamour);
+    bool IsGlamour,
+    string EquipBlocker = "");
 
 /// <summary>One executed gear step, for the section's log.</summary>
 public sealed record GearLogEntry(string Name, string Detail);
@@ -317,6 +325,16 @@ public sealed unsafe class GearManager
             var canEquip = candidate.FitsJob && candidate.StatsFitJob && candidate.FitsRace
                            && candidate.EquipLevel <= local.Level;
 
+            // Most specific first. Level is checked LAST so a piece this job simply cannot use never
+            // reads as "needs level 100" — that would suggest waiting for something that will never
+            // become wearable.
+            var blocker =
+                canEquip ? string.Empty
+                : !candidate.FitsJob ? "not for this job"
+                : !candidate.StatsFitJob ? "not combat gear for this job"
+                : !candidate.FitsRace ? "race-locked gear"
+                : $"needs level {candidate.EquipLevel} (this job is {local.Level})";
+
             var wornId = ReadSlotItemId(InventoryType.EquippedItems, (short)(int)candidate.Slot);
             var worn = wornId == 0 ? null : BuildItem(wornId, jobId, candidate.Slot, -1, -1, race, sex);
             var wornIlvl = worn?.ItemLevel ?? 0;
@@ -326,7 +344,7 @@ public sealed unsafe class GearManager
             var worse = worn != null && candidate.ItemLevel < wornIlvl;
             var below = worn == null ? 0 : System.Math.Max(0, wornIlvl - candidate.ItemLevel);
 
-            return new LootGearAssessment(true, canEquip, isUpgrade, worse, below, glamour);
+            return new LootGearAssessment(true, canEquip, isUpgrade, worse, below, glamour, blocker);
         }
         catch (Exception ex)
         {

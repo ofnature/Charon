@@ -25,12 +25,18 @@ public sealed record LootItem(
     bool AlreadyUnlocked,
     bool IsTradeable,
     bool IsGear,
+    /// <summary>
+    /// Wearable by this toon RIGHT NOW. <see cref="EquipBlocker"/> says which gate refused when
+    /// this is false — job, stats, race or level — because the four are not interchangeable and a
+    /// single catch-all reason makes a correct Pass look wrong.
+    /// </summary>
     bool CanEquip,
     bool IsUpgradeForCurrentJob,
     bool WorseThanEquipped,
     int ItemLevelsBelowCurrent,
     bool IsGlamour,
-    bool HasWeeklyLockout);
+    bool HasWeeklyLockout,
+    string EquipBlocker = "");
 
 /// <summary>
 /// Rolling context for this character and party.
@@ -96,7 +102,8 @@ public static class LootRollPolicy
         if (item.IsGear)
         {
             if (!item.CanEquip)
-                return new RollDecision(RollAction.Pass, "this job can't wear it");
+                return new RollDecision(RollAction.Pass,
+                    item.EquipBlocker.Length > 0 ? item.EquipBlocker : "this job can't wear it");
 
             if (item.IsUpgradeForCurrentJob)
                 return new RollDecision(RollAction.Need, "upgrade for this job");

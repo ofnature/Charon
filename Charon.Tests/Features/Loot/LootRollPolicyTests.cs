@@ -8,9 +8,9 @@ public sealed class LootRollPolicyTests
         bool isCollectible = false, bool alreadyUnlocked = false, bool isTradeable = true,
         bool isGear = false, bool canEquip = true, bool isUpgrade = false,
         bool worseThanEquipped = false, int ilvlBelow = 0, bool isGlamour = false,
-        bool weeklyLockout = false) =>
+        bool weeklyLockout = false, string equipBlocker = "") =>
         new(1, "thing", isCollectible, alreadyUnlocked, isTradeable, isGear, canEquip, isUpgrade,
-            worseThanEquipped, ilvlBelow, isGlamour, weeklyLockout);
+            worseThanEquipped, ilvlBelow, isGlamour, weeklyLockout, equipBlocker);
 
     private static LootContext Context(
         bool enabled = true, bool canSell = true, bool strangers = false, int passBelowGap = 30) =>
@@ -63,6 +63,26 @@ public sealed class LootRollPolicyTests
     public void UnequippableGear_Passes()
     {
         Assert.Equal(RollAction.Pass, Roll(Item(isGear: true, canEquip: false)));
+    }
+
+    [Fact]
+    public void UnequippableGear_SaysWhichGateRefusedIt()
+    {
+        // "this job can't wear it" covers four different gates, and one of them is just being too
+        // low level — which reads as a bug on a Lv100 drop that the toon will wear eventually.
+        var d = LootRollPolicy.Evaluate(
+            Item(isGear: true, canEquip: false, equipBlocker: "needs level 100 (this job is 90)"),
+            Context());
+
+        Assert.Equal(RollAction.Pass, d.Action);
+        Assert.Equal("needs level 100 (this job is 90)", d.Reason);
+    }
+
+    [Fact]
+    public void UnequippableGear_WithNoBlockerGiven_StillExplainsItself()
+    {
+        var d = LootRollPolicy.Evaluate(Item(isGear: true, canEquip: false), Context());
+        Assert.NotEmpty(d.Reason);
     }
 
     [Fact]

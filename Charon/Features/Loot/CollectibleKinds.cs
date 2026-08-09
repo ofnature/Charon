@@ -36,6 +36,27 @@ public static class CollectibleKinds
     public const uint OrchestrionRoll = 25183;
 
     /// <summary>
+    /// One Triple Triad card — registering it to the deck. VERIFIED on two samples: Eald'narche Card
+    /// (46814) and Alpha Card (24875), both Action 3357 with the card's own id in Data[0].
+    ///
+    /// NOT the same thing as a booster PACK. The seven "* Triad Card" packs (Bronze, Silver, Gold,
+    /// Mythril, Platinum, Imperial, Dream) all share Action 2120 and are deliberately excluded — see
+    /// <see cref="Known"/>. One action per behaviour, so the two never need telling apart by name.
+    /// </summary>
+    public const uint TripleTriadCard = 3357;
+
+    /// <summary>
+    /// Fashion accessory (parasols, lanterns and the like). VERIFIED on two samples: Parasol (30269)
+    /// and Antique Lantern (52289) share this value, as do Loparasol and Neon Parasol.
+    ///
+    /// Worth knowing: some of these are genuinely VALUABLE on the market board — the Antique Lantern
+    /// runs to millions of gil — and collecting consumes the item. Collect is per-item and manual, so
+    /// nothing here is ever spent without a deliberate click, but this is the one kind where "learn
+    /// it rather than sell it" is a real decision instead of an obvious one.
+    /// </summary>
+    public const uint FashionAccessory = 20086;
+
+    /// <summary>
     /// Occult Record note ("Use to add to the Occult Record"). VERIFIED: Notes on the Cloister
     /// Demon (item 47728).
     ///
@@ -73,8 +94,10 @@ public static class CollectibleKinds
     /// Kinds Charon will offer to learn — only VERIFIED one-time unlocks. A wrong entry means
     /// consuming something that is not a collectible, so additions need evidence, not inference.
     ///
-    /// Deliberately EXCLUDED: 2120 Triad Card. Those items are booster PACKS that open into random
-    /// cards, not a one-time unlock, so "already collected" is not even the right question for them.
+    /// Deliberately EXCLUDED: 2120. Those seven items are Triple Triad booster PACKS that open into
+    /// random cards, not a one-time unlock, so "already collected" is not even the right question for
+    /// them. Individual cards are a different action entirely (<see cref="TripleTriadCard"/>) and DO
+    /// belong here — excluding 2120 was never meant to exclude cards.
     /// </summary>
     public static readonly IReadOnlySet<uint> Known = new HashSet<uint>
     {
@@ -82,6 +105,8 @@ public static class CollectibleKinds
         Mount,
         EmoteOrHairstyle,
         OrchestrionRoll,
+        TripleTriadCard,
+        FashionAccessory,
         OccultRecordNote,
         PhantomJobShard,
     };
@@ -93,6 +118,8 @@ public static class CollectibleKinds
         Mount => "mount",
         EmoteOrHairstyle => "emote or hairstyle",
         OrchestrionRoll => "orchestrion roll",
+        TripleTriadCard => "triple triad card",
+        FashionAccessory => "fashion accessory",
         OccultRecordNote => "occult record",
         PhantomJobShard => "phantom job",
         _ => string.Empty,

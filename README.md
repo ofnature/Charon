@@ -122,6 +122,7 @@ Charon works out Need / Greed / Pass for everything on the loot window and **sho
 - **Nothing to switch on and off.** The rules are written to be right in every situation: an unowned collectible is always worth Need, gear your job can't wear is always a Pass. There's no per-run state to forget.
 - **Polite by default.** Need is downgraded to Greed whenever anyone outside your fleet is in the party.
 - **Knows what a duplicate is worth.** An already-unlocked collectible is Greed on an account that can sell it and Pass on a free trial one, decided automatically.
+- **Every decision says why**, down to which gate refused a piece of gear — wrong job, wrong stats, race-locked, or simply too low a level. Four very different reasons that a single "can't wear it" line would have hidden.
 - Gear decisions share the Gear Equipper's rules, so loot and equipping can never disagree about what's wearable.
 
 ## Collect
@@ -129,8 +130,9 @@ Charon works out Need / Greed / Pass for everything on the loot window and **sho
 Quest rewards, trust runs and AutoDuty runs hand you items directly — no loot roll involved — so an unattended toon quietly accumulates unlearned minions, mounts and orchestrion rolls for weeks.
 
 - **Lists what you're holding but haven't learned**, with a Collect button on each row. Nothing is ever consumed without a click.
-- **Only real one-time unlocks are offered.** The game reports an ordinary potion as "not unlocked" exactly like a genuinely unlearned collectible, so Charon works from a verified allowlist — minions, mounts, emotes and hairstyles, orchestrion rolls, and phantom job soul shards. Anything it doesn't recognise is logged rather than offered.
-- **Duplicates never appear.** The game won't relearn something you own, so anything worth selling is left alone by construction.
+- **Only real one-time unlocks are offered.** The game reports an ordinary potion as "not unlocked" exactly like a genuinely unlearned collectible, so Charon works from a verified allowlist: minions, mounts, emotes and hairstyles, orchestrion rolls, fashion accessories, Triple Triad cards, Occult Record notes and phantom job soul shards. Anything it doesn't recognise is logged rather than offered, which is how the list grows — from observed values, never guesses.
+- **Booster packs are not cards.** The seven Triad Card packs open into random cards, so "already collected" isn't a question you can ask of one — they're excluded, while the individual cards they contain are listed.
+- **Duplicates never appear.** The game won't relearn something you own, so a spare mount stays sellable by construction. Fashion accessories are the one kind where an *unlearned* item can still be worth real gil — which is safe only because Collect is a deliberate per-item click.
 - **Phantom job shards are zone-aware** — listed anywhere so you can see you have one, but only collectable in the Occult Crescent where they actually work.
 
 ## Daedalus Integration
