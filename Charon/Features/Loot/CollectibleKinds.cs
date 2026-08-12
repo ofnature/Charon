@@ -57,6 +57,17 @@ public static class CollectibleKinds
     public const uint FashionAccessory = 20086;
 
     /// <summary>
+    /// Chocobo barding. VERIFIED across 21 samples (Voidcast 40367, Ice 9355, Hive 12083, Ruby
+    /// 29402, Hades 28616, Byakko 21924 …), all sharing this action with the barding's own id in
+    /// Data[0] — the same shape as <see cref="TripleTriadCard"/>.
+    ///
+    /// Like <see cref="FashionAccessory"/> this is a kind where an UNLEARNED one can be worth real
+    /// money (Voidcast Barding runs to half a million gil) and collecting consumes it. Manual
+    /// per-item click is what keeps that safe.
+    /// </summary>
+    public const uint ChocoboBarding = 1013;
+
+    /// <summary>
     /// Facewear — the "The Faces We Wear" glasses, goggles and eyepatches. VERIFIED across the whole
     /// 53-item family (Slim Frame Glasses 45006, Monocles 44264, Holospecs 50455 …), every one
     /// sharing this action with an all-zero Data: the item itself is the unlock.
@@ -115,6 +126,7 @@ public static class CollectibleKinds
         TripleTriadCard,
         FashionAccessory,
         Facewear,
+        ChocoboBarding,
         OccultRecordNote,
         PhantomJobShard,
     };
@@ -129,6 +141,7 @@ public static class CollectibleKinds
         TripleTriadCard => "triple triad card",
         FashionAccessory => "fashion accessory",
         Facewear => "facewear",
+        ChocoboBarding => "chocobo barding",
         OccultRecordNote => "occult record",
         PhantomJobShard => "phantom job",
         _ => string.Empty,

@@ -207,6 +207,18 @@ public sealed class CollectiblePolicyTests
     }
 
     [Fact]
+    public void ChocoboBarding_IsListed()
+    {
+        // Another kind where an unlearned one can be worth serious gil — Voidcast runs to ~500k.
+        // Listed anyway; the manual click is the safeguard, not omission from the list.
+        var rows = CollectiblePolicy.Unlearned([
+            Item(40367, "Voidcast Barding", "Other", CollectibleKinds.ChocoboBarding),
+        ]);
+
+        Assert.Single(rows);
+    }
+
+    [Fact]
     public void OrdinaryKinds_AreCollectableAnywhere()
     {
         var minion = Item(1, "Wind-up Sun", "Minion", CollectibleKinds.Minion);

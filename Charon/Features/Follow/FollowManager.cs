@@ -192,12 +192,15 @@ public sealed class FollowManager
         // While slack and not already closing, only the leash counts; once broken, close fully.
         var threshold = slack && !_closingLeash ? leash : arriveAt;
 
+        // Hold and Move MUST NOT read the same. They used to both say "following X (12.3y)", so a
+        // follower that had decided to move but wasn't actually moving was indistinguishable from
+        // one correctly standing still — which is the whole question when it stops keeping up.
         if (distance <= threshold)
         {
             _closingLeash = false;
             return new FollowDecision(FollowAction.Hold, default, slack
                 ? $"in combat — holding position, {LeaderName} within leash ({distance:F1}/{leash:F0}y)"
-                : $"following {LeaderName} ({distance:F1}y)");
+                : $"in position — {LeaderName} {distance:F1}y away");
         }
 
         if (slack)
@@ -205,7 +208,7 @@ public sealed class FollowManager
 
         return new FollowDecision(FollowAction.Move, leaderPos.Value, slack
             ? $"closing — {LeaderName} left the leash ({distance:F1}y)"
-            : $"following {LeaderName} ({distance:F1}y)");
+            : $"moving to {LeaderName} ({distance:F1}y)");
     }
 
     /// <summary>XZ-plane distance — leaders may sit above/below on ramps and mounts.</summary>

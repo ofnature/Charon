@@ -24,7 +24,7 @@ namespace Charon;
 
 public sealed class CharonPlugin : IDalamudPlugin
 {
-    public const string PluginVersion = "0.1.26";
+    public const string PluginVersion = "0.1.27";
     private const string CommandName = "/charon";
 
     /// <summary>
@@ -88,6 +88,12 @@ public sealed class CharonPlugin : IDalamudPlugin
     private bool _followNavIssued;
     private DateTime _lastFollowNavUtc = DateTime.MinValue;
     private string _followFleetStatus = "idle";
+
+    /// <summary>Where our current path was aimed, so we can tell when the leader has walked away from it.</summary>
+    private System.Numerics.Vector3? _lastFollowNavTarget;
+
+    /// <summary>Leader drift past this from the point we pathed to = re-aim, even mid-path.</summary>
+    private const float NavRetargetYalms = 5f;
 
     // Reachability cache — the navmesh query flood-fills, so it runs on a throttle rather than
     // every frame, and is forced immediately when the leader teleports (portal/lift).
@@ -936,15 +942,36 @@ public sealed class CharonPlugin : IDalamudPlugin
             return;
         }
 
-        // Re-issue as the leader moves: when our path finished/failed, throttled to 0.5s.
-        if ((!_followNavIssued || !_nav.IsPathRunning) && now - _lastFollowNavUtc > TimeSpan.FromSeconds(0.5))
+        var running = _nav.IsPathRunning;
+
+        // Re-aim on DRIFT, not only when the previous path ended. The old condition assumed every
+        // path eventually finishes; one that never does — blocked, partial, or aimed at a spot the
+        // leader left long ago — pinned the follower in place while the decision layer above kept
+        // reporting a healthy follow. That is the "just stops following and the distance grows"
+        // case, and no amount of leash or follow-distance tuning could reach it.
+        var drifted = _lastFollowNavTarget == null
+                      || System.Numerics.Vector3.Distance(_lastFollowNavTarget.Value, target) > NavRetargetYalms;
+
+        if ((!_followNavIssued || !running || drifted) && now - _lastFollowNavUtc > TimeSpan.FromSeconds(0.5))
         {
             if (_nav.MoveCloseTo(target, _config.FollowDistance))
             {
                 _followNavIssued = true;
+                _lastFollowNavTarget = target;
                 _lastFollowNavUtc = now;
             }
+            else
+            {
+                // vnav declined outright — worth saying, since the decision layer has no idea and
+                // the line would otherwise read as a perfectly healthy follow.
+                _followFleetStatus += " — vnav refused the path";
+                return;
+            }
         }
+
+        // The nav half of the story. Without it a stalled follower and a walking one print the
+        // same line, which is how this stayed invisible.
+        _followFleetStatus += running ? " [path running]" : " [path idle]";
     }
 
     private void StopFollowNavIfOurs()
@@ -953,6 +980,7 @@ public sealed class CharonPlugin : IDalamudPlugin
             return;
 
         _followNavIssued = false;
+        _lastFollowNavTarget = null;
         if (_nav.IsPathRunning)
             _nav.Stop();
     }

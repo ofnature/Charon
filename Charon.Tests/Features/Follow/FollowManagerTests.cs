@@ -48,6 +48,22 @@ public sealed class FollowManagerTests
     }
 
     [Fact]
+    public void HoldAndMove_ReadDifferently_SoAStalledFollowerIsVisible()
+    {
+        // Both used to print "following X (12.3y)". A follower that had decided to MOVE but was
+        // not actually moving then looked identical to one correctly standing still, which is the
+        // only question worth asking when it stops keeping up.
+        var m = Following();
+        var holding = m.Evaluate(Near, Origin, false, false, false);
+        var moving = m.Evaluate(Far, Origin, false, false, false);
+
+        Assert.Equal(FollowAction.Hold, holding.Action);
+        Assert.Equal(FollowAction.Move, moving.Action);
+        Assert.NotEqual(holding.Status, moving.Status);
+        Assert.Contains("moving", moving.Status);
+    }
+
+    [Fact]
     public void Deadband_PreventsTwitch_JustPastDistance()
     {
         var m = Following(Config(distance: 2.5f));
