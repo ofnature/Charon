@@ -24,7 +24,7 @@ namespace Charon;
 
 public sealed class CharonPlugin : IDalamudPlugin
 {
-    public const string PluginVersion = "0.1.27";
+    public const string PluginVersion = "0.1.28";
     private const string CommandName = "/charon";
 
     /// <summary>
@@ -67,6 +67,11 @@ public sealed class CharonPlugin : IDalamudPlugin
     private readonly CollectionScanner _collection;
     private readonly LootWatcher _lootWatcher;
     private readonly GearEquipperIpc _gearIpc;
+    private readonly JobLevelReader _jobLevels;
+    private readonly JobSwitcher _jobSwitcher;
+    private readonly GilCapSeller _gilSeller;
+    private readonly DomanDonator _doman;
+    private readonly LevelingIpc _levelingIpc;
     private readonly FollowManager _followManager;
     private readonly BossModClient _bossMod;
     private readonly InteractHelper _interact;
@@ -290,6 +295,32 @@ public sealed class CharonPlugin : IDalamudPlugin
         _followManager = new FollowManager(FollowConfig.From(_config));
         if (_config.FollowLeaderName.Length > 0)
             _followManager.StartFollowing(_config.FollowLeaderName); // resume a follow interrupted by reload
+
+        _jobLevels = new JobLevelReader(dataManager, _condition, log);
+        // The lambdas cross-reference: IPC forwards commands to the operations, the operations
+        // publish completions through IPC, and each refuses while the others run (one leveling
+        // operation at a time, per contract). All are fields resolved at CALL time — nothing can
+        // invoke an IPC gate before this constructor returns, so the null-forgiveness is sound.
+        // This block sits AFTER _nav/_interact/_followManager: those are passed BY VALUE.
+        _levelingIpc = new LevelingIpc(pluginInterface, _jobLevels, () => _config.LevelingIpcEnabled,
+            row => _jobSwitcher!.Request(row), item => _gilSeller!.Request(item),
+            () => _jobSwitcher!.Busy ? "switchJob"
+                : _gilSeller!.Busy ? "sellToCap"
+                : _doman!.Busy ? "domanDonate" : string.Empty,
+            () => _doman!.DonationAvailable,
+            log);
+        _jobSwitcher = new JobSwitcher(_objectTable, _condition,
+            () => _gilSeller!.Busy || _doman!.Busy,
+            (op, ok, detail) => _levelingIpc.PublishCompleted(op, ok, detail), log);
+        _gilSeller = new GilCapSeller(gameGui, dataManager, _objectTable, _nav, _interact,
+            () => _condition[ConditionFlag.OnFreeTrial],
+            () => _jobSwitcher.Busy || _doman!.Busy,
+            () => _followManager.Following || _boardingOwnerEntityId != 0,
+            (op, ok, detail) => _levelingIpc.PublishCompleted(op, ok, detail), log);
+        _doman = new DomanDonator(gameGui, dataManager, addonLifecycle, _condition,
+            () => _jobSwitcher.Busy || _gilSeller.Busy,
+            HasDonatedThisWeek, RecordDonatedThisWeek,
+            (op, ok, detail) => _levelingIpc.PublishCompleted(op, ok, detail), log);
         _teleportOffer = new TeleportOfferInterop(
             addonLifecycle,
             gameGui,
@@ -334,6 +365,17 @@ public sealed class CharonPlugin : IDalamudPlugin
             () => _collection.Status,
             () => _sprintStatus,
             () => _lootWatcher.Status,
+            // Reading the line IS the refresh: the reader is lazy (nothing local polls it — it
+            // exists for IPC), so without this nudge Debug would say "not read yet" forever.
+            // Cheap: 500ms cache, read-only.
+            () =>
+            {
+                _jobLevels.GetTracks();
+                return $"{_jobLevels.Status} · switch: {_jobSwitcher.Status} · sell: {_gilSeller.Status} · donate: {_doman.Status} · IPC: {_levelingIpc.Status}";
+            },
+            _gilSeller,
+            _doman,
+            () => _condition[ConditionFlag.OnFreeTrial],
             _lootWatcher,
             _collection,
             () => _partyList.Length,
@@ -388,6 +430,8 @@ public sealed class CharonPlugin : IDalamudPlugin
         _windowSystem.RemoveAllWindows();
 
         _relay.OnMessage -= OnRelayMessage;
+        _doman.Dispose();
+        _levelingIpc.Dispose();
         _gearIpc.Dispose();
         _dutyPop.Dispose();
         _revivalPrompt.Dispose();
@@ -477,6 +521,9 @@ public sealed class CharonPlugin : IDalamudPlugin
         UpdateAutoSprint(now);
         UpdateFollowStateBroadcast(now);
         UpdateLeaderPromotion(now);
+        _jobSwitcher.Update(now);
+        _gilSeller.Update(now);
+        _doman.Update(now);
         RestoreTargetIfDue(now);
         UpdateHealWatch(now);
         _groupInvites.Update(now);
@@ -2111,6 +2158,28 @@ public sealed class CharonPlugin : IDalamudPlugin
         _sprintStatus = decision.Reason;
         if (decision.Sprint)
             SprintHelper.TrySprint(_log);
+    }
+
+    /// <summary>Whether the LOCAL character already spent its Doman weekly budget.</summary>
+    private bool HasDonatedThisWeek()
+    {
+        var id = _jobLevels.LocalContentId;
+        return id != 0
+               && _config.DomanLastDonationUtc.TryGetValue(id, out var last)
+               && Features.Leveling.DonationWeek.HasDonatedThisWeek(last, DateTime.UtcNow);
+    }
+
+    /// <summary>Record the local character's weekly budget as spent. Idempotent — the passive
+    /// budget-zero observation calls this every snapshot while the window is open.</summary>
+    private void RecordDonatedThisWeek()
+    {
+        var id = _jobLevels.LocalContentId;
+        if (id == 0 || HasDonatedThisWeek())
+            return;
+
+        _config.DomanLastDonationUtc[id] = DateTime.UtcNow;
+        SaveConfig();
+        _log.Info("Doman: weekly budget recorded as spent for this character (resets Tuesday 08:00 UTC)");
     }
 
     /// <summary>Run a scheduled duty exit (checked every frame — cheap).</summary>

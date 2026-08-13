@@ -10,6 +10,7 @@ using Charon.Features.Follow;
 using Charon.Features.Gear;
 using Charon.Features.GroupManagement;
 using Charon.Features.HealWatch;
+using Charon.Features.Leveling;
 using Charon.Features.Loot;
 using Charon.Services;
 using Charon.Services.Game;
@@ -37,6 +38,8 @@ public sealed class MainWindow : Window
         Collect,
         Loot,
         TrustedList,
+        GilCapping,
+        DomanDonate,
         Debug,
     }
 
@@ -83,6 +86,10 @@ public sealed class MainWindow : Window
     private readonly Func<string> _collectStatus;
     private readonly Func<string> _sprintStatus;
     private readonly Func<string> _lootStatus;
+    private readonly Func<string> _levelingStatus;
+    private readonly GilCapSeller _gilSeller;
+    private readonly DomanDonator _doman;
+    private readonly Func<bool> _isFreeTrial;
     private readonly LootWatcher _lootWatcher;
     private readonly CollectionScanner _collection;
     private readonly Func<int> _partySize;
@@ -141,6 +148,10 @@ public sealed class MainWindow : Window
         Func<string> collectStatus,
         Func<string> sprintStatus,
         Func<string> lootStatus,
+        Func<string> levelingStatus,
+        GilCapSeller gilSeller,
+        DomanDonator domanDonator,
+        Func<bool> isFreeTrial,
         LootWatcher lootWatcher,
         CollectionScanner collection,
         Func<int> partySize,
@@ -176,6 +187,10 @@ public sealed class MainWindow : Window
         _collectStatus = collectStatus;
         _sprintStatus = sprintStatus;
         _lootStatus = lootStatus;
+        _levelingStatus = levelingStatus;
+        _gilSeller = gilSeller;
+        _doman = domanDonator;
+        _isFreeTrial = isFreeTrial;
         _lootWatcher = lootWatcher;
         _collection = collection;
         _partySize = partySize;
@@ -231,6 +246,11 @@ public sealed class MainWindow : Window
         DrawNavItem("Collect", Section.Collect, null);
         DrawNavItem("Loot", Section.Loot, _config.LootRollEnabled);
         DrawNavItem("Trusted List", Section.TrustedList, null);
+        ImGui.Spacing();
+
+        DrawCategoryHeader("GIL");
+        DrawNavItem("FT Gil Capping", Section.GilCapping, _gilSeller.Busy);
+        DrawNavItem("Doman Donate", Section.DomanDonate, _doman.Busy);
         ImGui.Spacing();
 
         DrawCategoryHeader("SYSTEM");
@@ -299,6 +319,8 @@ public sealed class MainWindow : Window
             case Section.Collect: DrawCollectSection(); break;
             case Section.Loot: DrawLootSection(); break;
             case Section.TrustedList: DrawTrustedSection(); break;
+            case Section.GilCapping: DrawGilCappingSection(); break;
+            case Section.DomanDonate: DrawDomanSection(); break;
             case Section.Debug: DrawDebugSection(); break;
         }
 
@@ -1522,6 +1544,136 @@ public sealed class MainWindow : Window
         DrawStatusLine(_collection.Status, CharonTheme.TextDisabled);
     }
 
+    // --- GIL: FT Gil Capping ---
+
+    /// <summary>
+    /// One button for the whole errand: split the exact stack, walk to the nearest gil vendor
+    /// via vnavmesh, open the shop and sell to meet-or-exceed the 300k free-trial cap.
+    /// </summary>
+    private void DrawGilCappingSection()
+    {
+        DrawPageHeader("FT Gil Capping");
+
+        var freeTrial = _isFreeTrial();
+        if (!freeTrial)
+        {
+            ImGui.TextColored(CharonTheme.StatusYellow,
+                "This account is not a free trial — no 300k cap applies here.");
+            ImGui.Spacing();
+        }
+
+        var gil = GilCapSeller.CurrentGil();
+        var headroom = GilCapSeller.FreeTrialGilCap - gil;
+        var (itemName, price) = _gilSeller.ItemInfo(_config.GilItemId);
+        var held = GilCapSeller.CountInBags(_config.GilItemId);
+        var wanted = StackSplitCalculator.QuantityToReach(headroom, price, held);
+
+        DrawStatusLine($"Gil: {gil:N0} / {GilCapSeller.FreeTrialGilCap:N0}"
+                       + (headroom > 0 ? $" — {headroom:N0} short" : " — at the cap"));
+        DrawStatusLine($"{itemName}: {held:N0} in bags · sells for {price:N0} each"
+                       + (wanted > 0 ? $" · would sell {wanted}" : ""));
+        ImGui.Spacing();
+
+        if (_gilSeller.Busy)
+        {
+            if (ImGui.Button("Stop", new Vector2(120, 26)))
+                _gilSeller.Cancel();
+        }
+        else
+        {
+            var canRun = freeTrial && headroom > 0 && held > 0;
+            if (!canRun) ImGui.BeginDisabled();
+            if (ImGui.Button($"Sell {itemName} to cap##gilsell", new Vector2(220, 26)))
+                _gilSeller.RequestTrip(_config.GilItemId);
+            if (!canRun) ImGui.EndDisabled();
+            CharonTheme.HelpMarker("Splits the exact quantity, walks to the nearest gil vendor\n"
+                                   + "(vnavmesh), opens the shop and sells — one duckbone over the\n"
+                                   + "cap rather than one short. The game just prints a chat line\n"
+                                   + "when you pass the cap; nothing needs dismissing.");
+        }
+
+        ImGui.Spacing();
+        DrawStatusLine(_gilSeller.Status, CharonTheme.TextDisabled);
+    }
+
+    // --- GIL: Doman Donate ---
+
+    private void DrawDomanSection()
+    {
+        DrawPageHeader("Doman Donate");
+
+        var snapshot = _doman.GetSnapshot();
+        var (itemName, price) = _gilSeller.ItemInfo(_config.GilItemId);
+        var held = GilCapSeller.CountInBags(_config.GilItemId);
+
+        var enclave = _doman.ReadEnclaveState();
+        if (enclave.Loaded)
+        {
+            // Live client state — the same source as Timers, readable anywhere, no trip needed.
+            DrawStatusLine(enclave.AcceptingDonations
+                ? $"Game state: accepting — {enclave.BudgetRemaining:N0} budget left, rate {enclave.RatePercent}%"
+                : "Game state: not accepting donations (spent this week, or Doman not unlocked)",
+                enclave.AcceptingDonations ? CharonTheme.StatusGreen : CharonTheme.TextSecondary);
+        }
+        else if (_doman.DonatedThisWeek)
+        {
+            ImGui.TextColored(CharonTheme.StatusGreen,
+                "This week's budget is spent — resets Tuesday 08:00 UTC. No trip needed.");
+        }
+        else
+        {
+            if (ImGui.SmallButton("Mark this week spent##doman"))
+                _doman.MarkWeekSpent();
+            CharonTheme.HelpMarker("For a donation made without Charon: a spent basket refuses to\n"
+                                   + "even open, so it can't be detected — tell it here instead.\n"
+                                   + "Clears itself at the Tuesday reset.\n"
+                                   + "(Only shown when the game's own Doman state isn't readable.)");
+        }
+
+        if (!snapshot.Open)
+        {
+            DrawStatusLine("Stand at the Doman Enclave donation basket and open it — the window is the session.");
+        }
+        else
+        {
+            var gratuity = DonationWindowParser.UnitGratuity(price, snapshot.RatePercent);
+            var target = DonationWindowParser.TargetQuantity(
+                snapshot.BudgetRemaining, price, snapshot.RatePercent, held);
+            DrawStatusLine($"Weekly budget remaining: {snapshot.BudgetRemaining:N0} · rate {snapshot.RatePercent}%");
+            DrawStatusLine($"{itemName}: {held:N0} in bags · {gratuity:N0} budget each"
+                           + (target > 0 ? $" · would donate {target}" : " · nothing to donate"));
+        }
+
+        ImGui.Spacing();
+
+        if (_doman.Busy)
+        {
+            if (ImGui.Button("Stop##doman", new Vector2(120, 26)))
+                _doman.Cancel();
+        }
+        else
+        {
+            var canAct = snapshot.Open && held > 0;
+            if (!canAct) ImGui.BeginDisabled();
+            if (ImGui.Button("1. Prepare stack##doman", new Vector2(160, 26)))
+                _doman.RequestPrepare(_config.GilItemId);
+            ImGui.SameLine();
+            if (ImGui.Button("2. Stage into basket##doman", new Vector2(180, 26)))
+                _doman.RequestStage(_config.GilItemId);
+            if (!canAct) ImGui.EndDisabled();
+        }
+
+        CharonTheme.HelpMarker("Prepare reads the budget and rate, closes the window (the game\n"
+                               + "blocks splits while it is open) and splits the exact stack.\n"
+                               + "Reopen the basket, then Stage runs the rest: donates the stack\n"
+                               + "into the list, presses Donate, ticks Confirm on the budget\n"
+                               + "dialog and answers Yes. Target overshoots the weekly budget by\n"
+                               + "the smallest possible margin — over, never short.");
+
+        ImGui.Spacing();
+        DrawStatusLine(_doman.Status, CharonTheme.TextDisabled);
+    }
+
     // --- Trusted Characters ---
 
     private void DrawTrustedSection()
@@ -1685,6 +1837,7 @@ public sealed class MainWindow : Window
         DrawStatusLine($"Collect: {_collectStatus()}");
         DrawStatusLine($"Sprint: {_sprintStatus()}");
         DrawStatusLine($"Loot: {_lootStatus()}");
+        DrawStatusLine($"Leveling: {_levelingStatus()}");
         DrawStatusLine($"Fleet duty exit: {ScrambleIn(_dutyExitStatus())}");
         if (_inviteManager.AcceptPending)
             DrawStatusLine("Invite accept pending (delay running)", CharonTheme.StatusYellow);

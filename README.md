@@ -4,7 +4,7 @@
 
 # Charon
 
-**The ferryman for your fleet.** A Dalamud plugin for FFXIV, companion to [Daedalus](https://github.com/ofnature/Daedalus) — party assembly, auto pillion with smart seat scanning, whitelisted auto group invite, follow teleport, fleet follow, duty-pop and trade automation, a heal-watch babysitter for leveling alts, automatic gear upgrades, fleet-leader commands, collectible sweeping, and FC chest management.
+**The ferryman for your fleet.** A Dalamud plugin for FFXIV, companion to [Daedalus](https://github.com/ofnature/Daedalus) — party assembly, auto pillion with smart seat scanning, whitelisted auto group invite, follow teleport, fleet follow, duty-pop and trade automation, a heal-watch babysitter for leveling alts, automatic gear upgrades, fleet-leader commands, collectible sweeping, FC chest management, gil-cap selling and Doman Enclave donations.
 
 Built for multibox setups: invite the fleet, group up, mount up, teleport out, follow you around, keep the bots alive, and manage the FC chest — without touching seven other keyboards.
 
@@ -135,6 +135,18 @@ Quest rewards, trust runs and AutoDuty runs hand you items directly — no loot 
 - **Booster packs are not cards.** The seven Triad Card packs open into random cards, so "already collected" isn't a question you can ask of one — they're excluded, while the individual cards they contain are listed.
 - **Duplicates never appear.** The game won't relearn something you own, so a spare mount stays sellable by construction. Fashion accessories and chocobo barding are the kinds where an *unlearned* item can still be worth real gil — which is safe only because Collect is a deliberate per-item click.
 - **Phantom job shards are zone-aware** — listed anywhere so you can see you have one, but only collectable in the Occult Crescent where they actually work.
+
+## Gil Tools
+
+Two money errands for unattended toons, under the GIL section:
+
+- **FT Gil Capping** — free trial accounts cap at 300,000 gil, so a stockpile of GC-bought Duck Bones is how a bot stays solvent. One button splits the exact quantity needed (one bone *over* the cap rather than one short — passing it just prints a chat line), walks to the nearest gil vendor via vnavmesh, opens the shop and sells. Vendors are found by data — any NPC carrying a gil-shop handler — not from a hand-kept list.
+- **Doman Donate** — the Enclave's donation basket pays a gratuity (vendor value × rate) up to a weekly budget that varies by reconstruction stage, and **anything over the budget is eaten**. Charon reads the live budget and rate, splits exactly enough to meet it by the smallest possible margin, stages the stack, presses Donate and answers the confirmation. It refuses to stage any stack larger than the target — that rail exists because a stale number once donated a 999-pile for a fraction of its value.
+- **Knows when you're done for the week.** The client's own Doman state (the same source as the Timers window) says whether this character can still donate — readable anywhere, no trip to find an empty basket. Resets Tuesday.
+
+## Leveling Support (IPC)
+
+Groundwork for SealBreaker's leveling mode: `Charon.Leveling.*` gates expose every combat job's level and unlock state (one entry per exp *track* — a class and its job share one), each carrying its own blocker ("below 15 — run class hunts", "run the class quest", "needs Endwalker — not available on this account") so a round-robin leveler always knows *why* a job was skipped. Plus job switching via gearsets with a verified completion event, and the gil commands above. The account's level cap is derived live from its expansion ceiling, so a free trial reads 80 today and follows automatically if the trial ever grows.
 
 ## Daedalus Integration
 
