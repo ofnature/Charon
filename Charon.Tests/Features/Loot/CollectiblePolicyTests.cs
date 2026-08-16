@@ -218,6 +218,17 @@ public sealed class CollectiblePolicyTests
         Assert.Single(rows);
     }
 
+    [Fact]
+    public void MasterRecipeBooks_AreListed_AndSafeToAutoCollect()
+    {
+        // Untradeable and worthless unlearned — the opposite of a lantern — so auto-collect may
+        // open them. Every scrip book a toon bought and never read shows up here.
+        var book = Item(35625, "Master Culinarian IX", "Other", CollectibleKinds.MasterRecipeBook);
+
+        Assert.Single(CollectiblePolicy.Unlearned([book]));
+        Assert.NotNull(CollectiblePolicy.NextAutoCollect([book], territoryId: 478u));
+    }
+
     // --- Auto-collect: safe kinds only, never the sellable ones ---
 
     [Fact]

@@ -68,6 +68,14 @@ public static class CollectibleKinds
     public const uint ChocoboBarding = 1013;
 
     /// <summary>
+    /// Master recipe book ("Master Culinarian IX", "Master Blacksmith V" …). VERIFIED across 18
+    /// samples in two crafts, every one Action 2136 with the SecretRecipeBook id in Data[0]. A
+    /// genuine one-time unlock, untradeable, and worth nothing unlearned — safe to auto-collect.
+    /// Sits unlearned in bags on any toon that bought scrip books it never opened.
+    /// </summary>
+    public const uint MasterRecipeBook = 2136;
+
+    /// <summary>
     /// Facewear — the "The Faces We Wear" glasses, goggles and eyepatches. VERIFIED across the whole
     /// 53-item family (Slim Frame Glasses 45006, Monocles 44264, Holospecs 50455 …), every one
     /// sharing this action with an all-zero Data: the item itself is the unlock.
@@ -139,6 +147,7 @@ public static class CollectibleKinds
         FashionAccessory,
         Facewear,
         ChocoboBarding,
+        MasterRecipeBook,
         OccultRecordNote,
         PhantomJobShard,
     };
@@ -154,6 +163,7 @@ public static class CollectibleKinds
         FashionAccessory => "fashion accessory",
         Facewear => "facewear",
         ChocoboBarding => "chocobo barding",
+        MasterRecipeBook => "master recipe book",
         OccultRecordNote => "occult record",
         PhantomJobShard => "phantom job",
         _ => string.Empty,

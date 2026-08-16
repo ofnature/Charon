@@ -155,6 +155,15 @@ public sealed unsafe class CollectionScanner
             return;
         }
 
+        // Talking to a merchant, in a cutscene, mid-teleport — anything the game counts as
+        // occupied. Using an item then either bounces or lands in a state we cannot verify, so
+        // wait it out the same way combat is waited out (user-observed at a vendor).
+        if (IsOccupied())
+        {
+            AutoStatus = "waiting — occupied (vendor/cutscene/zoning)";
+            return;
+        }
+
         if (now - _lastAutoCollectUtc < AutoCollectPacing)
             return;
 
@@ -185,6 +194,21 @@ public sealed unsafe class CollectionScanner
 
     /// <summary>Forget the session's refusals so Refresh gives auto-collect another go.</summary>
     public void ResetAutoRefusals() => _autoRefused.Clear();
+
+    private bool IsOccupied() =>
+        _condition[ConditionFlag.Occupied]
+        || _condition[ConditionFlag.OccupiedInEvent]
+        || _condition[ConditionFlag.OccupiedInQuestEvent]
+        || _condition[ConditionFlag.OccupiedSummoningBell]
+        || _condition[ConditionFlag.Occupied30]
+        || _condition[ConditionFlag.Occupied33]
+        || _condition[ConditionFlag.Occupied38]
+        || _condition[ConditionFlag.Occupied39]
+        || _condition[ConditionFlag.BetweenAreas]
+        || _condition[ConditionFlag.OccupiedInCutSceneEvent]
+        || _condition[ConditionFlag.WatchingCutscene]
+        || _condition[ConditionFlag.Casting]
+        || _condition[ConditionFlag.Mounted];
 
     /// <summary>
     /// Whether this item can be used where we are standing. Phantom job shards only work in the
