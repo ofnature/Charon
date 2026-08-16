@@ -50,6 +50,17 @@ public static class CollectiblePolicy
             .ToList();
 
     /// <summary>
+    /// The next item the auto-collect toggle should consume, or null. Only kinds that are safe
+    /// to learn unprompted (see <see cref="CollectibleKinds.ManualOnly"/>) and usable HERE —
+    /// a shard outside the Occult Crescent is skipped, not blocked on. Deterministic order (the
+    /// display order), so the same bags always yield the same next pick.
+    /// </summary>
+    public static CollectibleItem? NextAutoCollect(IEnumerable<CollectibleItem> bagItems, uint territoryId) =>
+        Unlearned(bagItems).FirstOrDefault(i =>
+            CollectibleKinds.IsAutoCollectSafe(i.ActionKind)
+            && CollectibleKinds.CanCollectHere(i.ActionKind, territoryId));
+
+    /// <summary>
     /// Whether this item can actually be collected in the given territory. Zone-restricted kinds
     /// (phantom job shards) are still LISTED elsewhere so you can see you are holding one — only the
     /// button is withheld, because a button that fails everywhere but one map is worse than none.

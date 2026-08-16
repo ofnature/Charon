@@ -218,6 +218,72 @@ public sealed class CollectiblePolicyTests
         Assert.Single(rows);
     }
 
+    // --- Auto-collect: safe kinds only, never the sellable ones ---
+
+    [Fact]
+    public void AutoCollect_PicksTheFirstSafeItem_InDisplayOrder()
+    {
+        var next = CollectiblePolicy.NextAutoCollect([
+            Item(3, "Zeta", "Minion", CollectibleKinds.Minion),
+            Item(2, "Beta", "Minion", CollectibleKinds.Minion),
+        ], territoryId: 478u);
+
+        Assert.Equal("Beta", next!.Name); // deterministic: same bags → same next pick
+    }
+
+    [Fact]
+    public void AutoCollect_NeverTouchesTheSellableKinds()
+    {
+        // The whole reason the toggle is safe: an unlearned Antique Lantern is ~1.8M gil and
+        // collecting eats it. Fashion accessories and barding stay a deliberate click.
+        var next = CollectiblePolicy.NextAutoCollect([
+            Item(1, "Antique Lantern", "Miscellany", CollectibleKinds.FashionAccessory),
+            Item(2, "Voidcast Barding", "Other", CollectibleKinds.ChocoboBarding),
+        ], territoryId: 478u);
+
+        Assert.Null(next);
+    }
+
+    [Fact]
+    public void AutoCollect_SkipsAZoneLockedItem_RatherThanBlockingOnIt()
+    {
+        // A shard outside the Occult Crescent is not collectable here; the minion behind it is.
+        var next = CollectiblePolicy.NextAutoCollect([
+            Item(1, "Mystic Knight's Soul Shard", "Miscellany", CollectibleKinds.PhantomJobShard),
+            Item(2, "Wind-up Sun", "Minion", CollectibleKinds.Minion),
+        ], territoryId: 478u);
+
+        Assert.Equal("Wind-up Sun", next!.Name);
+    }
+
+    [Fact]
+    public void AutoCollect_TakesTheShard_InsideTheOccultCrescent()
+    {
+        var shard = Item(1, "Mystic Knight's Soul Shard", "Miscellany", CollectibleKinds.PhantomJobShard);
+        Assert.NotNull(CollectiblePolicy.NextAutoCollect([shard], territoryId: 1252u));
+    }
+
+    [Fact]
+    public void AutoCollect_IgnoresAlreadyUnlockedAndUnknownKinds()
+    {
+        var next = CollectiblePolicy.NextAutoCollect([
+            Item(1, "Owned Mount", "Mount", CollectibleKinds.Mount, unlocked: true),
+            Item(2, "Potion", "Medicine", kind: 99),
+        ], territoryId: 478u);
+
+        Assert.Null(next);
+    }
+
+    [Fact]
+    public void ManualOnly_IsExactlyTheTwoSellableKinds()
+    {
+        Assert.False(CollectibleKinds.IsAutoCollectSafe(CollectibleKinds.FashionAccessory));
+        Assert.False(CollectibleKinds.IsAutoCollectSafe(CollectibleKinds.ChocoboBarding));
+        Assert.True(CollectibleKinds.IsAutoCollectSafe(CollectibleKinds.Minion));
+        Assert.True(CollectibleKinds.IsAutoCollectSafe(CollectibleKinds.TripleTriadCard));
+        Assert.True(CollectibleKinds.IsAutoCollectSafe(CollectibleKinds.Facewear));
+    }
+
     [Fact]
     public void OrdinaryKinds_AreCollectableAnywhere()
     {

@@ -152,6 +152,14 @@ public sealed class CharonConfig : IPluginConfiguration
     /// <summary>Pass on gear more than this many item levels below what this job wears.</summary>
     public int LootPassBelowIlvlGap { get; set; } = 30;
 
+    /// <summary>
+    /// Learn unlearned collectibles in the bags automatically (out of combat, one per 1.5s).
+    /// NEVER the sellable kinds — fashion accessories and chocobo barding stay a manual click,
+    /// because an unlearned one can be worth millions and collecting consumes it. Off by default:
+    /// consuming items unprompted is opt-in.
+    /// </summary>
+    public bool AutoCollectEnabled { get; set; } = false;
+
     // Fleet Leader
     /// <summary>
     /// Character designated as fleet leader — the only toon whose fleet commands (currently Leave

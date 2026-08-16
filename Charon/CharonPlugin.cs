@@ -24,7 +24,7 @@ namespace Charon;
 
 public sealed class CharonPlugin : IDalamudPlugin
 {
-    public const string PluginVersion = "0.1.28";
+    public const string PluginVersion = "0.1.29";
     private const string CommandName = "/charon";
 
     /// <summary>
@@ -362,7 +362,7 @@ public sealed class CharonPlugin : IDalamudPlugin
             () => $"{_gear.Status} · IPC: {_gearIpc.Status}",
             () => $"{_dutyExitStatus} · lead: {_promoteStatus}",
             DescribeAccount,
-            () => _collection.Status,
+            () => $"{_collection.Status} · auto: {_collection.AutoStatus}",
             () => _sprintStatus,
             () => _lootWatcher.Status,
             // Reading the line IS the refresh: the reader is lazy (nothing local polls it — it
@@ -524,6 +524,7 @@ public sealed class CharonPlugin : IDalamudPlugin
         _jobSwitcher.Update(now);
         _gilSeller.Update(now);
         _doman.Update(now);
+        _collection.UpdateAutoCollect(now, _config.AutoCollectEnabled);
         RestoreTargetIfDue(now);
         UpdateHealWatch(now);
         _groupInvites.Update(now);

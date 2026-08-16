@@ -1506,6 +1506,23 @@ public sealed class MainWindow : Window
                                + "hairstyles you don't own yet. Duplicates never appear — the game "
                                + "won't relearn one, so anything worth selling stays untouched.");
 
+        var auto = _config.AutoCollectEnabled;
+        if (ImGui.Checkbox("Auto-collect", ref auto))
+        {
+            _config.AutoCollectEnabled = auto;
+            _save();
+        }
+        CharonTheme.HelpMarker("Learns these on its own — out of combat, one every 1.5s.\n"
+                               + "NEVER fashion accessories or chocobo barding: an unlearned one can\n"
+                               + "be worth millions and collecting consumes it, so those two kinds\n"
+                               + "always keep the manual button. Anything the game refuses is\n"
+                               + "skipped for the session (Refresh retries).");
+        if (auto)
+        {
+            ImGui.SameLine();
+            ImGui.TextColored(CharonTheme.TextDisabled, _collection.AutoStatus);
+        }
+
         if (rows.Count > 0 && ImGui.BeginTable("collectRows", 3,
                 ImGuiTableFlags.BordersInnerV | ImGuiTableFlags.RowBg | ImGuiTableFlags.SizingFixedFit
                 | ImGuiTableFlags.ScrollY, new Vector2(0, 220)))
@@ -1524,12 +1541,15 @@ public sealed class MainWindow : Window
                 ImGui.TextColored(CharonTheme.TextSecondary, row.Category);
                 ImGui.TableNextColumn();
                 var here = _collection.CanCollectHere(row);
+                var manualOnly = !Charon.Features.Loot.CollectibleKinds.IsAutoCollectSafe(row.ActionKind);
                 if (!here) ImGui.BeginDisabled();
                 if (ImGui.SmallButton($"Collect##collect{row.Container}_{row.Slot}") && here)
                     _collection.TryCollect(row.ItemId, row.ActionKind, highQuality: false);
                 if (!here) ImGui.EndDisabled();
                 if (!here && ImGui.IsItemHovered())
                     ImGui.SetTooltip("Only usable in the Occult Crescent (South Horn or North Horn)");
+                else if (manualOnly && ImGui.IsItemHovered())
+                    ImGui.SetTooltip("Manual only — this kind can be worth real gil unlearned,\nand collecting consumes it. Auto-collect never touches it.");
             }
 
             ImGui.EndTable();
@@ -1537,7 +1557,10 @@ public sealed class MainWindow : Window
 
         ImGui.Spacing();
         if (ImGui.Button("Refresh"))
+        {
             _collection.Invalidate();
+            _collection.ResetAutoRefusals();
+        }
         CharonTheme.HelpMarker("The list refreshes on its own every second — this is only for impatience.");
 
         ImGui.Spacing();

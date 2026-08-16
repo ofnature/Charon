@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using Dalamud.Game.ClientState.Conditions;
 using Dalamud.Plugin.Services;
 using Charon.Features.Loot;
@@ -117,6 +118,73 @@ public sealed unsafe class CollectionScanner
 
     /// <summary>Drop the cache (an item was just learned, or the user asked for a refresh).</summary>
     public void Invalidate() => _cache = null;
+
+    // --- Auto-collect: the toggle, driven from the framework tick ---
+
+    /// <summary>One use per this interval — the item has to actually leave the bags before the
+    /// next pick, and using items back-to-back competes with the game's own item lock.</summary>
+    private static readonly TimeSpan AutoCollectPacing = TimeSpan.FromSeconds(1.5);
+
+    private DateTime _lastAutoCollectUtc = DateTime.MinValue;
+
+    /// <summary>
+    /// Items the game refused (UseAction returned false) — skipped for the session so a single
+    /// stubborn item can never pin the loop. Cleared on Refresh so a retry is one click away.
+    /// </summary>
+    private readonly HashSet<uint> _autoRefused = new();
+
+    /// <summary>What auto-collect did last, or why it is idle — for the Collect and Debug lines.</summary>
+    public string AutoStatus { get; private set; } = "off";
+
+    /// <summary>
+    /// Learn the next safe collectible unprompted. Out of combat only (the item queue belongs to
+    /// the rotation there); never touches the manual-only kinds — an unlearned Antique Lantern
+    /// is worth ~1.8M and collecting consumes it, so that stays a deliberate click.
+    /// </summary>
+    public void UpdateAutoCollect(DateTime now, bool enabled)
+    {
+        if (!enabled)
+        {
+            AutoStatus = "off";
+            return;
+        }
+
+        if (_condition[ConditionFlag.InCombat])
+        {
+            AutoStatus = "waiting — in combat";
+            return;
+        }
+
+        if (now - _lastAutoCollectUtc < AutoCollectPacing)
+            return;
+
+        var next = CollectiblePolicy.NextAutoCollect(
+            GetUnlearned().Where(i => !_autoRefused.Contains(i.ItemId)), _clientState.TerritoryType);
+        if (next == null)
+        {
+            var manualLeft = GetUnlearned().Count(i => !CollectibleKinds.IsAutoCollectSafe(i.ActionKind));
+            AutoStatus = manualLeft > 0
+                ? $"idle — {manualLeft} left for manual Collect (sellable kinds)"
+                : "idle — nothing safe to collect";
+            return;
+        }
+
+        _lastAutoCollectUtc = now;
+        var kind = CollectibleKinds.Describe(next.ActionKind);
+        if (TryCollect(next.ItemId, next.ActionKind, highQuality: false))
+        {
+            AutoStatus = $"collected '{next.Name}' ({kind})";
+            _log.Info("Auto-collect: '{0}' ({1}, item {2})", next.Name, kind, next.ItemId);
+        }
+        else
+        {
+            _autoRefused.Add(next.ItemId);
+            AutoStatus = $"'{next.Name}' refused — skipped for this session";
+        }
+    }
+
+    /// <summary>Forget the session's refusals so Refresh gives auto-collect another go.</summary>
+    public void ResetAutoRefusals() => _autoRefused.Clear();
 
     /// <summary>
     /// Whether this item can be used where we are standing. Phantom job shards only work in the

@@ -109,6 +109,18 @@ public static class CollectibleKinds
         actionKind != PhantomJobShard || OccultCrescentTerritories.Contains(territoryId);
 
     /// <summary>
+    /// Kinds where an UNLEARNED item can still be worth real gil on the market board and
+    /// collecting consumes it — an Antique Lantern runs ~1.8M, a Voidcast Barding ~500k. For every
+    /// other kind "learn it" is obviously right (the alternative is worthless or untradeable); for
+    /// these two it is a genuine either/or, so the auto-collect toggle NEVER touches them. They
+    /// keep the manual per-item click as the safeguard.
+    /// </summary>
+    public static readonly IReadOnlySet<uint> ManualOnly = new HashSet<uint> { FashionAccessory, ChocoboBarding };
+
+    /// <summary>Whether the auto-collect toggle may consume this kind unprompted.</summary>
+    public static bool IsAutoCollectSafe(uint actionKind) => !ManualOnly.Contains(actionKind);
+
+    /// <summary>
     /// Kinds Charon will offer to learn — only VERIFIED one-time unlocks. A wrong entry means
     /// consuming something that is not a collectible, so additions need evidence, not inference.
     ///
