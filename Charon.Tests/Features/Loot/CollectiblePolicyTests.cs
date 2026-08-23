@@ -229,6 +229,16 @@ public sealed class CollectiblePolicyTests
         Assert.NotNull(CollectiblePolicy.NextAutoCollect([book], territoryId: 478u));
     }
 
+    [Fact]
+    public void FolkloreTomes_AreListed_AndSafeToAutoCollect()
+    {
+        // MIN/BTN/FSH legendary-node tomes: unique, untradeable, nothing to sell — open them.
+        var tome = Item(43880, "Tome of Geological Folklore - Alexandria", "Other", CollectibleKinds.FolkloreTome);
+
+        Assert.Single(CollectiblePolicy.Unlearned([tome]));
+        Assert.NotNull(CollectiblePolicy.NextAutoCollect([tome], territoryId: 478u));
+    }
+
     // --- Auto-collect: safe kinds only, never the sellable ones ---
 
     [Fact]

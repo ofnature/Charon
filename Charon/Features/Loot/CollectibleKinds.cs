@@ -76,6 +76,14 @@ public static class CollectibleKinds
     public const uint MasterRecipeBook = 2136;
 
     /// <summary>
+    /// Gathering folklore tome ("Tome of Geological Folklore - Alexandria" and kin, for MIN/BTN/
+    /// FSH). VERIFIED across 27 tomes in all three crafts, every one Action 4107 with the folklore
+    /// id in Data[0]; the three "Regional Folklore Trader's Token" items have NO ItemAction and
+    /// never enter the table. Unique, untradeable, worthless unlearned — auto-collect-safe.
+    /// </summary>
+    public const uint FolkloreTome = 4107;
+
+    /// <summary>
     /// Facewear — the "The Faces We Wear" glasses, goggles and eyepatches. VERIFIED across the whole
     /// 53-item family (Slim Frame Glasses 45006, Monocles 44264, Holospecs 50455 …), every one
     /// sharing this action with an all-zero Data: the item itself is the unlock.
@@ -148,6 +156,7 @@ public static class CollectibleKinds
         Facewear,
         ChocoboBarding,
         MasterRecipeBook,
+        FolkloreTome,
         OccultRecordNote,
         PhantomJobShard,
     };
@@ -164,6 +173,7 @@ public static class CollectibleKinds
         Facewear => "facewear",
         ChocoboBarding => "chocobo barding",
         MasterRecipeBook => "master recipe book",
+        FolkloreTome => "folklore tome",
         OccultRecordNote => "occult record",
         PhantomJobShard => "phantom job",
         _ => string.Empty,
