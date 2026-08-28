@@ -490,7 +490,7 @@ public sealed unsafe class DomanDonator : IDisposable
             return; // clicked next tick at the earliest — the menu needs a frame to build
         }
 
-        switch (InventoryContextMenu.TryClickEntry(_dataManager, textRow))
+        switch (InventoryContextMenu.TryClickEntry(_dataManager, textRow, _log))
         {
             case InventoryContextMenu.ClickResult.Clicked:
                 EnterPhase(onClicked);

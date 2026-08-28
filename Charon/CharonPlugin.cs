@@ -24,7 +24,7 @@ namespace Charon;
 
 public sealed class CharonPlugin : IDalamudPlugin
 {
-    public const string PluginVersion = "0.1.31";
+    public const string PluginVersion = "0.1.32";
     private const string CommandName = "/charon";
 
     /// <summary>
@@ -71,6 +71,10 @@ public sealed class CharonPlugin : IDalamudPlugin
     private readonly JobSwitcher _jobSwitcher;
     private readonly GilCapSeller _gilSeller;
     private readonly DomanDonator _doman;
+    private readonly ChestOpener _chests;
+    private readonly SaddlebagOverlay _saddlebagOverlay;
+    private readonly QteSolver _qte;
+    private readonly SaddlebagEntruster _saddlebag;
     private readonly LevelingIpc _levelingIpc;
     private readonly FollowManager _followManager;
     private readonly BossModClient _bossMod;
@@ -242,6 +246,7 @@ public sealed class CharonPlugin : IDalamudPlugin
         IDataManager dataManager,
         IAddonLifecycle addonLifecycle,
         IGameGui gameGui,
+        IGameConfig gameConfig,
         INotificationManager notifications,
         IPluginLog log)
     {
@@ -310,17 +315,23 @@ public sealed class CharonPlugin : IDalamudPlugin
             () => _doman!.DonationAvailable,
             log);
         _jobSwitcher = new JobSwitcher(_objectTable, _condition,
-            () => _gilSeller!.Busy || _doman!.Busy,
+            () => _gilSeller!.Busy || _doman!.Busy || _saddlebag!.Busy,
             (op, ok, detail) => _levelingIpc.PublishCompleted(op, ok, detail), log);
         _gilSeller = new GilCapSeller(gameGui, dataManager, _objectTable, _nav, _interact,
             () => _condition[ConditionFlag.OnFreeTrial],
-            () => _jobSwitcher.Busy || _doman!.Busy,
+            () => _jobSwitcher.Busy || _doman!.Busy || _saddlebag!.Busy,
             () => _followManager.Following || _boardingOwnerEntityId != 0,
             (op, ok, detail) => _levelingIpc.PublishCompleted(op, ok, detail), log);
         _doman = new DomanDonator(gameGui, dataManager, addonLifecycle, _condition,
-            () => _jobSwitcher.Busy || _gilSeller.Busy,
+            () => _jobSwitcher.Busy || _gilSeller.Busy || _saddlebag!.Busy,
             HasDonatedThisWeek, RecordDonatedThisWeek,
             (op, ok, detail) => _levelingIpc.PublishCompleted(op, ok, detail), log);
+        _chests = new ChestOpener(_objectTable, _condition, dataManager, _interact,
+            () => _config.AutoOpenChestsEnabled, log);
+        _qte = new QteSolver(gameGui, gameConfig, () => _config.AutoQteEnabled, log);
+        // Shares the context-menu machinery with the sellers — one of them at a time.
+        _saddlebag = new SaddlebagEntruster(gameGui, dataManager,
+            () => _jobSwitcher.Busy || _gilSeller.Busy || _doman.Busy, log);
         _teleportOffer = new TeleportOfferInterop(
             addonLifecycle,
             gameGui,
@@ -364,6 +375,7 @@ public sealed class CharonPlugin : IDalamudPlugin
             DescribeAccount,
             () => $"{_collection.Status} · auto: {_collection.AutoStatus}",
             () => _sprintStatus,
+            () => $"chests: {_chests.Status} · ATM: {_qte.Status} · saddlebag: {_saddlebag.Status}",
             () => _lootWatcher.Status,
             // Reading the line IS the refresh: the reader is lazy (nothing local polls it — it
             // exists for IPC), so without this nudge Debug would say "not read yet" forever.
@@ -389,6 +401,9 @@ public sealed class CharonPlugin : IDalamudPlugin
 
         _fcChestWindow = new FcChestWindow(_config, SaveConfig, _fcChest);
         _windowSystem.AddWindow(_fcChestWindow);
+
+        _saddlebagOverlay = new SaddlebagOverlay(gameGui, _saddlebag);
+        _windowSystem.AddWindow(_saddlebagOverlay);
 
         _commandManager.AddHandler(CommandName, new CommandInfo(OnCommand)
         {
@@ -525,6 +540,10 @@ public sealed class CharonPlugin : IDalamudPlugin
         _gilSeller.Update(now);
         _doman.Update(now);
         _collection.UpdateAutoCollect(now, _config.AutoCollectEnabled);
+        _chests.Update(now);
+        _qte.Update(now);
+        _saddlebag.Update(now);
+        _saddlebagOverlay.IsOpen = _saddlebag.IsSaddlebagOpen();
         RestoreTargetIfDue(now);
         UpdateHealWatch(now);
         _groupInvites.Update(now);

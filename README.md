@@ -144,6 +144,14 @@ Two money errands for unattended toons, under the GIL section:
 - **Doman Donate** — the Enclave's donation basket pays a gratuity (vendor value × rate) up to a weekly budget that varies by reconstruction stage, and **anything over the budget is eaten**. Charon reads the live budget and rate, splits exactly enough to meet it by the smallest possible margin, stages the stack, presses Donate and answers the confirmation. It refuses to stage any stack larger than the target — that rail exists because a stale number once donated a 999-pile for a fraction of its value.
 - **Knows when you're done for the week.** The client's own Doman state (the same source as the Timers window) says whether this character can still donate — readable anywhere, no trip to find an empty basket. Resets Tuesday.
 
+## Quality of Life (Pandora's Box ports)
+
+Three conveniences adapted from [Pandora's Box](https://github.com/PunishXIV/PandorasBox) (BSD-3-Clause, with attribution) — so the fleet needs one fewer plugin:
+
+- **Auto-open treasure chests** — walk within reach and the chest opens. Never in high-end duties, never a chest someone already opened, out of combat only.
+- **Auto Active Time Maneuver** — mashes the button when an ATM appears, so an unattended toon never fails one. Direct Chat is parked off during the mash and restored after.
+- **Saddlebag: Entrust Duplicates** — a button riding the saddlebag window itself. Same duplicates-only doctrine as the FC chest: only items the saddlebag *already holds* move in, unique items skipped. Anything the game refuses is skipped and reported, never a stalled pass.
+
 ## Leveling Support (IPC)
 
 Groundwork for SealBreaker's leveling mode: `Charon.Leveling.*` gates expose every combat job's level and unlock state (one entry per exp *track* — a class and its job share one), each carrying its own blocker ("below 15 — run class hunts", "run the class quest", "needs Endwalker — not available on this account") so a round-robin leveler always knows *why* a job was skipped. Plus job switching via gearsets with a verified completion event, and the gil commands above. The account's level cap is derived live from its expansion ceiling, so a free trial reads 80 today and follows automatically if the trial ever grows.

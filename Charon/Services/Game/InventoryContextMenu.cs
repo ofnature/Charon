@@ -146,7 +146,7 @@ public static unsafe class InventoryContextMenu
     /// production values); on any terminal outcome the menu is closed — a stray context menu
     /// must never be left on screen.
     /// </summary>
-    public static ClickResult TryClickEntry(IDataManager dataManager, uint addonTextRow)
+    public static ClickResult TryClickEntry(IDataManager dataManager, uint addonTextRow, IPluginLog? log = null)
     {
         var wanted = dataManager.GetExcelSheet<Addon>()?.GetRowOrDefault(addonTextRow)?.Text.ExtractText();
         if (string.IsNullOrEmpty(wanted))
@@ -163,27 +163,53 @@ public static unsafe class InventoryContextMenu
         if (contextAddon == null || !contextAddon->IsVisible)
             return ClickResult.NotReady;
 
+        // Entries live in the CONTEXT ADDON's own AtkValues — count at [0], entry i's text at
+        // [i + 8] — and the click is callback (0, i, 0) with THAT ordinal (ECommons' ContextMenu
+        // master, the shape Pandora ships). The agent-side EventParams walk with a five-value
+        // callback (SimpleTweaks' Shop path) worked for Sell and Donate but silently did nothing
+        // on the saddlebag menu — two live timeouts before this was traced.
+        // Evidence-first: one compact line per attempt showing exactly what the menu held and
+        // what was fired — this exists because three shapes in a row "clicked" while the game
+        // ignored them, and the log line is what finally settles each one.
         var clicked = false;
-        for (var i = 0; i < agent->ContextItemCount; i++)
+        var summary = new System.Text.StringBuilder();
+        var count = contextAddon->AtkValuesCount > 0 ? (int)contextAddon->AtkValues[0].UInt : 0;
+        var list = contextAddon->GetComponentListById(2);
+
+        for (var i = 0; i < count; i++)
         {
-            var param = agent->EventParams[agent->ContexItemStartIndex + i];
-            if (param.Type != AtkValueType.String)
+            var valueIndex = i + 8;
+            if (valueIndex >= contextAddon->AtkValuesCount)
+                break;
+
+            var param = contextAddon->AtkValues[valueIndex];
+            if (param.Type != AtkValueType.String && param.Type != AtkValueType.ManagedString)
+            {
+                summary.Append($"[{i}:{param.Type}] ");
                 continue;
+            }
 
             var text = MemoryHelper.ReadSeStringNullTerminated((nint)param.String.Value).TextValue;
-            if (!string.Equals(text, wanted, StringComparison.Ordinal))
+            var renderer = list == null ? null : list->GetItemRenderer(i);
+            var enabled = renderer == null || renderer->IsEnabled;
+            summary.Append($"[{i}:'{text}'{(enabled ? "" : " DISABLED")}] ");
+
+            if (clicked || !string.Equals(text, wanted, StringComparison.Ordinal))
                 continue;
 
-            var values = stackalloc AtkValue[5];
+            if (!enabled)
+                continue; // present but greyed out — fall through to EntryMissing with the dump
+
+            var values = stackalloc AtkValue[3];
             values[0].SetInt(0);
             values[1].SetInt(i);
             values[2].SetUInt(0);
-            values[3].SetInt(0);
-            values[4].SetInt(0);
-            contextAddon->FireCallback(5, values, true);
+            contextAddon->FireCallback(3, values, true);
             clicked = true;
-            break;
         }
+
+        log?.Info("ContextMenu ({0} entries, want '{1}', {2}): {3}",
+            count, wanted, clicked ? "FIRED" : "no click", summary.ToString());
 
         agent->AgentInterface.Hide();
         contextAddon->Close(false);

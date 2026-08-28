@@ -152,6 +152,12 @@ public sealed class CharonConfig : IPluginConfiguration
     /// <summary>Pass on gear more than this many item levels below what this job wears.</summary>
     public int LootPassBelowIlvlGap { get; set; } = 30;
 
+    /// <summary>Walk within 2y of a treasure chest and open it (never in high-end duties).</summary>
+    public bool AutoOpenChestsEnabled { get; set; } = true;
+
+    /// <summary>Mash the Active Time Maneuver (QTE) automatically so unattended toons never fail one.</summary>
+    public bool AutoQteEnabled { get; set; } = true;
+
     /// <summary>
     /// Learn unlearned collectibles in the bags automatically (out of combat, one per 1.5s).
     /// NEVER the sellable kinds — fashion accessories and chocobo barding stay a manual click,

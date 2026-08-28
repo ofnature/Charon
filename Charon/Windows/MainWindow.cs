@@ -85,6 +85,7 @@ public sealed class MainWindow : Window
     private readonly Func<string> _accountStatus;
     private readonly Func<string> _collectStatus;
     private readonly Func<string> _sprintStatus;
+    private readonly Func<string> _qolStatus;
     private readonly Func<string> _lootStatus;
     private readonly Func<string> _levelingStatus;
     private readonly GilCapSeller _gilSeller;
@@ -147,6 +148,7 @@ public sealed class MainWindow : Window
         Func<string> accountStatus,
         Func<string> collectStatus,
         Func<string> sprintStatus,
+        Func<string> qolStatus,
         Func<string> lootStatus,
         Func<string> levelingStatus,
         GilCapSeller gilSeller,
@@ -186,6 +188,7 @@ public sealed class MainWindow : Window
         _accountStatus = accountStatus;
         _collectStatus = collectStatus;
         _sprintStatus = sprintStatus;
+        _qolStatus = qolStatus;
         _lootStatus = lootStatus;
         _levelingStatus = levelingStatus;
         _gilSeller = gilSeller;
@@ -394,6 +397,28 @@ public sealed class MainWindow : Window
         CharonTheme.HelpMarker("When a trusted party member teleports to another zone, follow them\n"
                                + "(accepts the native teleport offer; falls back to teleporting to an\n"
                                + "unlocked aetheryte in their new zone). Same group only.");
+
+        ImGui.Spacing();
+
+        var openChests = _config.AutoOpenChestsEnabled;
+        if (ImGui.Checkbox("Auto-open treasure chests##qol", ref openChests))
+        {
+            _config.AutoOpenChestsEnabled = openChests;
+            _save();
+        }
+        CharonTheme.HelpMarker("Walk within reach of a chest and open it. Out of combat only, never\n"
+                               + "in high-end duties, and never a chest someone already opened.\n"
+                               + "Ported from Pandora's Box (BSD-3-Clause).");
+
+        var autoQte = _config.AutoQteEnabled;
+        if (ImGui.Checkbox("Auto Active Time Maneuver##qol", ref autoQte))
+        {
+            _config.AutoQteEnabled = autoQte;
+            _save();
+        }
+        CharonTheme.HelpMarker("Mash the button when an ATM appears, so an unattended toon never\n"
+                               + "fails one. Direct Chat is parked off during the mash and restored\n"
+                               + "after. Ported from Pandora's Box (BSD-3-Clause).");
 
         ImGui.Spacing();
         ImGui.TextColored(CharonTheme.TextDisabled,
@@ -1859,6 +1884,7 @@ public sealed class MainWindow : Window
         DrawStatusLine($"Gear: {_gearStatus()}");
         DrawStatusLine($"Collect: {_collectStatus()}");
         DrawStatusLine($"Sprint: {_sprintStatus()}");
+        DrawStatusLine($"QoL: {_qolStatus()}");
         DrawStatusLine($"Loot: {_lootStatus()}");
         DrawStatusLine($"Leveling: {_levelingStatus()}");
         DrawStatusLine($"Fleet duty exit: {ScrambleIn(_dutyExitStatus())}");
