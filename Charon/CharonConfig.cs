@@ -179,6 +179,13 @@ public sealed class CharonConfig : IPluginConfiguration
     /// <summary>Show the deep-dungeon floor map window while inside one (full layout, incl. unrevealed rooms).</summary>
     public bool DeepDungeonMapEnabled { get; set; } = true;
 
+    /// <summary>
+    /// Auto-advance quest dialogue (click through Talk boxes). OFF by default — on a box a human
+    /// is playing this eats dialogue; bots tick it, and Odysseus can force it over IPC with a
+    /// self-expiring lease while it quests.
+    /// </summary>
+    public bool TextAdvanceEnabled { get; set; } = false;
+
     /// <summary>Draw the deep-dungeon ESP overlay (chests, passage, traps, mob aggro ranges).</summary>
     public bool DeepDungeonEspEnabled { get; set; } = true;
 

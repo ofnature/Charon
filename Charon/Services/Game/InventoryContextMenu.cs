@@ -175,6 +175,8 @@ public static unsafe class InventoryContextMenu
         var summary = new System.Text.StringBuilder();
         var count = contextAddon->AtkValuesCount > 0 ? (int)contextAddon->AtkValues[0].UInt : 0;
         var list = contextAddon->GetComponentListById(2);
+        // Hoisted out of the loop (CA2014): stackalloc inside a loop grows the frame per iteration.
+        var values = stackalloc AtkValue[3];
 
         for (var i = 0; i < count; i++)
         {
@@ -200,7 +202,6 @@ public static unsafe class InventoryContextMenu
             if (!enabled)
                 continue; // present but greyed out — fall through to EntryMissing with the dump
 
-            var values = stackalloc AtkValue[3];
             values[0].SetInt(0);
             values[1].SetInt(i);
             values[2].SetUInt(0);

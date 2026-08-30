@@ -24,7 +24,7 @@ namespace Charon;
 
 public sealed class CharonPlugin : IDalamudPlugin
 {
-    public const string PluginVersion = "0.1.33";
+    public const string PluginVersion = "0.1.34";
     private const string CommandName = "/charon";
 
     /// <summary>
@@ -81,6 +81,8 @@ public sealed class CharonPlugin : IDalamudPlugin
     private readonly DeepDungeonMapWindow _ddMapWindow;
     private readonly EspOverlayWindow _ddEsp;
     private readonly LevelingIpc _levelingIpc;
+    private readonly TextAdvancer _textAdvance;
+    private readonly TextAdvanceIpc _textAdvanceIpc;
     private readonly FollowManager _followManager;
     private readonly BossModClient _bossMod;
     private readonly InteractHelper _interact;
@@ -345,6 +347,8 @@ public sealed class CharonPlugin : IDalamudPlugin
         _turnIn = new TurnInFiller(gameGui,
             () => _config.AutoTurnInEnabled, () => _config.AutoTurnInConfirm, log);
         _ddReader = new DeepDungeonReader(log);
+        _textAdvance = new TextAdvancer(gameGui, () => _config.TextAdvanceEnabled, log);
+        _textAdvanceIpc = new TextAdvanceIpc(pluginInterface, _textAdvance);
         _teleportOffer = new TeleportOfferInterop(
             addonLifecycle,
             gameGui,
@@ -388,7 +392,7 @@ public sealed class CharonPlugin : IDalamudPlugin
             DescribeAccount,
             () => $"{_collection.Status} · auto: {_collection.AutoStatus}",
             () => _sprintStatus,
-            () => $"chests: {_chests.Status} · ATM: {_qte.Status} · saddlebag: {_saddlebag.Status} · commend: {_commend.Status} · turn-in: {_turnIn.Status} · DD: {_ddReader.Status}",
+            () => $"chests: {_chests.Status} · ATM: {_qte.Status} · saddlebag: {_saddlebag.Status} · commend: {_commend.Status} · turn-in: {_turnIn.Status} · talk: {_textAdvance.Status} · DD: {_ddReader.Status}",
             () => _lootWatcher.Status,
             // Reading the line IS the refresh: the reader is lazy (nothing local polls it — it
             // exists for IPC), so without this nudge Debug would say "not read yet" forever.
@@ -469,6 +473,7 @@ public sealed class CharonPlugin : IDalamudPlugin
         _relay.OnMessage -= OnRelayMessage;
         _commend.Dispose();
         _doman.Dispose();
+        _textAdvanceIpc.Dispose();
         _levelingIpc.Dispose();
         _gearIpc.Dispose();
         _dutyPop.Dispose();
@@ -569,6 +574,7 @@ public sealed class CharonPlugin : IDalamudPlugin
         _saddlebagOverlay.IsOpen = _saddlebag.IsSaddlebagOpen();
         _commend.Update();
         _turnIn.Update(now);
+        _textAdvance.Update(now);
         // Shown ONLY while a deep-dungeon instance is live — the director pointer is the signal,
         // so no territory list to go stale.
         var ddActive = _ddReader.GetSnapshot().Active;

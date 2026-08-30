@@ -144,13 +144,16 @@ Two money errands for unattended toons, under the GIL section:
 - **Doman Donate** — the Enclave's donation basket pays a gratuity (vendor value × rate) up to a weekly budget that varies by reconstruction stage, and **anything over the budget is eaten**. Charon reads the live budget and rate, splits exactly enough to meet it by the smallest possible margin, stages the stack, presses Donate and answers the confirmation. It refuses to stage any stack larger than the target — that rail exists because a stale number once donated a 999-pile for a fraction of its value.
 - **Knows when you're done for the week.** The client's own Doman state (the same source as the Timers window) says whether this character can still donate — readable anywhere, no trip to find an empty basket. Resets Tuesday.
 
-## Quality of Life (Pandora's Box ports)
+## Tweaks
 
-Three conveniences adapted from [Pandora's Box](https://github.com/PunishXIV/PandorasBox) (BSD-3-Clause, with attribution) — so the fleet needs one fewer plugin:
+Game-wide conveniences under their own TWEAKS section, most adapted from [Pandora's Box](https://github.com/PunishXIV/PandorasBox) (BSD-3-Clause, with attribution) — so the fleet needs one fewer plugin:
 
 - **Auto-open treasure chests** — walk within reach and the chest opens. Never in high-end duties, never a chest someone already opened, out of combat only.
 - **Auto Active Time Maneuver** — mashes the button when an ATM appears, so an unattended toon never fails one. Direct Chat is parked off during the mash and restored after.
 - **Saddlebag: Entrust Duplicates** — a button riding the saddlebag window itself. Same duplicates-only doctrine as the FC chest: only items the saddlebag *already holds* move in, unique items skipped. Anything the game refuses is skipped and reported, never a stalled pass.
+- **Auto-commendation** — commends a party member when the end-of-duty banner appears, with a role priority (tank / healer / dps) and an option to skip anyone who died. Never people you queued with (the game refuses premades), never in PvP.
+- **Auto-select turn-ins** — fills every slot of an item hand-in window (quest turn-ins, supply missions) automatically. Pressing Hand Over is a separate opt-in — handing items over is a decision, filling the window is not.
+- **Auto-advance dialogue** — clicks through quest dialogue (Talk boxes). Off by default, because on a box a human is playing it eats the story; unattended toons switch it on. Other plugins can also force it over IPC with a **self-expiring lease** (`Charon.TextAdvance.Force(seconds)`) — built for Odysseus, so it can delegate dialogue while questing, and if the caller dies mid-run the lease simply expires rather than leaving dialogue hijacked.
 
 ## Leveling Support (IPC)
 

@@ -40,6 +40,8 @@ public sealed class MainWindow : Window
         TrustedList,
         GilCapping,
         DomanDonate,
+        Tweaks,
+        DeepDungeon,
         Debug,
     }
 
@@ -256,6 +258,17 @@ public sealed class MainWindow : Window
         DrawNavItem("Doman Donate", Section.DomanDonate, _doman.Busy);
         ImGui.Spacing();
 
+        DrawCategoryHeader("TWEAKS");
+        DrawNavItem("Tweaks", Section.Tweaks,
+            _config.AutoOpenChestsEnabled || _config.AutoQteEnabled
+            || _config.AutoCommendEnabled || _config.AutoTurnInEnabled);
+        ImGui.Spacing();
+
+        DrawCategoryHeader("DEEP DUNGEON");
+        DrawNavItem("Deep Dungeon", Section.DeepDungeon,
+            _config.DeepDungeonMapEnabled || _config.DeepDungeonEspEnabled);
+        ImGui.Spacing();
+
         DrawCategoryHeader("SYSTEM");
         DrawNavItem("Debug", Section.Debug, null);
 
@@ -324,6 +337,8 @@ public sealed class MainWindow : Window
             case Section.TrustedList: DrawTrustedSection(); break;
             case Section.GilCapping: DrawGilCappingSection(); break;
             case Section.DomanDonate: DrawDomanSection(); break;
+            case Section.Tweaks: DrawTweaksSection(); break;
+            case Section.DeepDungeon: DrawDeepDungeonSection(); break;
             case Section.Debug: DrawDebugSection(); break;
         }
 
@@ -398,132 +413,7 @@ public sealed class MainWindow : Window
                                + "(accepts the native teleport offer; falls back to teleporting to an\n"
                                + "unlocked aetheryte in their new zone). Same group only.");
 
-        ImGui.Spacing();
 
-        var openChests = _config.AutoOpenChestsEnabled;
-        if (ImGui.Checkbox("Auto-open treasure chests##qol", ref openChests))
-        {
-            _config.AutoOpenChestsEnabled = openChests;
-            _save();
-        }
-        CharonTheme.HelpMarker("Walk within reach of a chest and open it. Out of combat only, never\n"
-                               + "in high-end duties, and never a chest someone already opened.\n"
-                               + "Ported from Pandora's Box (BSD-3-Clause).");
-
-        var autoQte = _config.AutoQteEnabled;
-        if (ImGui.Checkbox("Auto Active Time Maneuver##qol", ref autoQte))
-        {
-            _config.AutoQteEnabled = autoQte;
-            _save();
-        }
-        CharonTheme.HelpMarker("Mash the button when an ATM appears, so an unattended toon never\n"
-                               + "fails one. Direct Chat is parked off during the mash and restored\n"
-                               + "after. Ported from Pandora's Box (BSD-3-Clause).");
-
-        var autoCommend = _config.AutoCommendEnabled;
-        if (ImGui.Checkbox("Auto-commendation after duty##qol", ref autoCommend))
-        {
-            _config.AutoCommendEnabled = autoCommend;
-            _save();
-        }
-        CharonTheme.HelpMarker("Commend a party member when the end-of-duty banner appears.\n"
-                               + "Never people you queued WITH (the game refuses premades), never\n"
-                               + "in PvP. Ported from Pandora's Box (BSD-3-Clause).");
-        if (autoCommend)
-        {
-            ImGui.Indent();
-            var prio = _config.CommendPriority;
-            ImGui.SetNextItemWidth(160f);
-            if (ImGui.Combo("Priority##commend", ref prio, "Tank first Healer first DPS first No priority "))
-            {
-                _config.CommendPriority = prio;
-                _save();
-            }
-
-            var hideChat = _config.CommendHideChat;
-            if (ImGui.Checkbox("Hide chat message##commend", ref hideChat))
-            {
-                _config.CommendHideChat = hideChat;
-                _save();
-            }
-
-            var exclDeaths = _config.CommendExcludeDeaths;
-            if (ImGui.Checkbox("Exclude members that died##commend", ref exclDeaths))
-            {
-                _config.CommendExcludeDeaths = exclDeaths;
-                _save();
-            }
-            ImGui.Unindent();
-        }
-
-        var autoTurnIn = _config.AutoTurnInEnabled;
-        if (ImGui.Checkbox("Auto-select turn-ins##qol", ref autoTurnIn))
-        {
-            _config.AutoTurnInEnabled = autoTurnIn;
-            _save();
-        }
-        CharonTheme.HelpMarker("When an item turn-in window opens (quest hand-ins, supply missions),\n"
-                               + "fill every slot automatically. Ported from Pandora's Box\n"
-                               + "(BSD-3-Clause).");
-        if (autoTurnIn)
-        {
-            ImGui.Indent();
-            var confirm = _config.AutoTurnInConfirm;
-            if (ImGui.Checkbox("Automatically confirm##turnin", ref confirm))
-            {
-                _config.AutoTurnInConfirm = confirm;
-                _save();
-            }
-            CharonTheme.HelpMarker("Also press Hand Over once filled. Off by default — handing\n"
-                                   + "items over is a decision, filling the window is not.");
-            ImGui.Unindent();
-        }
-
-        var ddMap = _config.DeepDungeonMapEnabled;
-        if (ImGui.Checkbox("Deep dungeon floor map##qol", ref ddMap))
-        {
-            _config.DeepDungeonMapEnabled = ddMap;
-            _save();
-        }
-        CharonTheme.HelpMarker("A floor map window shown only inside deep dungeons: the full 5x5\n"
-                               + "room layout with connections, passage, return, chests and party\n"
-                               + "positions — including rooms the game hasn't revealed yet (dim).");
-
-        var ddEsp = _config.DeepDungeonEspEnabled;
-        if (ImGui.Checkbox("Deep dungeon ESP overlay##qol", ref ddEsp))
-        {
-            _config.DeepDungeonEspEnabled = ddEsp;
-            _save();
-        }
-        CharonTheme.HelpMarker("Draws chests, passage, return, revealed traps and mob aggro ranges\n"
-                               + "over the world while in a deep dungeon. Aggro shapes follow how each\n"
-                               + "mob notices you: circle = proximity, circle+core = sound, cone =\n"
-                               + "sight (NecroLens's dataset, MIT). Patrols get a facing arrow.");
-        if (ddEsp)
-        {
-            ImGui.Indent();
-            var espMobs = _config.DeepDungeonEspMobs;
-            if (ImGui.Checkbox("Mob aggro ranges##ddesp", ref espMobs))
-            {
-                _config.DeepDungeonEspMobs = espMobs;
-                _save();
-            }
-
-            var espNames = _config.DeepDungeonEspMobNames;
-            if (ImGui.Checkbox("Mob names##ddesp", ref espNames))
-            {
-                _config.DeepDungeonEspMobNames = espNames;
-                _save();
-            }
-
-            var espChests = _config.DeepDungeonEspChests;
-            if (ImGui.Checkbox("Chests and floor objects##ddesp", ref espChests))
-            {
-                _config.DeepDungeonEspChests = espChests;
-                _save();
-            }
-            ImGui.Unindent();
-        }
 
         ImGui.Spacing();
         ImGui.TextColored(CharonTheme.TextDisabled,
@@ -1971,6 +1861,154 @@ public sealed class MainWindow : Window
         ImGui.TextUnformatted(text);
         ImGui.PopTextWrapPos();
         ImGui.PopStyleColor();
+    }
+
+    /// <summary>Game-wide augmentations — the Pandora-port QoL toggles.</summary>
+    private void DrawTweaksSection()
+    {
+        DrawPageHeader("Tweaks");
+
+        var openChests = _config.AutoOpenChestsEnabled;
+        if (ImGui.Checkbox("Auto-open treasure chests##qol", ref openChests))
+        {
+            _config.AutoOpenChestsEnabled = openChests;
+            _save();
+        }
+        CharonTheme.HelpMarker("Walk within reach of a chest and open it. Out of combat only, never\n"
+                               + "in high-end duties, and never a chest someone already opened.\n"
+                               + "Ported from Pandora's Box (BSD-3-Clause).");
+
+        var autoQte = _config.AutoQteEnabled;
+        if (ImGui.Checkbox("Auto Active Time Maneuver##qol", ref autoQte))
+        {
+            _config.AutoQteEnabled = autoQte;
+            _save();
+        }
+        CharonTheme.HelpMarker("Mash the button when an ATM appears, so an unattended toon never\n"
+                               + "fails one. Direct Chat is parked off during the mash and restored\n"
+                               + "after. Ported from Pandora's Box (BSD-3-Clause).");
+
+        var autoCommend = _config.AutoCommendEnabled;
+        if (ImGui.Checkbox("Auto-commendation after duty##qol", ref autoCommend))
+        {
+            _config.AutoCommendEnabled = autoCommend;
+            _save();
+        }
+        CharonTheme.HelpMarker("Commend a party member when the end-of-duty banner appears.\n"
+                               + "Never people you queued WITH (the game refuses premades), never\n"
+                               + "in PvP. Ported from Pandora's Box (BSD-3-Clause).");
+        if (autoCommend)
+        {
+            ImGui.Indent();
+            var prio = _config.CommendPriority;
+            ImGui.SetNextItemWidth(160f);
+            if (ImGui.Combo("Priority##commend", ref prio, "Tank first Healer first DPS first No priority "))
+            {
+                _config.CommendPriority = prio;
+                _save();
+            }
+
+            var hideChat = _config.CommendHideChat;
+            if (ImGui.Checkbox("Hide chat message##commend", ref hideChat))
+            {
+                _config.CommendHideChat = hideChat;
+                _save();
+            }
+
+            var exclDeaths = _config.CommendExcludeDeaths;
+            if (ImGui.Checkbox("Exclude members that died##commend", ref exclDeaths))
+            {
+                _config.CommendExcludeDeaths = exclDeaths;
+                _save();
+            }
+            ImGui.Unindent();
+        }
+
+        var autoTurnIn = _config.AutoTurnInEnabled;
+        if (ImGui.Checkbox("Auto-select turn-ins##qol", ref autoTurnIn))
+        {
+            _config.AutoTurnInEnabled = autoTurnIn;
+            _save();
+        }
+        CharonTheme.HelpMarker("When an item turn-in window opens (quest hand-ins, supply missions),\n"
+                               + "fill every slot automatically. Ported from Pandora's Box\n"
+                               + "(BSD-3-Clause).");
+        if (autoTurnIn)
+        {
+            ImGui.Indent();
+            var confirm = _config.AutoTurnInConfirm;
+            if (ImGui.Checkbox("Automatically confirm##turnin", ref confirm))
+            {
+                _config.AutoTurnInConfirm = confirm;
+                _save();
+            }
+            CharonTheme.HelpMarker("Also press Hand Over once filled. Off by default — handing\n"
+                                   + "items over is a decision, filling the window is not.");
+            ImGui.Unindent();
+        }
+
+        var textAdvance = _config.TextAdvanceEnabled;
+        if (ImGui.Checkbox("Auto-advance dialogue##qol", ref textAdvance))
+        {
+            _config.TextAdvanceEnabled = textAdvance;
+            _save();
+        }
+        CharonTheme.HelpMarker("Click through quest dialogue (Talk boxes) automatically. Off by\n"
+                               + "default — on a box a human is playing this eats the story. Odysseus\n"
+                               + "can also switch it on over IPC with a self-expiring lease while it\n"
+                               + "runs quests, regardless of this toggle.");
+    }
+
+    /// <summary>Deep-dungeon specific tools: the floor map and the ESP overlay.</summary>
+    private void DrawDeepDungeonSection()
+    {
+        DrawPageHeader("Deep Dungeon");
+
+        var ddMap = _config.DeepDungeonMapEnabled;
+        if (ImGui.Checkbox("Deep dungeon floor map##qol", ref ddMap))
+        {
+            _config.DeepDungeonMapEnabled = ddMap;
+            _save();
+        }
+        CharonTheme.HelpMarker("A floor map window shown only inside deep dungeons: the full 5x5\n"
+                               + "room layout with connections, passage, return, chests and party\n"
+                               + "positions — including rooms the game hasn't revealed yet (dim).");
+
+        var ddEsp = _config.DeepDungeonEspEnabled;
+        if (ImGui.Checkbox("Deep dungeon ESP overlay##qol", ref ddEsp))
+        {
+            _config.DeepDungeonEspEnabled = ddEsp;
+            _save();
+        }
+        CharonTheme.HelpMarker("Draws chests, passage, return, revealed traps and mob aggro ranges\n"
+                               + "over the world while in a deep dungeon. Aggro shapes follow how each\n"
+                               + "mob notices you: circle = proximity, circle+core = sound, cone =\n"
+                               + "sight (NecroLens's dataset, MIT). Patrols get a facing arrow.");
+        if (ddEsp)
+        {
+            ImGui.Indent();
+            var espMobs = _config.DeepDungeonEspMobs;
+            if (ImGui.Checkbox("Mob aggro ranges##ddesp", ref espMobs))
+            {
+                _config.DeepDungeonEspMobs = espMobs;
+                _save();
+            }
+
+            var espNames = _config.DeepDungeonEspMobNames;
+            if (ImGui.Checkbox("Mob names##ddesp", ref espNames))
+            {
+                _config.DeepDungeonEspMobNames = espNames;
+                _save();
+            }
+
+            var espChests = _config.DeepDungeonEspChests;
+            if (ImGui.Checkbox("Chests and floor objects##ddesp", ref espChests))
+            {
+                _config.DeepDungeonEspChests = espChests;
+                _save();
+            }
+            ImGui.Unindent();
+        }
     }
 
     private void DrawDebugSection()

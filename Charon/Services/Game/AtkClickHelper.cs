@@ -55,6 +55,27 @@ public static unsafe class AtkClickHelper
         *flags ^= 1 << 5;
     }
 
+    /// <summary>
+    /// The Talk subtitle box advance — ECommons AddonMaster.Talk.Click verbatim: a fresh
+    /// AtkEvent (listener = the addon, target = AtkStage's event target, state flags 132) with
+    /// zeroed AtkEventData, delivered as MouseDown, MouseClick, MouseUp.
+    /// </summary>
+    public static void AdvanceTalk(AtkUnitBase* addon)
+    {
+        if (addon == null)
+            return;
+
+        var evt = default(AtkEvent);
+        evt.Listener = (AtkEventListener*)addon;
+        evt.Target = &AtkStage.Instance()->AtkEventTarget;
+        evt.State.StateFlags = (AtkEventStateFlags)132;
+        var data = default(AtkEventData);
+
+        addon->ReceiveEvent(AtkEventType.MouseDown, 0, &evt, &data);
+        addon->ReceiveEvent(AtkEventType.MouseClick, 0, &evt, &data);
+        addon->ReceiveEvent(AtkEventType.MouseUp, 0, &evt, &data);
+    }
+
     private static bool Click(AtkUnitBase* addon, AtkComponentNode* node)
     {
         if (node == null)
