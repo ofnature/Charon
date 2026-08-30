@@ -156,6 +156,14 @@ Three conveniences adapted from [Pandora's Box](https://github.com/PunishXIV/Pan
 
 Groundwork for SealBreaker's leveling mode: `Charon.Leveling.*` gates expose every combat job's level and unlock state (one entry per exp *track* — a class and its job share one), each carrying its own blocker ("below 15 — run class hunts", "run the class quest", "needs Endwalker — not available on this account") so a round-robin leveler always knows *why* a job was skipped. Plus job switching via gearsets with a verified completion event, and the gil commands above. The account's level cap is derived live from its expansion ceiling, so a free trial reads 80 today and follows automatically if the trial ever grows.
 
+## Deep Dungeon
+
+Palace of the Dead, Heaven-on-High, Eureka Orthos and Pilgrim's Traverse support, shown only while actually inside one:
+
+- **Floor map window** — the full 5×5 room layout with connections, passage, return, chest markers and party positions, *including rooms the game hasn't revealed yet* (drawn dim). Read straight from the game's own floor state — the Pomander of Sight view, permanently, read-only.
+- **ESP overlay** (ported from [NecroLens](https://github.com/Jukkales/NecroLens), MIT) — chests, passage, return, revealed traps, and mob aggro ranges drawn over the world. Aggro shapes follow how each mob notices you: circle = proximity, circle with a core = sound, facing cone = sight — from NecroLens's curated dataset of ~700 mobs. Patrols get a facing arrow. Mobs already in combat draw nothing.
+- Boss fights stay BossMod's job, exactly as with Fleet Follow — Charon adds the pieces BMR doesn't have.
+
 ## Daedalus Integration
 
 When [Daedalus](https://github.com/ofnature/Daedalus) is loaded, Charon consumes its LAN party roster + vitals over IPC and its LAN relay for cross-machine coordination — reconnects survive plugin reloads, and everything degrades gracefully to the manual whitelist when Daedalus is absent.

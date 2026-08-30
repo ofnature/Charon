@@ -24,7 +24,7 @@ namespace Charon;
 
 public sealed class CharonPlugin : IDalamudPlugin
 {
-    public const string PluginVersion = "0.1.32";
+    public const string PluginVersion = "0.1.33";
     private const string CommandName = "/charon";
 
     /// <summary>
@@ -75,6 +75,11 @@ public sealed class CharonPlugin : IDalamudPlugin
     private readonly SaddlebagOverlay _saddlebagOverlay;
     private readonly QteSolver _qte;
     private readonly SaddlebagEntruster _saddlebag;
+    private readonly CommendationVoter _commend;
+    private readonly TurnInFiller _turnIn;
+    private readonly DeepDungeonReader _ddReader;
+    private readonly DeepDungeonMapWindow _ddMapWindow;
+    private readonly EspOverlayWindow _ddEsp;
     private readonly LevelingIpc _levelingIpc;
     private readonly FollowManager _followManager;
     private readonly BossModClient _bossMod;
@@ -247,6 +252,7 @@ public sealed class CharonPlugin : IDalamudPlugin
         IAddonLifecycle addonLifecycle,
         IGameGui gameGui,
         IGameConfig gameConfig,
+        IChatGui chatGui,
         INotificationManager notifications,
         IPluginLog log)
     {
@@ -332,6 +338,13 @@ public sealed class CharonPlugin : IDalamudPlugin
         // Shares the context-menu machinery with the sellers — one of them at a time.
         _saddlebag = new SaddlebagEntruster(gameGui, dataManager,
             () => _jobSwitcher.Busy || _gilSeller.Busy || _doman.Busy, log);
+        _commend = new CommendationVoter(addonLifecycle, _partyList, _objectTable, _clientState,
+            _condition, chatGui,
+            () => _config.AutoCommendEnabled, () => _config.CommendPriority,
+            () => _config.CommendHideChat, () => _config.CommendExcludeDeaths, log);
+        _turnIn = new TurnInFiller(gameGui,
+            () => _config.AutoTurnInEnabled, () => _config.AutoTurnInConfirm, log);
+        _ddReader = new DeepDungeonReader(log);
         _teleportOffer = new TeleportOfferInterop(
             addonLifecycle,
             gameGui,
@@ -375,7 +388,7 @@ public sealed class CharonPlugin : IDalamudPlugin
             DescribeAccount,
             () => $"{_collection.Status} · auto: {_collection.AutoStatus}",
             () => _sprintStatus,
-            () => $"chests: {_chests.Status} · ATM: {_qte.Status} · saddlebag: {_saddlebag.Status}",
+            () => $"chests: {_chests.Status} · ATM: {_qte.Status} · saddlebag: {_saddlebag.Status} · commend: {_commend.Status} · turn-in: {_turnIn.Status} · DD: {_ddReader.Status}",
             () => _lootWatcher.Status,
             // Reading the line IS the refresh: the reader is lazy (nothing local polls it — it
             // exists for IPC), so without this nudge Debug would say "not read yet" forever.
@@ -404,6 +417,15 @@ public sealed class CharonPlugin : IDalamudPlugin
 
         _saddlebagOverlay = new SaddlebagOverlay(gameGui, _saddlebag);
         _windowSystem.AddWindow(_saddlebagOverlay);
+
+        _ddMapWindow = new DeepDungeonMapWindow(_ddReader);
+        _windowSystem.AddWindow(_ddMapWindow);
+
+        _ddEsp = new EspOverlayWindow(_objectTable, gameGui, _clientState,
+            new Charon.Features.DeepDungeon.MobDatabase(),
+            () => _config.DeepDungeonEspMobs, () => _config.DeepDungeonEspChests,
+            () => _config.DeepDungeonEspMobNames);
+        _windowSystem.AddWindow(_ddEsp);
 
         _commandManager.AddHandler(CommandName, new CommandInfo(OnCommand)
         {
@@ -445,6 +467,7 @@ public sealed class CharonPlugin : IDalamudPlugin
         _windowSystem.RemoveAllWindows();
 
         _relay.OnMessage -= OnRelayMessage;
+        _commend.Dispose();
         _doman.Dispose();
         _levelingIpc.Dispose();
         _gearIpc.Dispose();
@@ -544,6 +567,13 @@ public sealed class CharonPlugin : IDalamudPlugin
         _qte.Update(now);
         _saddlebag.Update(now);
         _saddlebagOverlay.IsOpen = _saddlebag.IsSaddlebagOpen();
+        _commend.Update();
+        _turnIn.Update(now);
+        // Shown ONLY while a deep-dungeon instance is live — the director pointer is the signal,
+        // so no territory list to go stale.
+        var ddActive = _ddReader.GetSnapshot().Active;
+        _ddMapWindow.IsOpen = _config.DeepDungeonMapEnabled && ddActive;
+        _ddEsp.IsOpen = _config.DeepDungeonEspEnabled && ddActive;
         RestoreTargetIfDue(now);
         UpdateHealWatch(now);
         _groupInvites.Update(now);

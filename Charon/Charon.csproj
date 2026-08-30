@@ -3,9 +3,14 @@
   <PropertyGroup>
     <AssemblyName>Charon</AssemblyName>
     <RootNamespace>Charon</RootNamespace>
-    <Version>0.1.32</Version>
+    <Version>0.1.33</Version>
     <DalamudLibPath>$(AppData)\XIVLauncher\addon\Hooks\dev\</DalamudLibPath>
   </PropertyGroup>
+
+  <ItemGroup>
+    <!-- NecroLens's curated deep-dungeon mob dataset (MIT, Jukkales/NecroLens). -->
+    <EmbeddedResource Include="Data/allMobs.json" />
+  </ItemGroup>
 
   <!-- Allow the test assembly to access internal types -->
   <ItemGroup>

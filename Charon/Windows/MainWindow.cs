@@ -420,6 +420,111 @@ public sealed class MainWindow : Window
                                + "fails one. Direct Chat is parked off during the mash and restored\n"
                                + "after. Ported from Pandora's Box (BSD-3-Clause).");
 
+        var autoCommend = _config.AutoCommendEnabled;
+        if (ImGui.Checkbox("Auto-commendation after duty##qol", ref autoCommend))
+        {
+            _config.AutoCommendEnabled = autoCommend;
+            _save();
+        }
+        CharonTheme.HelpMarker("Commend a party member when the end-of-duty banner appears.\n"
+                               + "Never people you queued WITH (the game refuses premades), never\n"
+                               + "in PvP. Ported from Pandora's Box (BSD-3-Clause).");
+        if (autoCommend)
+        {
+            ImGui.Indent();
+            var prio = _config.CommendPriority;
+            ImGui.SetNextItemWidth(160f);
+            if (ImGui.Combo("Priority##commend", ref prio, "Tank first Healer first DPS first No priority "))
+            {
+                _config.CommendPriority = prio;
+                _save();
+            }
+
+            var hideChat = _config.CommendHideChat;
+            if (ImGui.Checkbox("Hide chat message##commend", ref hideChat))
+            {
+                _config.CommendHideChat = hideChat;
+                _save();
+            }
+
+            var exclDeaths = _config.CommendExcludeDeaths;
+            if (ImGui.Checkbox("Exclude members that died##commend", ref exclDeaths))
+            {
+                _config.CommendExcludeDeaths = exclDeaths;
+                _save();
+            }
+            ImGui.Unindent();
+        }
+
+        var autoTurnIn = _config.AutoTurnInEnabled;
+        if (ImGui.Checkbox("Auto-select turn-ins##qol", ref autoTurnIn))
+        {
+            _config.AutoTurnInEnabled = autoTurnIn;
+            _save();
+        }
+        CharonTheme.HelpMarker("When an item turn-in window opens (quest hand-ins, supply missions),\n"
+                               + "fill every slot automatically. Ported from Pandora's Box\n"
+                               + "(BSD-3-Clause).");
+        if (autoTurnIn)
+        {
+            ImGui.Indent();
+            var confirm = _config.AutoTurnInConfirm;
+            if (ImGui.Checkbox("Automatically confirm##turnin", ref confirm))
+            {
+                _config.AutoTurnInConfirm = confirm;
+                _save();
+            }
+            CharonTheme.HelpMarker("Also press Hand Over once filled. Off by default — handing\n"
+                                   + "items over is a decision, filling the window is not.");
+            ImGui.Unindent();
+        }
+
+        var ddMap = _config.DeepDungeonMapEnabled;
+        if (ImGui.Checkbox("Deep dungeon floor map##qol", ref ddMap))
+        {
+            _config.DeepDungeonMapEnabled = ddMap;
+            _save();
+        }
+        CharonTheme.HelpMarker("A floor map window shown only inside deep dungeons: the full 5x5\n"
+                               + "room layout with connections, passage, return, chests and party\n"
+                               + "positions — including rooms the game hasn't revealed yet (dim).");
+
+        var ddEsp = _config.DeepDungeonEspEnabled;
+        if (ImGui.Checkbox("Deep dungeon ESP overlay##qol", ref ddEsp))
+        {
+            _config.DeepDungeonEspEnabled = ddEsp;
+            _save();
+        }
+        CharonTheme.HelpMarker("Draws chests, passage, return, revealed traps and mob aggro ranges\n"
+                               + "over the world while in a deep dungeon. Aggro shapes follow how each\n"
+                               + "mob notices you: circle = proximity, circle+core = sound, cone =\n"
+                               + "sight (NecroLens's dataset, MIT). Patrols get a facing arrow.");
+        if (ddEsp)
+        {
+            ImGui.Indent();
+            var espMobs = _config.DeepDungeonEspMobs;
+            if (ImGui.Checkbox("Mob aggro ranges##ddesp", ref espMobs))
+            {
+                _config.DeepDungeonEspMobs = espMobs;
+                _save();
+            }
+
+            var espNames = _config.DeepDungeonEspMobNames;
+            if (ImGui.Checkbox("Mob names##ddesp", ref espNames))
+            {
+                _config.DeepDungeonEspMobNames = espNames;
+                _save();
+            }
+
+            var espChests = _config.DeepDungeonEspChests;
+            if (ImGui.Checkbox("Chests and floor objects##ddesp", ref espChests))
+            {
+                _config.DeepDungeonEspChests = espChests;
+                _save();
+            }
+            ImGui.Unindent();
+        }
+
         ImGui.Spacing();
         ImGui.TextColored(CharonTheme.TextDisabled,
             $"Daedalus IPC: {(_roster.IsAvailable ? "connected" : "unavailable — manual whitelist only")}");

@@ -158,6 +158,39 @@ public sealed class CharonConfig : IPluginConfiguration
     /// <summary>Mash the Active Time Maneuver (QTE) automatically so unattended toons never fail one.</summary>
     public bool AutoQteEnabled { get; set; } = true;
 
+    /// <summary>Commend a party member when the end-of-duty banner appears (never premades — the game refuses them).</summary>
+    public bool AutoCommendEnabled { get; set; } = true;
+
+    /// <summary>Commendation priority: 0 tank, 1 healer, 2 dps, 3 none.</summary>
+    public int CommendPriority { get; set; } = 0;
+
+    /// <summary>Skip the "[Charon] Commendation given to X" chat line.</summary>
+    public bool CommendHideChat { get; set; } = false;
+
+    /// <summary>Never commend a party member who died this duty.</summary>
+    public bool CommendExcludeDeaths { get; set; } = false;
+
+    /// <summary>Fill the item turn-in ("Request") window automatically.</summary>
+    public bool AutoTurnInEnabled { get; set; } = true;
+
+    /// <summary>Also press Hand Over once filled. Off by default — handing items over is a decision.</summary>
+    public bool AutoTurnInConfirm { get; set; } = false;
+
+    /// <summary>Show the deep-dungeon floor map window while inside one (full layout, incl. unrevealed rooms).</summary>
+    public bool DeepDungeonMapEnabled { get; set; } = true;
+
+    /// <summary>Draw the deep-dungeon ESP overlay (chests, passage, traps, mob aggro ranges).</summary>
+    public bool DeepDungeonEspEnabled { get; set; } = true;
+
+    /// <summary>ESP: mob aggro circles/cones and patrol arrows.</summary>
+    public bool DeepDungeonEspMobs { get; set; } = true;
+
+    /// <summary>ESP: mob name labels.</summary>
+    public bool DeepDungeonEspMobNames { get; set; } = true;
+
+    /// <summary>ESP: chest/passage/return/trap highlights.</summary>
+    public bool DeepDungeonEspChests { get; set; } = true;
+
     /// <summary>
     /// Learn unlearned collectibles in the bags automatically (out of combat, one per 1.5s).
     /// NEVER the sellable kinds — fashion accessories and chocobo barding stay a manual click,
