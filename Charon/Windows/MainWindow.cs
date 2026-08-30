@@ -12,6 +12,7 @@ using Charon.Features.GroupManagement;
 using Charon.Features.HealWatch;
 using Charon.Features.Leveling;
 using Charon.Features.Loot;
+using Charon.Features.Weeklies;
 using Charon.Services;
 using Charon.Services.Game;
 
@@ -39,6 +40,7 @@ public sealed class MainWindow : Window
         Loot,
         TrustedList,
         GilCapping,
+        Weeklies,
         DomanDonate,
         Tweaks,
         DeepDungeon,
@@ -92,6 +94,7 @@ public sealed class MainWindow : Window
     private readonly Func<string> _levelingStatus;
     private readonly GilCapSeller _gilSeller;
     private readonly DomanDonator _doman;
+    private readonly WeekliesReader _weeklies;
     private readonly Func<bool> _isFreeTrial;
     private readonly LootWatcher _lootWatcher;
     private readonly CollectionScanner _collection;
@@ -155,6 +158,7 @@ public sealed class MainWindow : Window
         Func<string> levelingStatus,
         GilCapSeller gilSeller,
         DomanDonator domanDonator,
+        WeekliesReader weeklies,
         Func<bool> isFreeTrial,
         LootWatcher lootWatcher,
         CollectionScanner collection,
@@ -195,6 +199,7 @@ public sealed class MainWindow : Window
         _levelingStatus = levelingStatus;
         _gilSeller = gilSeller;
         _doman = domanDonator;
+        _weeklies = weeklies;
         _isFreeTrial = isFreeTrial;
         _lootWatcher = lootWatcher;
         _collection = collection;
@@ -255,6 +260,11 @@ public sealed class MainWindow : Window
 
         DrawCategoryHeader("GIL");
         DrawNavItem("FT Gil Capping", Section.GilCapping, _gilSeller.Busy);
+        ImGui.Spacing();
+
+        DrawCategoryHeader("WEEKLIES");
+        // Green dot = something is still left to do before a reset — a glance says "go spend it".
+        DrawNavItem("Weeklies", Section.Weeklies, AnyWeeklyPending());
         DrawNavItem("Doman Donate", Section.DomanDonate, _doman.Busy);
         ImGui.Spacing();
 
@@ -336,6 +346,7 @@ public sealed class MainWindow : Window
             case Section.Loot: DrawLootSection(); break;
             case Section.TrustedList: DrawTrustedSection(); break;
             case Section.GilCapping: DrawGilCappingSection(); break;
+            case Section.Weeklies: DrawWeekliesSection(); break;
             case Section.DomanDonate: DrawDomanSection(); break;
             case Section.Tweaks: DrawTweaksSection(); break;
             case Section.DeepDungeon: DrawDeepDungeonSection(); break;
@@ -470,6 +481,15 @@ public sealed class MainWindow : Window
         CharonTheme.HelpMarker("Pop a notification once every passenger seat is taken, so you know "
                                + "the fleet is aboard without counting riders. Shows on the mount "
                                + "owner's screen only, once per mount-up.");
+
+        var ridersWindow = _config.PillionRidersWindowEnabled;
+        if (ImGui.Checkbox("Riders window while driving##pillion", ref ridersWindow))
+        {
+            _config.PillionRidersWindowEnabled = ridersWindow;
+            _save();
+        }
+        CharonTheme.HelpMarker("A small window listing every seat and who is in it, shown while\n"
+                               + "you drive a multi-seat mount. Closes itself on dismount.");
 
         ImGui.Spacing();
         ImGui.Separator();
@@ -1587,6 +1607,78 @@ public sealed class MainWindow : Window
         DrawStatusLine(_collection.Status, CharonTheme.TextDisabled);
     }
 
+    // --- WEEKLIES ---
+
+    /// <summary>
+    /// The board's raw inputs, gathered from live game state. The Doman "loaded" flag is widened
+    /// by Charon's own donation record: even when the enclave manager can't be read, a donation
+    /// this box performed itself is a definite answer, not an unknown.
+    /// </summary>
+    private IReadOnlyList<WeekliesBoard.Item> ComposeWeekliesBoard()
+    {
+        var now = DateTime.UtcNow;
+        var snap = _weeklies.Read(now);
+        var enclave = _doman.ReadEnclaveStateOrCache(now);
+        var domanDone = _doman.DonatedThisWeek;
+        return WeekliesBoard.Compose(now,
+            enclave.Loaded || domanDone, domanDone, enclave.BudgetRemaining, enclave.FromCache,
+            snap.DeliveriesLoaded, snap.DeliveriesUsed,
+            snap.TribesLoaded, snap.TribeAllowanceLeft);
+    }
+
+    private bool AnyWeeklyPending()
+    {
+        foreach (var item in ComposeWeekliesBoard())
+        {
+            if (item.State == WeekliesBoard.ItemState.Pending)
+                return true;
+        }
+
+        return false;
+    }
+
+    /// <summary>What this character can still spend before the next reset, at a glance.</summary>
+    private void DrawWeekliesSection()
+    {
+        DrawPageHeader("Weeklies");
+
+        DrawStatusLine("Weekly and daily allowances this character has not used yet. Read from the\n"
+                       + "game's own state — the same sources as the Timers window.");
+        ImGui.Spacing();
+
+        if (ImGui.BeginTable("##weeklies", 3, ImGuiTableFlags.RowBg))
+        {
+            ImGui.TableSetupColumn("Task", ImGuiTableColumnFlags.WidthStretch);
+            ImGui.TableSetupColumn("State", ImGuiTableColumnFlags.WidthStretch);
+            ImGui.TableSetupColumn("Resets", ImGuiTableColumnFlags.WidthFixed, 130f);
+
+            foreach (var item in ComposeWeekliesBoard())
+            {
+                ImGui.TableNextRow();
+                ImGui.TableNextColumn();
+                var (dot, color) = item.State switch
+                {
+                    WeekliesBoard.ItemState.Done => ("done", CharonTheme.StatusGreen),
+                    WeekliesBoard.ItemState.Pending => ("to do", CharonTheme.StatusYellow),
+                    _ => ("?", CharonTheme.StatusGrey),
+                };
+                ImGui.TextColored(color, dot);
+                ImGui.SameLine();
+                ImGui.TextUnformatted(item.Name);
+                ImGui.TableNextColumn();
+                ImGui.TextColored(CharonTheme.TextSecondary, item.Detail);
+                ImGui.TableNextColumn();
+                ImGui.TextColored(CharonTheme.TextDisabled, item.Reset);
+            }
+
+            ImGui.EndTable();
+        }
+
+        ImGui.Spacing();
+        DrawStatusLine("Doman donations run from the Doman Donate section below; Custom Deliveries\n"
+                       + "and Allied Society dailies run through Odysseus.", CharonTheme.TextDisabled);
+    }
+
     // --- GIL: FT Gil Capping ---
 
     /// <summary>
@@ -1877,6 +1969,21 @@ public sealed class MainWindow : Window
         CharonTheme.HelpMarker("Walk within reach of a chest and open it. Out of combat only, never\n"
                                + "in high-end duties, and never a chest someone already opened.\n"
                                + "Ported from Pandora's Box (BSD-3-Clause).");
+        if (openChests)
+        {
+            ImGui.Indent();
+            var chestRange = _config.ChestOpenRange;
+            ImGui.SetNextItemWidth(160f);
+            if (ImGui.SliderFloat("Open range (yalms)##qol", ref chestRange, 2f, 8f, "%.1f"))
+            {
+                _config.ChestOpenRange = chestRange;
+                _save();
+            }
+            CharonTheme.HelpMarker("How close before the open fires. The game enforces its own\n"
+                                   + "interact limit — past it, the chest simply opens as soon as\n"
+                                   + "you get near enough.");
+            ImGui.Unindent();
+        }
 
         var autoQte = _config.AutoQteEnabled;
         if (ImGui.Checkbox("Auto Active Time Maneuver##qol", ref autoQte))
@@ -2030,6 +2137,9 @@ public sealed class MainWindow : Window
         DrawStatusLine($"QoL: {_qolStatus()}");
         DrawStatusLine($"Loot: {_lootStatus()}");
         DrawStatusLine($"Leveling: {_levelingStatus()}");
+        // Reading the line IS the refresh — the reader is lazy and nothing else polls it here.
+        _weeklies.Read(DateTime.UtcNow);
+        DrawStatusLine($"Weeklies: {_weeklies.Status}");
         DrawStatusLine($"Fleet duty exit: {ScrambleIn(_dutyExitStatus())}");
         if (_inviteManager.AcceptPending)
             DrawStatusLine("Invite accept pending (delay running)", CharonTheme.StatusYellow);

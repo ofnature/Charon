@@ -97,9 +97,17 @@ public sealed unsafe class DomanDonator : IDisposable
     /// <summary>When the last operation ended — the SelectYesno recorder listens for a minute after.</summary>
     private DateTime _lastOpUtc = DateTime.MinValue;
 
+    /// <summary>Persisted last-seen enclave numbers, for sessions where the live manager is empty.</summary>
+    public sealed record EnclaveCache(int Allowance, int Donated, int RatePercent, DateTime CapturedUtc);
+
+    private readonly Func<EnclaveCache?> _readCache;
+    private readonly Action<EnclaveCache> _writeCache;
+    private EnclaveCache? _lastWritten;
+
     public DomanDonator(IGameGui gameGui, IDataManager dataManager, IAddonLifecycle addonLifecycle,
         ICondition condition, Func<bool> otherOpsBusy, Func<bool> hasDonatedThisWeek,
-        System.Action recordDonated, Action<string, bool, string> completed, IPluginLog log)
+        System.Action recordDonated, Func<EnclaveCache?> readEnclaveCache,
+        Action<EnclaveCache> writeEnclaveCache, Action<string, bool, string> completed, IPluginLog log)
     {
         _gameGui = gameGui;
         _dataManager = dataManager;
@@ -108,6 +116,8 @@ public sealed unsafe class DomanDonator : IDisposable
         _otherOpsBusy = otherOpsBusy;
         _hasDonatedThisWeek = hasDonatedThisWeek;
         _recordDonated = recordDonated;
+        _readCache = readEnclaveCache;
+        _writeCache = writeEnclaveCache;
         _completed = completed;
         _log = log;
 
@@ -128,7 +138,8 @@ public sealed unsafe class DomanDonator : IDisposable
 
     /// <summary>Live Doman state straight from the client — the same source the Timers window
     /// reads. <paramref name="Loaded"/> false = fall back to the local record.</summary>
-    public sealed record EnclaveState(bool Loaded, bool AcceptingDonations, int BudgetRemaining, int RatePercent);
+    public sealed record EnclaveState(bool Loaded, bool AcceptingDonations, int BudgetRemaining, int RatePercent,
+        bool FromCache = false);
 
     /// <summary>
     /// Read <c>DomanEnclaveManager</c> (ClientStructs): IsAcceptingDonations is the flag behind
@@ -141,10 +152,29 @@ public sealed unsafe class DomanDonator : IDisposable
         try
         {
             var manager = DomanEnclaveManager.Instance();
-            if (manager == null || !manager->IsLoaded)
+            if (manager == null)
                 return new EnclaveState(false, false, -1, -1);
 
+            // "Has the server sent the state" is Allowance != 0 — DailyDuty's production gate (a
+            // valid state never carries a zero allowance). Do NOT gate on the struct's IsLoaded:
+            // it sits with the DomaStoryProgress SHEET pointers, and it read false on a box whose
+            // State was populated — it is about the sheet, not the server state.
             var state = manager->State;
+            if (state.Allowance == 0)
+                return new EnclaveState(false, false, -1, -1);
+
+            // Write-through: the manager only populates after this character has been near the
+            // enclave, so remember what we saw for the sessions where it hasn't (DailyDuty's
+            // shipped approach). Only on change — this is called every frame by the UI.
+            var seen = new EnclaveCache(state.Allowance, state.Donated, state.Factor + 100, DateTime.UtcNow);
+            if (_lastWritten == null || seen.Allowance != _lastWritten.Allowance
+                                     || seen.Donated != _lastWritten.Donated
+                                     || seen.RatePercent != _lastWritten.RatePercent)
+            {
+                _lastWritten = seen;
+                _writeCache(seen);
+            }
+
             return new EnclaveState(true, state.IsAcceptingDonations,
                 Math.Max(0, state.Allowance - state.Donated), state.Factor + 100);
         }
@@ -152,6 +182,29 @@ public sealed unsafe class DomanDonator : IDisposable
         {
             return new EnclaveState(false, false, -1, -1);
         }
+    }
+
+    /// <summary>
+    /// <see cref="ReadEnclaveState"/>, but when the live manager is empty (character hasn't been
+    /// near the enclave this session) the persisted last-seen numbers answer instead. The donated
+    /// count only counts inside the week it was captured — after a reset the budget reads full
+    /// again; the allowance carries over until a live read corrects it, exactly as DailyDuty does.
+    /// </summary>
+    public EnclaveState ReadEnclaveStateOrCache(DateTime utcNow)
+    {
+        var live = ReadEnclaveState();
+        if (live.Loaded)
+            return live;
+
+        var cache = _readCache();
+        if (cache == null || cache.Allowance <= 0)
+            return live;
+
+        var donated = Features.Leveling.DonationWeek.HasDonatedThisWeek(cache.CapturedUtc, utcNow)
+            ? cache.Donated
+            : 0;
+        var remaining = Math.Max(0, cache.Allowance - donated);
+        return new EnclaveState(true, remaining > 0, remaining, cache.RatePercent, FromCache: true);
     }
 
     /// <summary>
@@ -163,10 +216,13 @@ public sealed unsafe class DomanDonator : IDisposable
     {
         get
         {
-            var state = ReadEnclaveState();
-            return state.Loaded
-                ? state.AcceptingDonations && state.BudgetRemaining > 0
-                : !_hasDonatedThisWeek();
+            var state = ReadEnclaveStateOrCache(DateTime.UtcNow);
+            if (!state.Loaded)
+                return !_hasDonatedThisWeek();
+
+            var available = state.AcceptingDonations && state.BudgetRemaining > 0;
+            // A cached answer can't see anything since capture, so the local record still vetoes.
+            return state.FromCache ? available && !_hasDonatedThisWeek() : available;
         }
     }
 

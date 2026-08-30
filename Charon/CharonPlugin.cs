@@ -24,7 +24,7 @@ namespace Charon;
 
 public sealed class CharonPlugin : IDalamudPlugin
 {
-    public const string PluginVersion = "0.1.34";
+    public const string PluginVersion = "0.1.35";
     private const string CommandName = "/charon";
 
     /// <summary>
@@ -78,9 +78,11 @@ public sealed class CharonPlugin : IDalamudPlugin
     private readonly CommendationVoter _commend;
     private readonly TurnInFiller _turnIn;
     private readonly DeepDungeonReader _ddReader;
+    private readonly PillionRidersWindow _pillionRidersWindow;
     private readonly DeepDungeonMapWindow _ddMapWindow;
     private readonly EspOverlayWindow _ddEsp;
     private readonly LevelingIpc _levelingIpc;
+    private readonly WeekliesReader _weeklies;
     private readonly TextAdvancer _textAdvance;
     private readonly TextAdvanceIpc _textAdvanceIpc;
     private readonly FollowManager _followManager;
@@ -333,9 +335,10 @@ public sealed class CharonPlugin : IDalamudPlugin
         _doman = new DomanDonator(gameGui, dataManager, addonLifecycle, _condition,
             () => _jobSwitcher.Busy || _gilSeller.Busy || _saddlebag!.Busy,
             HasDonatedThisWeek, RecordDonatedThisWeek,
+            ReadDomanEnclaveCache, WriteDomanEnclaveCache,
             (op, ok, detail) => _levelingIpc.PublishCompleted(op, ok, detail), log);
         _chests = new ChestOpener(_objectTable, _condition, dataManager, _interact,
-            () => _config.AutoOpenChestsEnabled, log);
+            () => _config.AutoOpenChestsEnabled, () => _config.ChestOpenRange, log);
         _qte = new QteSolver(gameGui, gameConfig, () => _config.AutoQteEnabled, log);
         // Shares the context-menu machinery with the sellers — one of them at a time.
         _saddlebag = new SaddlebagEntruster(gameGui, dataManager,
@@ -347,6 +350,7 @@ public sealed class CharonPlugin : IDalamudPlugin
         _turnIn = new TurnInFiller(gameGui,
             () => _config.AutoTurnInEnabled, () => _config.AutoTurnInConfirm, log);
         _ddReader = new DeepDungeonReader(log);
+        _weeklies = new WeekliesReader(log);
         _textAdvance = new TextAdvancer(gameGui, () => _config.TextAdvanceEnabled, log);
         _textAdvanceIpc = new TextAdvanceIpc(pluginInterface, _textAdvance);
         _teleportOffer = new TeleportOfferInterop(
@@ -404,6 +408,7 @@ public sealed class CharonPlugin : IDalamudPlugin
             },
             _gilSeller,
             _doman,
+            _weeklies,
             () => _condition[ConditionFlag.OnFreeTrial],
             _lootWatcher,
             _collection,
@@ -424,6 +429,9 @@ public sealed class CharonPlugin : IDalamudPlugin
 
         _ddMapWindow = new DeepDungeonMapWindow(_ddReader);
         _windowSystem.AddWindow(_ddMapWindow);
+
+        _pillionRidersWindow = new PillionRidersWindow(ReadRawSeatOccupancy, _pillionManager);
+        _windowSystem.AddWindow(_pillionRidersWindow);
 
         _ddEsp = new EspOverlayWindow(_objectTable, gameGui, _clientState,
             new Charon.Features.DeepDungeon.MobDatabase(),
@@ -580,6 +588,9 @@ public sealed class CharonPlugin : IDalamudPlugin
         var ddActive = _ddReader.GetSnapshot().Active;
         _ddMapWindow.IsOpen = _config.DeepDungeonMapEnabled && ddActive;
         _ddEsp.IsOpen = _config.DeepDungeonEspEnabled && ddActive;
+        // The riders window follows the mount: open while driving a multi-seat mount, gone on
+        // dismount (the occupancy read is the tick-cached snapshot — no rescan).
+        _pillionRidersWindow.IsOpen = _config.PillionRidersWindowEnabled && ReadRawSeatOccupancy().Count > 0;
         RestoreTargetIfDue(now);
         UpdateHealWatch(now);
         _groupInvites.Update(now);
@@ -2236,6 +2247,86 @@ public sealed class CharonPlugin : IDalamudPlugin
         _config.DomanLastDonationUtc[id] = DateTime.UtcNow;
         SaveConfig();
         _log.Info("Doman: weekly budget recorded as spent for this character (resets Tuesday 08:00 UTC)");
+    }
+
+    /// <summary>The LOCAL character's persisted last-seen enclave numbers (null = never seen).</summary>
+    private DomanDonator.EnclaveCache? ReadDomanEnclaveCache()
+    {
+        var id = _jobLevels.LocalContentId;
+        if (id == 0)
+            return null;
+
+        if (_config.DomanEnclaveCache.TryGetValue(id, out var c))
+            return new DomanDonator.EnclaveCache(c.Allowance, c.Donated, c.RatePercent, c.CapturedUtc);
+
+        // The probe touches the filesystem and this runs per frame — one attempt per character.
+        if (_dailyDutyImportTried == id)
+            return null;
+        _dailyDutyImportTried = id;
+        return TryImportDailyDutyDomanCache(id);
+    }
+
+    private ulong _dailyDutyImportTried;
+
+    /// <summary>
+    /// One-time seed from DailyDuty's per-character cache file, when ours is empty. DailyDuty has
+    /// the same visit-once limitation — its chat line comes from this exact file — so a box that
+    /// ran DailyDuty already holds the numbers; borrowing them saves an enclave trip per toon.
+    /// Imported into our own config (so this never runs twice) and corrected by the first live
+    /// read. Best-effort: any parse problem just means "no cache", never an error.
+    /// </summary>
+    private DomanDonator.EnclaveCache? TryImportDailyDutyDomanCache(ulong id)
+    {
+        try
+        {
+            var configRoot = _pluginInterface.ConfigDirectory.Parent;
+            if (configRoot == null)
+                return null;
+
+            var path = System.IO.Path.Combine(configRoot.FullName, "DailyDuty", id.ToString(), "DomanEnclave.data.json");
+            if (!System.IO.File.Exists(path))
+                return null;
+
+            var json = Newtonsoft.Json.Linq.JObject.Parse(System.IO.File.ReadAllText(path));
+            var allowance = json.Value<int?>("WeeklyAllowance") ?? 0;
+            if (allowance <= 0)
+                return null;
+
+            // Their Reset() zeroes DonatedThisWeek weekly, so the count is current only while
+            // their recorded NextReset is still ahead of us; a stale file keeps the allowance
+            // (it rarely changes) but drops the donated count.
+            var nextReset = json.Value<DateTime?>("NextReset");
+            var donated = nextReset != null && nextReset.Value.ToUniversalTime() > DateTime.UtcNow
+                ? json.Value<int?>("DonatedThisWeek") ?? 0
+                : 0;
+
+            var cache = new DomanDonator.EnclaveCache(allowance, donated, 0, DateTime.UtcNow);
+            WriteDomanEnclaveCache(cache);
+            _log.Info("Doman: seeded enclave cache from DailyDuty ({0:N0} allowance, {1:N0} donated)",
+                allowance, donated);
+            return cache;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    /// <summary>Persist a live enclave read — the donator only calls this on change.</summary>
+    private void WriteDomanEnclaveCache(DomanDonator.EnclaveCache cache)
+    {
+        var id = _jobLevels.LocalContentId;
+        if (id == 0)
+            return;
+
+        _config.DomanEnclaveCache[id] = new CharonConfig.DomanEnclaveSnapshot
+        {
+            Allowance = cache.Allowance,
+            Donated = cache.Donated,
+            RatePercent = cache.RatePercent,
+            CapturedUtc = cache.CapturedUtc,
+        };
+        SaveConfig();
     }
 
     /// <summary>Run a scheduled duty exit (checked every frame — cheap).</summary>

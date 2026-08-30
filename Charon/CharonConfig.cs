@@ -72,6 +72,12 @@ public sealed class CharonConfig : IPluginConfiguration
     /// <summary>Only invite Daedalus LAN party members (skip the manual whitelist for pillion).</summary>
     public bool LanMembersOnly { get; set; } = true;
 
+    /// <summary>
+    /// Pop a small riders window while driving a multi-seat mount, showing who is in which seat.
+    /// Closes itself on dismount.
+    /// </summary>
+    public bool PillionRidersWindowEnabled { get; set; } = true;
+
     // Follow Teleport
     /// <summary>When a trusted party member teleports to another zone, follow them there.</summary>
     public bool FollowTeleportEnabled { get; set; } = false;
@@ -152,8 +158,14 @@ public sealed class CharonConfig : IPluginConfiguration
     /// <summary>Pass on gear more than this many item levels below what this job wears.</summary>
     public int LootPassBelowIlvlGap { get; set; } = 30;
 
-    /// <summary>Walk within 2y of a treasure chest and open it (never in high-end duties).</summary>
+    /// <summary>Walk within reach of a treasure chest and open it (never in high-end duties).</summary>
     public bool AutoOpenChestsEnabled { get; set; } = true;
+
+    /// <summary>
+    /// How close (yalms) a chest must be before the auto-open fires. The game enforces its own
+    /// interact limit — a value past it just means the open fires as soon as you're close enough.
+    /// </summary>
+    public float ChestOpenRange { get; set; } = 4.0f;
 
     /// <summary>Mash the Active Time Maneuver (QTE) automatically so unattended toons never fail one.</summary>
     public bool AutoQteEnabled { get; set; } = true;
@@ -285,6 +297,24 @@ public sealed class CharonConfig : IPluginConfiguration
     /// reset so a used-up toon skips the trip entirely.
     /// </summary>
     public Dictionary<ulong, DateTime> DomanLastDonationUtc { get; set; } = new();
+
+    /// <summary>
+    /// Last enclave state seen live, per character (content id). The client only populates
+    /// <c>DomanEnclaveManager</c> after the character has been near the enclave that session, so
+    /// away from it the live read says nothing — this cache answers instead (DailyDuty's shipped
+    /// approach). The donated count only carries inside the week it was captured; the allowance
+    /// carries until the next real read corrects it (a milestone can change it).
+    /// </summary>
+    public sealed class DomanEnclaveSnapshot
+    {
+        public int Allowance { get; set; }
+        public int Donated { get; set; }
+        public int RatePercent { get; set; }
+        public DateTime CapturedUtc { get; set; }
+    }
+
+    /// <inheritdoc cref="DomanEnclaveSnapshot"/>
+    public Dictionary<ulong, DomanEnclaveSnapshot> DomanEnclaveCache { get; set; } = new();
 
     // Window state
     public bool MainWindowVisible { get; set; } = true;

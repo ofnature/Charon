@@ -4,7 +4,7 @@
 
 # Charon
 
-**The ferryman for your fleet.** A Dalamud plugin for FFXIV, companion to [Daedalus](https://github.com/ofnature/Daedalus) — party assembly, auto pillion with smart seat scanning, whitelisted auto group invite, follow teleport, fleet follow, duty-pop and trade automation, a heal-watch babysitter for leveling alts, automatic gear upgrades, fleet-leader commands, collectible sweeping, FC chest management, gil-cap selling and Doman Enclave donations.
+**The ferryman for your fleet.** A Dalamud plugin for FFXIV, companion to [Daedalus](https://github.com/ofnature/Daedalus) — party assembly, auto pillion with smart seat scanning, whitelisted auto group invite, follow teleport, fleet follow, duty-pop and trade automation, a heal-watch babysitter for leveling alts, automatic gear upgrades, fleet-leader commands, collectible sweeping, FC chest management, gil-cap selling, Doman Enclave donations and a weekly-chores board.
 
 Built for multibox setups: invite the fleet, group up, mount up, teleport out, follow you around, keep the bots alive, and manage the FC chest — without touching seven other keyboards.
 
@@ -20,6 +20,7 @@ Existing auto-pillion tools default everyone to seat 2 and spam it when taken. C
 - **Owner-commanded seats over the LAN** — with the Daedalus LAN relay running, the mount owner broadcasts authoritative seat assignments (cross-machine included); observation-based self-boarding remains the always-working fallback.
 - **Walks to the mount first** via [vnavmesh](https://github.com/awgil/ffxiv_navmesh) when out of range (optional — works without it if the toons already stand nearby).
 - **Tells you when it's full** — a notification pops on the driver's screen once every passenger seat is taken, so you can ride off without counting riders.
+- **Riders window** — a small window appears while you drive a multi-seat mount showing every seat and who is in it (empty seats show the invite state), and closes itself on dismount.
 - Party-gated (a game rule), configurable invite delay and seat timeout, live rider list in the window.
 
 ## Group Management
@@ -138,17 +139,24 @@ Quest rewards, trust runs and AutoDuty runs hand you items directly — no loot 
 
 ## Gil Tools
 
-Two money errands for unattended toons, under the GIL section:
+Money errands for unattended toons, under the GIL section:
 
 - **FT Gil Capping** — free trial accounts cap at 300,000 gil, so a stockpile of GC-bought Duck Bones is how a bot stays solvent. One button splits the exact quantity needed (one bone *over* the cap rather than one short — passing it just prints a chat line), walks to the nearest gil vendor via vnavmesh, opens the shop and sells. Vendors are found by data — any NPC carrying a gil-shop handler — not from a hand-kept list.
-- **Doman Donate** — the Enclave's donation basket pays a gratuity (vendor value × rate) up to a weekly budget that varies by reconstruction stage, and **anything over the budget is eaten**. Charon reads the live budget and rate, splits exactly enough to meet it by the smallest possible margin, stages the stack, presses Donate and answers the confirmation. It refuses to stage any stack larger than the target — that rail exists because a stale number once donated a 999-pile for a fraction of its value.
-- **Knows when you're done for the week.** The client's own Doman state (the same source as the Timers window) says whether this character can still donate — readable anywhere, no trip to find an empty basket. Resets Tuesday.
+
+## Weeklies
+
+A per-character to-do board under its own WEEKLIES section: what this toon can still spend before the next reset, at a glance — with a sidebar dot that lights up while anything is left.
+
+- **Doman donation, Custom Deliveries, Allied Society dailies**, each with its remaining count and its own reset countdown (weeklies Tuesday, dailies at the daily reset). Read from the game's own state — the same sources the Timers window uses.
+- **Honest about unknowns** — a source the client hasn't populated shows `?`, never a confident zero. The Doman figure is cached per character between enclave visits (and seeded one-time from DailyDuty's cache when present), marked "(from last visit)".
+- **Doman Donate** lives here too — the Enclave's donation basket pays a gratuity (vendor value × rate) up to a weekly budget that varies by reconstruction stage, and **anything over the budget is eaten**. Charon reads the live budget and rate, splits exactly enough to meet it by the smallest possible margin, stages the stack, presses Donate and answers the confirmation. It refuses to stage any stack larger than the target — that rail exists because a stale number once donated a 999-pile for a fraction of its value.
+- Charon only *reads* deliveries and tribe allowances — running them is [Odysseus](https://github.com/ofnature/Daedalus)'s job.
 
 ## Tweaks
 
 Game-wide conveniences under their own TWEAKS section, most adapted from [Pandora's Box](https://github.com/PunishXIV/PandorasBox) (BSD-3-Clause, with attribution) — so the fleet needs one fewer plugin:
 
-- **Auto-open treasure chests** — walk within reach and the chest opens. Never in high-end duties, never a chest someone already opened, out of combat only.
+- **Auto-open treasure chests** — walk within reach (configurable range) and the chest opens. Never in high-end duties, never a chest someone already opened, out of combat only.
 - **Auto Active Time Maneuver** — mashes the button when an ATM appears, so an unattended toon never fails one. Direct Chat is parked off during the mash and restored after.
 - **Saddlebag: Entrust Duplicates** — a button riding the saddlebag window itself. Same duplicates-only doctrine as the FC chest: only items the saddlebag *already holds* move in, unique items skipped. Anything the game refuses is skipped and reported, never a stalled pass.
 - **Auto-commendation** — commends a party member when the end-of-duty banner appears, with a role priority (tank / healer / dps) and an option to skip anyone who died. Never people you queued with (the game refuses premades), never in PvP.

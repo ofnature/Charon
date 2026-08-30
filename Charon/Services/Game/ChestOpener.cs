@@ -20,26 +20,27 @@ public sealed unsafe class ChestOpener
 {
     private static readonly TimeSpan ScanThrottle = TimeSpan.FromMilliseconds(300);
     private static readonly TimeSpan InteractCooldown = TimeSpan.FromSeconds(1);
-    private const float OpenRange = 2f;
 
     private readonly IObjectTable _objectTable;
     private readonly ICondition _condition;
     private readonly IDataManager _dataManager;
     private readonly InteractHelper _interact;
     private readonly Func<bool> _enabled;
+    private readonly Func<float> _openRange;
     private readonly IPluginLog _log;
 
     private DateTime _lastScanUtc = DateTime.MinValue;
     private DateTime _lastOpenUtc = DateTime.MinValue;
 
     public ChestOpener(IObjectTable objectTable, ICondition condition, IDataManager dataManager,
-        InteractHelper interact, Func<bool> enabled, IPluginLog log)
+        InteractHelper interact, Func<bool> enabled, Func<float> openRange, IPluginLog log)
     {
         _objectTable = objectTable;
         _condition = condition;
         _dataManager = dataManager;
         _interact = interact;
         _enabled = enabled;
+        _openRange = openRange;
         _log = log;
     }
 
@@ -86,7 +87,7 @@ public sealed unsafe class ChestOpener
             {
                 if (obj.ObjectKind != Dalamud.Game.ClientState.Objects.Enums.ObjectKind.Treasure
                     || !obj.IsTargetable
-                    || Vector3.Distance(local.Position, obj.Position) > OpenRange)
+                    || Vector3.Distance(local.Position, obj.Position) > _openRange())
                     continue;
 
                 var treasure = (FFXIVClientStructs.FFXIV.Client.Game.Object.Treasure*)obj.Address;
