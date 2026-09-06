@@ -16,6 +16,9 @@ internal static class FcChestView
     internal const float MinFontScale = 1.0f;
     internal const float MaxFontScale = 2.5f;
 
+    /// <summary>Last-typed exact-withdraw amount (session-scoped UI state, shared across rows).</summary>
+    private static int _withdrawAmount = 1;
+
     /// <summary>
     /// Draws the body at the user's text scale (accessibility — the item list is small by
     /// default). SetWindowFontScale scales TEXT only, so every fixed pixel size in here is
@@ -81,6 +84,54 @@ internal static class FcChestView
                     : fcChest.Busy
                         ? "Operation in progress"
                         : $"Entrust every inventory stack of items already on Page {page}");
+
+        // Deposit All — everything tradeable in the bags, all five tabs (unviewed tabs are
+        // loaded first by clicking them for you). Crystals/gil/untradeables stay put.
+        ImGui.SameLine();
+        var canDepositAll = chestOpen && !fcChest.Busy;
+        if (!canDepositAll) ImGui.BeginDisabled();
+        if (ImGui.Button("Deposit All") && canDepositAll)
+            ImGui.OpenPopup("fcDepositAllConfirm");
+        if (!canDepositAll) ImGui.EndDisabled();
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip(!chestOpen
+                ? "Must be near the FC chest — open the chest window first"
+                : fcChest.Busy
+                    ? "Operation in progress"
+                    : "Deposit every bag stack of items the chest ALREADY holds (all tabs).\n"
+                      + "Items not in the chest, crystals, gil and untradeables stay put.");
+
+        if (ImGui.BeginPopupModal("fcDepositAllConfirm", ImGuiWindowFlags.AlwaysAutoResize))
+        {
+            ImGui.TextUnformatted("Deposit every bag stack of items the chest already holds?");
+            ImGui.TextColored(CharonTheme.TextSecondary,
+                "Duplicates only — the chest's contents are the shopping list; nothing new is\n"
+                + "seeded. Fills matching chest stacks first, then empty slots, across all five\n"
+                + "tabs. Crystals, gil and untradeables stay put. This cannot be undone.");
+            if (!fcChest.QuantityMovesAvailable)
+                ImGui.TextColored(CharonTheme.StatusYellow,
+                    "Quantity moves unavailable — only whole stacks into empty slots this session.");
+            ImGui.Spacing();
+
+            if (ImGui.Button("Confirm##depAll", new Vector2(120f * scale, 0)))
+            {
+                fcChest.StartDepositAll();
+                ImGui.CloseCurrentPopup();
+            }
+            ImGui.SameLine();
+            if (ImGui.Button("Cancel##depAll", new Vector2(120f * scale, 0)))
+                ImGui.CloseCurrentPopup();
+            ImGui.EndPopup();
+        }
+
+        var searchEnabled = config.FcChestSearchEnabled;
+        if (ImGui.Checkbox("Search bar on the chest window", ref searchEnabled))
+        {
+            config.FcChestSearchEnabled = searchEnabled;
+            save();
+        }
+        CharonTheme.HelpMarker("A search field over the game's FC chest window — items that don't\n"
+                               + "match what you type dim out, and tabs with no match dim too.");
 
         // Confirm modal — the moves are irreversible.
         if (ImGui.BeginPopupModal("fcChestConfirm", ImGuiWindowFlags.AlwaysAutoResize))
@@ -157,6 +208,39 @@ internal static class FcChestView
                         if (ImGui.IsItemHovered())
                             ImGui.SetTooltip($"Withdraw ×{row.TotalQuantity - 1} — exactly 1 unit stays as the seed\n"
                                              + "(withdraw all, split 1 in bags, return it as the seed)");
+
+                        // Exact-amount withdraw (native quantity move — no split, no prompt).
+                        if (fcChest.QuantityMovesAvailable)
+                        {
+                            ImGui.SameLine();
+                            if (busy) ImGui.BeginDisabled();
+                            if (ImGui.SmallButton($"…##wdq{row.ItemId}") && !busy)
+                            {
+                                _withdrawAmount = Math.Min(_withdrawAmount, row.TotalQuantity);
+                                if (_withdrawAmount < 1)
+                                    _withdrawAmount = 1;
+                                ImGui.OpenPopup($"wdAmt{row.ItemId}");
+                            }
+                            if (busy) ImGui.EndDisabled();
+                            if (ImGui.IsItemHovered())
+                                ImGui.SetTooltip("Withdraw an exact amount");
+
+                            if (ImGui.BeginPopup($"wdAmt{row.ItemId}"))
+                            {
+                                ImGui.TextUnformatted(row.Name);
+                                ImGui.SetNextItemWidth(120f * scale);
+                                if (ImGui.InputInt($"##amt{row.ItemId}", ref _withdrawAmount))
+                                    _withdrawAmount = Math.Clamp(_withdrawAmount, 1, row.TotalQuantity);
+                                ImGui.SameLine();
+                                ImGui.TextColored(CharonTheme.TextSecondary, $"of {row.TotalQuantity}");
+                                if (ImGui.Button($"Withdraw ×{_withdrawAmount}##go{row.ItemId}"))
+                                {
+                                    fcChest.StartWithdrawAmount(page, row.ItemId, _withdrawAmount);
+                                    ImGui.CloseCurrentPopup();
+                                }
+                                ImGui.EndPopup();
+                            }
+                        }
                     }
                 }
 

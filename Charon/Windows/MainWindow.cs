@@ -89,6 +89,7 @@ public sealed class MainWindow : Window
     private readonly Func<string> _accountStatus;
     private readonly Func<string> _collectStatus;
     private readonly Func<string> _sprintStatus;
+    private readonly Func<string> _navStatus;
     private readonly Func<string> _qolStatus;
     private readonly Func<string> _lootStatus;
     private readonly Func<string> _levelingStatus;
@@ -153,6 +154,7 @@ public sealed class MainWindow : Window
         Func<string> accountStatus,
         Func<string> collectStatus,
         Func<string> sprintStatus,
+        Func<string> navStatus,
         Func<string> qolStatus,
         Func<string> lootStatus,
         Func<string> levelingStatus,
@@ -194,6 +196,7 @@ public sealed class MainWindow : Window
         _accountStatus = accountStatus;
         _collectStatus = collectStatus;
         _sprintStatus = sprintStatus;
+        _navStatus = navStatus;
         _qolStatus = qolStatus;
         _lootStatus = lootStatus;
         _levelingStatus = levelingStatus;
@@ -424,7 +427,20 @@ public sealed class MainWindow : Window
                                + "(accepts the native teleport offer; falls back to teleporting to an\n"
                                + "unlocked aetheryte in their new zone). Same group only.");
 
+        ImGui.Spacing();
 
+        ImGui.TextColored(CharonTheme.TextSecondary, "Movement");
+        var provider = _config.NavProvider == 1 ? 1 : 0;
+        ImGui.SetNextItemWidth(160f);
+        if (ImGui.Combo("Provider##nav", ref provider, "vnavmesh\0Ariadne\0"))
+        {
+            _config.NavProvider = provider;
+            _save();
+        }
+        CharonTheme.HelpMarker("Which navigation plugin drives all Charon movement — fleet follow,\n"
+                               + "boarding walks, vendor trips. Everything routes through one client,\n"
+                               + "so the switch covers every feature at once. Takes effect instantly.");
+        ImGui.TextColored(CharonTheme.TextDisabled, _navStatus());
 
         ImGui.Spacing();
         ImGui.TextColored(CharonTheme.TextDisabled,
@@ -2114,6 +2130,20 @@ public sealed class MainWindow : Window
                 _config.DeepDungeonEspChests = espChests;
                 _save();
             }
+            CharonTheme.HelpMarker("Coffers, hoards, passage and return, within 35 yalms.");
+
+            var espTraps = _config.DeepDungeonEspTraps;
+            if (ImGui.Checkbox("Traps##ddesp", ref espTraps))
+            {
+                _config.DeepDungeonEspTraps = espTraps;
+                _save();
+            }
+            CharonTheme.HelpMarker("Revealed traps, at any distance — one you can see down a\n"
+                                   + "corridor is exactly the one worth routing around.\n\n"
+                                   + "Unrevealed traps are SERVER-SIDE: until a Pomander of Sight\n"
+                                   + "reveals them they do not exist in the world at all, so no\n"
+                                   + "plugin can draw them (NecroLens can't either). Without Sight\n"
+                                   + "the first you know of a landmine is the chat line.");
             ImGui.Unindent();
         }
     }
@@ -2134,6 +2164,7 @@ public sealed class MainWindow : Window
         DrawStatusLine($"Gear: {_gearStatus()}");
         DrawStatusLine($"Collect: {_collectStatus()}");
         DrawStatusLine($"Sprint: {_sprintStatus()}");
+        DrawStatusLine($"Nav: {_navStatus()}");
         DrawStatusLine($"QoL: {_qolStatus()}");
         DrawStatusLine($"Loot: {_lootStatus()}");
         DrawStatusLine($"Leveling: {_levelingStatus()}");

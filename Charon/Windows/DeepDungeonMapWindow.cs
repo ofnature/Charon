@@ -1,6 +1,8 @@
+using System;
 using System.Numerics;
 using Dalamud.Bindings.ImGui;
 using Dalamud.Interface.Windowing;
+using Dalamud.Plugin.Services;
 using Charon.Features.DeepDungeon;
 using Charon.Services.Game;
 
@@ -18,11 +20,13 @@ public sealed class DeepDungeonMapWindow : Window
     private const float CellGap = 10f;
 
     private readonly DeepDungeonReader _reader;
+    private readonly IObjectTable _objectTable;
 
-    public DeepDungeonMapWindow(DeepDungeonReader reader)
+    public DeepDungeonMapWindow(DeepDungeonReader reader, IObjectTable objectTable)
         : base("Charon — Deep Dungeon##CharonDeepDungeonMap")
     {
         _reader = reader;
+        _objectTable = objectTable;
 
         Flags = ImGuiWindowFlags.AlwaysAutoResize;
         RespectCloseHotkey = false;
@@ -51,6 +55,23 @@ public sealed class DeepDungeonMapWindow : Window
         var drawList = ImGui.GetWindowDrawList();
         var origin = ImGui.GetCursorScreenPos() + new Vector2(4f, 4f);
         var pitch = CellSize + CellGap;
+
+        // Which room we are in, and which way we face — the game's own floor widget draws the
+        // same arrow. The room comes from the party table (we are one of its entries); the
+        // heading is the live object-table rotation.
+        var local = _objectTable.LocalPlayer;
+        var localRoom = -1;
+        if (local != null)
+        {
+            foreach (var member in snapshot.Party)
+            {
+                if (member.EntityId == local.EntityId)
+                {
+                    localRoom = member.Room;
+                    break;
+                }
+            }
+        }
 
         // Connections first, so rooms draw over the line ends.
         foreach (var cell in cells)
@@ -113,21 +134,49 @@ public sealed class DeepDungeonMapWindow : Window
                 pip++;
             }
 
-            // Party pips along the top edge.
+            // Party pips along the top edge. We are drawn as the heading arrow instead, so a pip
+            // for ourselves would just be the same information twice.
             var partyPip = 0;
             foreach (var member in snapshot.Party)
             {
-                if (member.Room != cell.Index || member.EntityId == 0)
+                if (member.Room != cell.Index || member.EntityId == 0
+                    || (local != null && member.EntityId == local.EntityId))
                     continue;
 
                 var pipPos = topLeft + new Vector2(6f + partyPip * 9f, 6f);
                 drawList.AddCircleFilled(pipPos, 3.5f, ImGui.GetColorU32(new Vector4(0.35f, 0.75f, 1f, 1f)));
                 partyPip++;
             }
+
+            if (local != null && cell.Index == localRoom)
+                DrawHeading(drawList, center, local.Rotation);
         }
 
         ImGui.Dummy(new Vector2(FloorMap.GridSize * pitch, FloorMap.GridSize * pitch));
-        ImGui.TextColored(CharonTheme.TextDisabled, "P passage · R return · dots: chests (bottom) / party (top)");
+        ImGui.TextColored(CharonTheme.TextDisabled,
+            "P passage · R return · arrow: you · dots: chests (bottom) / party (top)");
+    }
+
+    /// <summary>
+    /// The "you are here, facing this way" arrow, in the middle of the room we occupy.
+    ///
+    /// A character's rotation gives the world heading as (sin, cos) over the XZ plane — the same
+    /// conversion the ESP's facing cones use. World +Z is south and the grid is drawn north-up
+    /// (a room's North connection is its -Y edge), so that heading maps straight onto screen XY
+    /// with no rotation of its own. If the arrow ever points the wrong way, THAT is the evidence
+    /// the grid is not north-up, which nothing else on this map would reveal.
+    /// </summary>
+    private static void DrawHeading(ImDrawListPtr drawList, Vector2 center, float rotation)
+    {
+        var dir = new Vector2(MathF.Sin(rotation), MathF.Cos(rotation));
+        var normal = new Vector2(-dir.Y, dir.X);
+        var color = ImGui.GetColorU32(new Vector4(0.45f, 0.85f, 1f, 1f));
+
+        drawList.AddTriangleFilled(
+            center + dir * 9f,
+            center - dir * 5f + normal * 6f,
+            center - dir * 5f - normal * 6f,
+            color);
     }
 
     /// <summary>Chest colors by type id — the ids are drawn distinctly rather than named, since

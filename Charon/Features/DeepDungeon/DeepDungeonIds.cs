@@ -25,7 +25,11 @@ public static class DeepDungeonIds
         1882, 1884, 1885, 1886, 1888, 1889, 1890, 1891, 1892, 1893, 1906, 1907, 1908,
     };
 
-    /// <summary>Revealed trap objects, with their names.</summary>
+    /// <summary>
+    /// Revealed trap objects, with their names. REVEALED is the operative word: an unsprung trap
+    /// is server-side only and is not in the object table at all, so nothing can draw it until a
+    /// Pomander of Sight reveals it (NecroLens's own README states the same limitation).
+    /// </summary>
     public static readonly Dictionary<uint, string> Traps = new()
     {
         { 2007182, "Landmine" },

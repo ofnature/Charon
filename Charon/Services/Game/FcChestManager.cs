@@ -4,6 +4,7 @@ using System.Linq;
 using Dalamud.Plugin.Services;
 using Charon.Features.FcChest;
 using FFXIVClientStructs.FFXIV.Client.Game;
+using FFXIVClientStructs.FFXIV.Component.GUI;
 using Lumina.Excel.Sheets;
 
 namespace Charon.Services.Game;
@@ -35,9 +36,44 @@ public sealed unsafe class FcChestManager
         InventoryType.Inventory3, InventoryType.Inventory4,
     ];
 
+    private readonly IChatGui _chatGui;
+    private string _lastGameError = string.Empty;
+    private DateTime _lastGameErrorUtc = DateTime.MinValue;
+    private int _qtyConsecutiveFailures;
+
     private readonly IGameGui _gameGui;
     private readonly IDataManager _dataManager;
+    private readonly InventoryQuantityMover _mover;
     private readonly IPluginLog _log;
+
+    // --- Quantity-move pipeline (withdraw-exact / deposit-all) -------------------------------
+    // Runs through the native quantity move (InventoryQuantityMover); whole-stack-to-empty
+    // moves fall back to MoveItemSlot so a broken sig only removes partial-move capability.
+    private readonly Queue<PlannedMove> _qtyQueue = new();
+    private PlannedMove? _qtyInFlight;
+    private int _qtyDstBefore;
+    private int _qtySrcBefore;
+    private DateTime _qtyDeadlineUtc;
+    private DateTime _qtySubmittedUtc;
+    private DateTime _qtyLastSubmitUtc = DateTime.MinValue;
+    private DateTime _qtySettleUntilUtc = DateTime.MinValue;
+    private bool _qtySwitchFired;
+    private DateTime _qtySwitchDeadlineUtc;
+
+    /// <summary>FCCH's production pacing: 700ms between chest moves (250ms proved too hot).</summary>
+    private static readonly TimeSpan QtyMovePacing = TimeSpan.FromMilliseconds(700);
+
+    /// <summary>FCCH's production settle: 2s after a tab switch before the next move.</summary>
+    private static readonly TimeSpan TabSettle = TimeSpan.FromSeconds(2);
+    private int _qtySucceeded;
+    private int _qtyTotal;
+    private string _qtyVerb = "Moved";
+
+    // --- Tab walker: loads unviewed chest pages by simulating the tab click ------------------
+    private int _walkTarget = -1;
+    private bool _walkFired;
+    private DateTime _walkDeadlineUtc;
+    private bool _depositAfterWalk;
 
     private readonly Queue<ChestMove> _pending = new();
     private readonly List<ChestLogEntry> _operationLog = new();
@@ -88,11 +124,36 @@ public sealed unsafe class FcChestManager
     private int _contentsCachePage;
     private DateTime _contentsCacheUtc = DateTime.MinValue;
 
-    public FcChestManager(IGameGui gameGui, IDataManager dataManager, IPluginLog log)
+    public FcChestManager(IGameGui gameGui, IDataManager dataManager, InventoryQuantityMover mover,
+        IChatGui chatGui, IPluginLog log)
     {
         _gameGui = gameGui;
         _dataManager = dataManager;
+        _mover = mover;
+        _chatGui = chatGui;
         _log = log;
+        _chatGui.ChatMessage += OnChatMessage;
+    }
+
+    public void Dispose() => _chatGui.ChatMessage -= OnChatMessage;
+
+    /// <summary>
+    /// The game's refusal channel: chest writes that the server rejects raise an ErrorMessage
+    /// toast ("Unable to store item. Another player is using the chest.", stack full, …) and
+    /// then fail SILENTLY on every further attempt. Any error toast while one of our moves is
+    /// in flight is treated as the verdict on that move — the run aborts with the game's own
+    /// words instead of grinding the rest of the queue through delivery timeouts (learned the
+    /// hard way: 93 queued moves, one toast, four minutes of silent failures).
+    /// </summary>
+    private void OnChatMessage(Dalamud.Game.Chat.IHandleableChatMessage message)
+    {
+        if (message.LogKind != Dalamud.Game.Text.XivChatType.ErrorMessage)
+            return;
+        if (_qtyInFlight == null && _inFlight == null)
+            return;
+
+        _lastGameErrorUtc = DateTime.UtcNow;
+        _lastGameError = message.Message.TextValue;
     }
 
     public string Status { get; private set; } = "idle";
@@ -103,7 +164,11 @@ public sealed unsafe class FcChestManager
     /// <summary>Per-item results of the last operation, newest run only.</summary>
     public IReadOnlyList<ChestLogEntry> OperationLog => _operationLog;
 
-    public bool Busy => _pending.Count > 0 || _inFlight != null || _seedReturn != null;
+    public bool Busy => _pending.Count > 0 || _inFlight != null || _seedReturn != null
+                        || _qtyQueue.Count > 0 || _qtyInFlight != null || _walkTarget > 0;
+
+    /// <summary>The native quantity move resolved — exact-amount withdrawals are possible.</summary>
+    public bool QuantityMovesAvailable => _mover.Available;
 
     /// <summary>Aggregated contents of the page for the UI table (cached ~500ms). Empty when unloaded.</summary>
     public IReadOnlyList<ChestContentRow> GetPageContents(int page)
@@ -229,6 +294,519 @@ public sealed unsafe class FcChestManager
         return moves.Count;
     }
 
+    // --- Quantity-accurate operations (built on the native quantity move) ---------------------
+
+    /// <summary>
+    /// Withdraw exactly <paramref name="amount"/> units of one item from the page into the bags.
+    /// Needs the quantity native (<see cref="QuantityMovesAvailable"/>); merges into existing bag
+    /// stacks first, NQ stacks are drawn before HQ.
+    /// </summary>
+    public int StartWithdrawAmount(int page, uint itemId, int amount)
+    {
+        if (Busy || amount <= 0 || !_mover.Available
+            || !FcChestPlanner.CanExecute(IsChestOpen(), IsPageLoaded(page)))
+        {
+            LastOperation = !_mover.Available
+                ? "Withdraw: quantity moves unavailable (signature not resolved)"
+                : Busy ? "Withdraw: another operation is still running" : "Withdraw: chest/page not ready";
+            OperationJustFinished = true;
+            return 0;
+        }
+
+        var moves = new List<PlannedMove>();
+        var empties = FreeSlots(PlayerBags);
+
+        // Per quality bucket: merging NQ into an HQ stack (or vice versa) is refused by the game,
+        // so each bucket only sees partial bag stacks of its own quality. NQ drains first.
+        var remaining = amount;
+        foreach (var hq in new[] { false, true })
+        {
+            if (remaining <= 0)
+                break;
+
+            var chestStacks = ReadInvStacks(PageType(page)).Where(s => s.ItemId == itemId && s.Hq == hq).ToList();
+            if (chestStacks.Count == 0)
+                continue;
+
+            var bagPartials = PlayerBags.SelectMany(ReadInvStacks)
+                .Where(s => s.ItemId == itemId && s.Hq == hq && s.Quantity < s.MaxStack).ToList();
+            var planned = QuantityMovePlanner.PlanWithdraw(chestStacks, bagPartials, empties, remaining);
+            moves.AddRange(planned);
+            remaining -= QuantityMovePlanner.TotalUnits(planned);
+
+            var used = planned.Where(m => empties.Any(e => e.Container == m.DstContainer && e.Slot == m.DstSlot))
+                .Select(m => (m.DstContainer, m.DstSlot)).ToHashSet();
+            empties = empties.Where(e => !used.Contains((e.Container, e.Slot))).ToList();
+        }
+
+        if (moves.Count == 0)
+        {
+            LastOperation = "Withdraw: no room in bags (or nothing to take)";
+            OperationJustFinished = true;
+            return 0;
+        }
+
+        BeginQuantityOperation(moves, "Withdrew");
+        return moves.Count;
+    }
+
+    /// <summary>
+    /// Deposit every tradeable bag stack into the chest (crystals and gil excluded — they have
+    /// their own containers). Unviewed tabs are loaded first by simulating their tab click; the
+    /// deposit plan runs once every page can answer. Partial-stack top-ups need the quantity
+    /// native; without it only whole-stack-to-empty moves are planned.
+    /// </summary>
+    public bool StartDepositAll()
+    {
+        if (Busy || !IsChestOpen())
+        {
+            LastOperation = Busy ? "Deposit all: another operation is still running" : "Deposit all: the FC chest isn't open";
+            OperationJustFinished = true;
+            return false;
+        }
+
+        var unloaded = FirstUnloadedPage();
+        if (unloaded > 0)
+        {
+            _walkTarget = unloaded;
+            _walkFired = false;
+            _walkDeadlineUtc = DateTime.UtcNow + TimeSpan.FromSeconds(4);
+            _depositAfterWalk = true;
+            Status = $"loading chest tab {unloaded}…";
+            return true;
+        }
+
+        return PlanAndQueueDepositAll();
+    }
+
+    private bool PlanAndQueueDepositAll()
+    {
+        // Duplicates-only doctrine, same as the per-page entrust: only items the chest ALREADY
+        // holds move in — the chest's contents are the shopping list, never seeds of new items.
+        var chestStacks = new List<InvStack>();
+        var empties = new List<(int Container, short Slot)>();
+        for (var page = 1; page <= 5; page++)
+        {
+            if (!IsPageLoaded(page))
+                continue;
+            chestStacks.AddRange(ReadInvStacks(PageType(page)));
+            empties.AddRange(FreeSlots([PageType(page)]));
+        }
+
+        var chestItemIds = chestStacks.Select(c => c.ItemId).ToHashSet();
+        var chestPartials = chestStacks.Where(c => c.Quantity < c.MaxStack).ToList();
+
+        var skippedUntradeable = 0;
+        var skippedNotInChest = 0;
+        var bagStacks = new List<InvStack>();
+        foreach (var stack in PlayerBags.SelectMany(ReadInvStacks))
+        {
+            // Gil (1) and crystals (2-19) live in their own chest containers; untradeables the
+            // chest refuses outright (LogMessage 1866) — skip rather than collect refusals.
+            if (stack.ItemId <= 19)
+                continue;
+            if (!chestItemIds.Contains(stack.ItemId))
+            {
+                skippedNotInChest++;
+                continue;
+            }
+
+            if (IsUntradable(stack.ItemId))
+            {
+                skippedUntradeable++;
+                continue;
+            }
+
+            bagStacks.Add(stack);
+        }
+
+        var moves = QuantityMovePlanner.PlanDepositAll(bagStacks, chestPartials, empties, _mover.Available);
+        if (moves.Count == 0)
+        {
+            LastOperation = $"Deposit all: nothing to deposit ({skippedNotInChest} stacks not in the chest, "
+                            + $"{skippedUntradeable} untradeable — both stay put)";
+            OperationJustFinished = true;
+            return false;
+        }
+
+        BeginQuantityOperation(moves, "Deposited");
+        if (skippedNotInChest > 0)
+            _operationLog.Add(new ChestLogEntry($"{skippedNotInChest} stacks of items not in the chest", 0, "skipped"));
+        if (skippedUntradeable > 0)
+            _operationLog.Add(new ChestLogEntry($"{skippedUntradeable} untradeable stacks", 0, "skipped"));
+        return true;
+    }
+
+    /// <summary>Walks unviewed tabs by firing the addon's own tab-click callback (two ints: 0, page index 0-4).</summary>
+    private void DriveTabWalk(DateTime nowUtc)
+    {
+        if (IsPageLoaded(_walkTarget))
+        {
+            _walkTarget = FirstUnloadedPage();
+            _walkFired = false;
+            _walkDeadlineUtc = nowUtc + TimeSpan.FromSeconds(4);
+            if (_walkTarget > 0)
+            {
+                Status = $"loading chest tab {_walkTarget}…";
+                return;
+            }
+
+            if (_depositAfterWalk)
+            {
+                _depositAfterWalk = false;
+                if (PlanAndQueueDepositAll())
+                    _qtySettleUntilUtc = nowUtc + TabSettle; // just walked tabs — let the session settle
+            }
+
+            return;
+        }
+
+        if (!_walkFired)
+        {
+            var addon = _gameGui.GetAddonByName(ChestAddonName);
+            if (addon.IsNull)
+                return;
+
+            FcChestUi.SwitchToPage((AtkUnitBase*)addon.Address, _walkTarget);
+            _walkFired = true;
+            return;
+        }
+
+        if (nowUtc > _walkDeadlineUtc)
+        {
+            _walkTarget = -1;
+            _depositAfterWalk = false;
+            LastOperation = $"Deposit all: tab {FirstUnloadedPage()} would not load — view it in the chest once and retry";
+            Status = "tab walk timed out";
+            OperationJustFinished = true;
+        }
+    }
+
+    private void BeginQuantityOperation(IReadOnlyList<PlannedMove> moves, string verb)
+    {
+        _operationLog.Clear();
+        _qtyQueue.Clear();
+        // Grouped by chest page: the game's own UI can only ever touch the DISPLAYED tab, so
+        // the executor switches the real tab to each group's page — grouping minimizes switches.
+        foreach (var move in moves.OrderBy(ChestPageOf))
+            _qtyQueue.Enqueue(move);
+        _qtyInFlight = null;
+        _qtySucceeded = 0;
+        _qtyTotal = moves.Count;
+        _qtyVerb = verb;
+        _qtyConsecutiveFailures = 0;
+        _lastGameError = string.Empty;
+        _lastGameErrorUtc = DateTime.MinValue;
+        _qtySwitchFired = false;
+        _qtySettleUntilUtc = DateTime.MinValue;
+        _qtyLastSubmitUtc = DateTime.MinValue;
+        Status = $"queued {moves.Count} moves";
+    }
+
+    private void DriveQuantityQueue(DateTime nowUtc)
+    {
+        if (_qtyInFlight != null)
+        {
+            if (!TryVerifyQuantityMove(nowUtc))
+                return;
+
+            _contentsCache = null;
+            if (_qtyQueue.Count > 0)
+                return; // next tick submits
+        }
+
+        if (_qtyQueue.Count == 0)
+        {
+            // _qtyTotal is zeroed by AbortQuantityRun — never overwrite its message.
+            if (_qtyInFlight == null && _qtyTotal > 0)
+                FinishQuantityOperation();
+            return;
+        }
+
+        // The game's own pending-operation ring: never stack a move on one still settling.
+        if (InventoryQuantityMover.HasPendingOperation())
+            return;
+
+        if (nowUtc < _qtySettleUntilUtc || nowUtc - _qtyLastSubmitUtc < QtyMovePacing)
+            return;
+
+        // The chest only reliably accepts moves for the DISPLAYED tab (the game's own UI can do
+        // nothing else) — switch the real tab to the next move's page and let it settle first.
+        var nextPage = ChestPageOf(_qtyQueue.Peek());
+        if (nextPage >= 1 && !EnsureDisplayedPage(nextPage, nowUtc))
+            return;
+
+        var move = _qtyQueue.Dequeue();
+        var src = ReadSlot(move.SrcContainer, move.SrcSlot);
+        if (src == null || src.Value.ItemId != move.ItemId || src.Value.Quantity < move.Quantity)
+        {
+            _operationLog.Add(new ChestLogEntry(ItemName(move.ItemId), move.Quantity, "FAILED — source changed"));
+            return;
+        }
+
+        var dst = ReadSlot(move.DstContainer, move.DstSlot);
+        _qtySrcBefore = src.Value.Quantity;
+        _qtyDstBefore = dst?.Quantity ?? 0;
+
+        // FCCH parity: EVERY chest transfer goes through the quantity native when it resolved
+        // (their MoveItemSlot use is same-tab sort swaps only); MoveItemSlot is the fallback for
+        // whole-stack moves when the sig is dead.
+        var ok = _mover.Available
+            ? _mover.Move((InventoryType)move.SrcContainer, (ushort)move.SrcSlot,
+                (InventoryType)move.DstContainer, (ushort)move.DstSlot, move.Quantity)
+            : move.WholeStack
+              && InventoryManager.Instance()->MoveItemSlot((InventoryType)move.SrcContainer, (ushort)move.SrcSlot,
+                  (InventoryType)move.DstContainer, (ushort)move.DstSlot, true) >= 0;
+
+        if (!ok)
+        {
+            _operationLog.Add(new ChestLogEntry(ItemName(move.ItemId), move.Quantity, "FAILED — move refused"));
+            return;
+        }
+
+        _log.Debug("FC qty move: {0} ×{1} {2}:{3} -> {4}:{5} ({6}, displayed tab {7})",
+            ItemName(move.ItemId), move.Quantity,
+            (InventoryType)move.SrcContainer, move.SrcSlot, (InventoryType)move.DstContainer, move.DstSlot,
+            _mover.Available ? "native" : "MoveItemSlot", DisplayedPageForLog());
+        _qtyInFlight = move;
+        _qtySubmittedUtc = nowUtc;
+        _qtyLastSubmitUtc = nowUtc;
+        _qtyDeadlineUtc = nowUtc + TimeSpan.FromSeconds(2.5);
+        Status = $"moving {_qtySucceeded + 1} of {_qtyTotal}…";
+    }
+
+    /// <summary>Delivery check: the destination gained the units (or the source lost them).</summary>
+    private bool TryVerifyQuantityMove(DateTime nowUtc)
+    {
+        var move = _qtyInFlight!;
+        var src = ReadSlot(move.SrcContainer, move.SrcSlot);
+        var dst = ReadSlot(move.DstContainer, move.DstSlot);
+
+        var srcNow = src?.ItemId == move.ItemId ? src.Value.Quantity : 0;
+        var dstNow = dst?.ItemId == move.ItemId ? dst.Value.Quantity : 0;
+        if (dstNow >= _qtyDstBefore + move.Quantity || srcNow <= _qtySrcBefore - move.Quantity)
+        {
+            _qtySucceeded++;
+            _qtyConsecutiveFailures = 0;
+            _operationLog.Add(new ChestLogEntry(ItemName(move.ItemId), move.Quantity, _qtyVerb.ToLowerInvariant()));
+            _qtyInFlight = null;
+            return true;
+        }
+
+        // The game said no out loud — its toast is the verdict, and every further attempt
+        // would fail silently. Abort the whole run with the game's own words.
+        if (_lastGameErrorUtc >= _qtySubmittedUtc && _lastGameError.Length > 0)
+        {
+            _operationLog.Add(new ChestLogEntry(ItemName(move.ItemId), move.Quantity, $"FAILED — {_lastGameError}"));
+            AbortQuantityRun($"the game refused: {_lastGameError}");
+            return true;
+        }
+
+        if (nowUtc > _qtyDeadlineUtc)
+        {
+            _operationLog.Add(new ChestLogEntry(ItemName(move.ItemId), move.Quantity, "FAILED — not delivered"));
+            _qtyInFlight = null;
+
+            // Two silent no-deliveries in a row = something environmental (chest locked by
+            // another toon, view-only permissions) — stop grinding the queue.
+            if (++_qtyConsecutiveFailures >= 2)
+                AbortQuantityRun("moves are not landing — is another toon using the chest?");
+            return true;
+        }
+
+        return false;
+    }
+
+    private void AbortQuantityRun(string reason)
+    {
+        var dropped = _qtyQueue.Count;
+        _qtyQueue.Clear();
+        _qtyInFlight = null;
+        LastOperation = $"{_qtyVerb} {_qtySucceeded} of {_qtyTotal} — aborted ({reason}"
+                        + (dropped > 0 ? $", {dropped} moves dropped)" : ")");
+        Status = "aborted";
+        _qtyTotal = 0;
+        OperationJustFinished = true;
+        _contentsCache = null;
+    }
+
+    private void FinishQuantityOperation()
+    {
+        LastOperation = $"{_qtyVerb} {_qtySucceeded} of {_qtyTotal} moves";
+        Status = "idle";
+        _qtyTotal = 0;
+        OperationJustFinished = true;
+        _contentsCache = null;
+    }
+
+    /// <summary>The chest page (1-5) a move touches, from whichever side is an FC container.</summary>
+    private static int ChestPageOf(PlannedMove move)
+    {
+        const int page1 = (int)InventoryType.FreeCompanyPage1;
+        if (move.DstContainer >= page1 && move.DstContainer <= page1 + 4)
+            return move.DstContainer - page1 + 1;
+        if (move.SrcContainer >= page1 && move.SrcContainer <= page1 + 4)
+            return move.SrcContainer - page1 + 1;
+        return -1;
+    }
+
+    /// <summary>
+    /// True when the chest window is showing <paramref name="page"/>; otherwise fires the tab
+    /// click (once) and waits, with a settle pause after the switch lands. A tab that will not
+    /// come up aborts the run rather than feeding moves to the wrong view.
+    /// </summary>
+    private bool EnsureDisplayedPage(int page, DateTime nowUtc)
+    {
+        var addon = _gameGui.GetAddonByName(ChestAddonName);
+        if (addon.IsNull)
+            return false;
+
+        var unit = (AtkUnitBase*)addon.Address;
+        if (FcChestUi.CurrentPage(unit) == page)
+        {
+            if (_qtySwitchFired)
+            {
+                // The switch just landed — give the session FCCH's settle before moving.
+                _qtySwitchFired = false;
+                _qtySettleUntilUtc = nowUtc + TabSettle;
+                return false;
+            }
+
+            return true;
+        }
+
+        if (!_qtySwitchFired)
+        {
+            _log.Debug("FC chest: switching displayed tab {0} -> {1}", FcChestUi.CurrentPage(unit), page);
+            FcChestUi.SwitchToPage(unit, page);
+            _qtySwitchFired = true;
+            _qtySwitchDeadlineUtc = nowUtc + TimeSpan.FromSeconds(4);
+            return false;
+        }
+
+        if (nowUtc > _qtySwitchDeadlineUtc)
+        {
+            _qtySwitchFired = false;
+            AbortQuantityRun($"could not switch the chest to tab {page}");
+        }
+
+        return false;
+    }
+
+    private int DisplayedPageForLog()
+    {
+        try
+        {
+            var addon = _gameGui.GetAddonByName(ChestAddonName);
+            return addon.IsNull ? -1 : FcChestUi.CurrentPage((AtkUnitBase*)addon.Address);
+        }
+        catch
+        {
+            return -1;
+        }
+    }
+
+    private int FirstUnloadedPage()
+    {
+        for (var page = 1; page <= 5; page++)
+        {
+            if (!IsPageLoaded(page))
+                return page;
+        }
+
+        return -1;
+    }
+
+    private List<InvStack> ReadInvStacks(InventoryType type)
+    {
+        var stacks = new List<InvStack>();
+        try
+        {
+            var container = InventoryManager.Instance()->GetInventoryContainer(type);
+            if (container == null || !container->IsLoaded)
+                return stacks;
+
+            for (var i = 0; i < container->Size; i++)
+            {
+                var item = container->GetInventorySlot(i);
+                if (item == null || item->ItemId == 0)
+                    continue;
+
+                var hq = (item->Flags & FFXIVClientStructs.FFXIV.Client.Game.InventoryItem.ItemFlags.HighQuality) != 0;
+                stacks.Add(new InvStack((int)type, (short)i, item->ItemId, (int)item->Quantity, MaxStackOf(item->ItemId), hq));
+            }
+        }
+        catch
+        {
+            // fail-open: an unreadable container plans as empty
+        }
+
+        return stacks;
+    }
+
+    private List<(int Container, short Slot)> FreeSlots(InventoryType[] containers)
+    {
+        var free = new List<(int, short)>();
+        try
+        {
+            foreach (var type in containers)
+            {
+                var container = InventoryManager.Instance()->GetInventoryContainer(type);
+                if (container == null || !container->IsLoaded)
+                    continue;
+
+                for (var i = 0; i < container->Size; i++)
+                {
+                    var item = container->GetInventorySlot(i);
+                    if (item == null || item->ItemId == 0)
+                        free.Add(((int)type, (short)i));
+                }
+            }
+        }
+        catch
+        {
+            // fail-open
+        }
+
+        return free;
+    }
+
+    private (uint ItemId, int Quantity)? ReadSlot(int containerType, short slot)
+    {
+        try
+        {
+            var container = InventoryManager.Instance()->GetInventoryContainer((InventoryType)containerType);
+            if (container == null || !container->IsLoaded || slot >= container->Size)
+                return null;
+
+            var item = container->GetInventorySlot(slot);
+            return item == null ? null : (item->ItemId, (int)item->Quantity);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private readonly Dictionary<uint, (string Name, int MaxStack, bool Untradable)> _itemInfoCache = new();
+
+    private (string Name, int MaxStack, bool Untradable) ItemInfo(uint itemId)
+    {
+        if (_itemInfoCache.TryGetValue(itemId, out var info))
+            return info;
+
+        var sheet = _dataManager.GetExcelSheet<Lumina.Excel.Sheets.Item>();
+        info = sheet != null && sheet.TryGetRow(itemId, out var row)
+            ? (row.Name.ExtractText(), (int)row.StackSize, row.IsUntradable)
+            : ($"Item#{itemId}", 999, false);
+        _itemInfoCache[itemId] = info;
+        return info;
+    }
+
+    private string ItemName(uint itemId) => ItemInfo(itemId).Name;
+    private int MaxStackOf(uint itemId) => ItemInfo(itemId).MaxStack;
+    private bool IsUntradable(uint itemId) => ItemInfo(itemId).Untradable;
+
     /// <summary>
     /// Drive the move queue: alternate ticks submit a move and VERIFY the previous one by
     /// re-reading its source slot — the only reliable success signal (MoveItemSlot's return
@@ -237,7 +815,8 @@ public sealed unsafe class FcChestManager
     /// </summary>
     public void Update(DateTime nowUtc)
     {
-        if (_pending.Count == 0 && _inFlight == null && _seedReturn == null)
+        if (_pending.Count == 0 && _inFlight == null && _seedReturn == null
+            && _qtyQueue.Count == 0 && _qtyInFlight == null && _walkTarget <= 0)
             return;
 
         if (nowUtc - _lastMoveUtc < MovePacing)
@@ -250,8 +829,24 @@ public sealed unsafe class FcChestManager
             _pending.Clear();
             _inFlight = null;
             _seedReturn = null;
+            _qtyQueue.Clear();
+            _qtyInFlight = null;
+            _walkTarget = -1;
+            _depositAfterWalk = false;
             Status = "aborted — chest closed";
             OperationJustFinished = true;
+            return;
+        }
+
+        if (_walkTarget > 0)
+        {
+            DriveTabWalk(nowUtc);
+            return;
+        }
+
+        if (_qtyInFlight != null || _qtyQueue.Count > 0)
+        {
+            DriveQuantityQueue(nowUtc);
             return;
         }
 

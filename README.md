@@ -97,7 +97,10 @@ Consolidate and reclaim the Free Company chest, per page:
 - A dedicated window **pops up automatically next to the game's FC chest** with a per-page contents table (item / quantity / stacks) for pages 1–5.
 - **Entrust Duplicates** — sends every inventory stack of items already on the page, merging into existing stacks instead of scattering into free slots.
 - **Withdraw all but 1** per item — leaves exactly one unit behind as the seed and pulls the rest to your bags.
-- Manual trigger only, confirm before entrusting, gated on the chest being open with the page loaded; every move is verified against real chest state before the next one fires.
+- **Withdraw an exact amount** — type a number and take precisely that many, merging into bag stacks you already carry. No stack splitting and no quantity prompt: the game's own inventory move takes a count, it just isn't exposed by the usual wrapper.
+- **Deposit All** — every bag stack of items the chest *already holds*, across all five tabs at once, filling partial chest stacks before claiming empty slots. Duplicates-only by design, exactly like Entrust: the chest's contents are the shopping list, so nothing new is ever seeded. Tabs you haven't opened are loaded for you first; crystals, gil and untradeables stay put.
+- **Search bar on the game's chest window** — type and every item that doesn't match dims out, along with any tab holding no match. Nothing is moved; it just makes a 250-slot chest findable.
+- Manual trigger only, confirm before entrusting, gated on the chest being open with the page loaded; every move is verified against real chest state before the next one fires, and if the game refuses one the run stops and quotes the refusal rather than grinding through the queue.
 - **Text Size** slider (100–250%) for the item list — scales the whole panel proportionally, persisted per install.
 
 ## Gear Equipper
@@ -171,9 +174,18 @@ Groundwork for SealBreaker's leveling mode: `Charon.Leveling.*` gates expose eve
 
 Palace of the Dead, Heaven-on-High, Eureka Orthos and Pilgrim's Traverse support, shown only while actually inside one:
 
-- **Floor map window** — the full 5×5 room layout with connections, passage, return, chest markers and party positions, *including rooms the game hasn't revealed yet* (drawn dim). Read straight from the game's own floor state — the Pomander of Sight view, permanently, read-only.
+- **Floor map window** — the full 5×5 room layout with connections, passage, return, chest markers and party positions, *including rooms the game hasn't revealed yet* (drawn dim), plus a **heading arrow** marking the room you're in and the way you're facing. Read straight from the game's own floor state — the Pomander of Sight view, permanently, read-only.
 - **ESP overlay** (ported from [NecroLens](https://github.com/Jukkales/NecroLens), MIT) — chests, passage, return, revealed traps, and mob aggro ranges drawn over the world. Aggro shapes follow how each mob notices you: circle = proximity, circle with a core = sound, facing cone = sight — from NecroLens's curated dataset of ~700 mobs. Patrols get a facing arrow. Mobs already in combat draw nothing.
+- **Coffers open themselves** — bronze, silver, gold and dug-up hoards, which the game models differently from overworld chests and so were previously ignored. A silver coffer is left alone below 77% HP, because those can be trap chests and the damage kills unattended toons.
+- Traps draw at any distance once revealed — but an unrevealed trap is server-side and exists in no plugin's world until a Pomander of Sight reveals it.
 - Boss fights stay BossMod's job, exactly as with Fleet Follow — Charon adds the pieces BMR doesn't have.
+
+## Movement
+
+Every Charon movement — fleet follow, walking to a mount before boarding, the trip to a gil vendor — runs through one navigation client, so a single dropdown in **General → Movement** switches all of it at once:
+
+- **vnavmesh** (default) or **[Ariadne](https://github.com/ofnature/Ariadne)**, applied instantly, no reload.
+- Either way it fails open: with the chosen provider missing or not ready, movement features degrade exactly as they always have (boarding just needs the toons already stood near the mount) rather than erroring.
 
 ## Daedalus Integration
 

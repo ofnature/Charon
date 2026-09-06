@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Numerics;
 using Dalamud.Bindings.ImGui;
 using Dalamud.Game.ClientState.Objects.Enums;
@@ -28,21 +29,29 @@ public sealed class EspOverlayWindow : Window
     private readonly IObjectTable _objectTable;
     private readonly IGameGui _gameGui;
     private readonly IClientState _clientState;
+    private readonly IPluginLog _log;
     private readonly MobDatabase _mobs;
     private readonly Func<bool> _showMobs;
     private readonly Func<bool> _showChests;
+    private readonly Func<bool> _showTraps;
     private readonly Func<bool> _showMobNames;
 
+    /// <summary>EventObj base ids we have no entry for, logged once each — how the tables grow.</summary>
+    private readonly HashSet<uint> _unknownIds = new();
+
     public EspOverlayWindow(IObjectTable objectTable, IGameGui gameGui, IClientState clientState,
-        MobDatabase mobs, Func<bool> showMobs, Func<bool> showChests, Func<bool> showMobNames)
+        IPluginLog log, MobDatabase mobs, Func<bool> showMobs, Func<bool> showChests,
+        Func<bool> showTraps, Func<bool> showMobNames)
         : base("##CharonDeepDungeonEsp")
     {
         _objectTable = objectTable;
         _gameGui = gameGui;
         _clientState = clientState;
+        _log = log;
         _mobs = mobs;
         _showMobs = showMobs;
         _showChests = showChests;
+        _showTraps = showTraps;
         _showMobNames = showMobNames;
 
         Flags = ImGuiWindowFlags.NoDecoration | ImGuiWindowFlags.NoBackground
@@ -59,6 +68,9 @@ public sealed class EspOverlayWindow : Window
         Size = viewport.Size;
     }
 
+    /// <summary>What the last frame actually drew — the Debug line, and the trap diagnostic.</summary>
+    public string Status { get; private set; } = "not drawn yet";
+
     public override void Draw()
     {
         var local = _objectTable.LocalPlayer;
@@ -67,6 +79,7 @@ public sealed class EspOverlayWindow : Window
 
         var drawList = ImGui.GetWindowDrawList();
         var inPotd = DeepDungeonIds.PotdMaps.Contains(_clientState.MapId);
+        int mobs = 0, chests = 0, traps = 0;
 
         foreach (var obj in _objectTable)
         {
@@ -77,30 +90,58 @@ public sealed class EspOverlayWindow : Window
 
             if (obj.ObjectKind == ObjectKind.BattleNpc)
             {
-                if (_showMobs() && distance <= MobDrawRange)
-                    DrawMob(drawList, obj, inPotd);
+                if (_showMobs() && distance <= MobDrawRange && DrawMob(drawList, obj, inPotd))
+                    mobs++;
                 continue;
             }
 
-            if (_showChests() && distance <= ChestDrawRange)
-                DrawFloorObject(drawList, obj);
+            var visual = Classify(obj.BaseId);
+            if (visual.Kind == FloorKind.None)
+            {
+                // An unrecognised EventObj is either scenery or an id we don't know yet (a newer
+                // dungeon's traps would look exactly like this) — log each once so the table can
+                // grow from evidence instead of the overlay silently drawing nothing.
+                if (obj.ObjectKind == ObjectKind.EventObj && _unknownIds.Add(obj.BaseId))
+                    _log.Info("Deep dungeon ESP: unrecognised EventObj {0} '{1}'", obj.BaseId, obj.Name.TextValue);
+                continue;
+            }
+
+            // Traps carry their OWN toggle and no distance cap — NecroLens draws them wherever
+            // they are on screen, and only chests/waypoints get the 35y highlight range.
+            if (visual.Kind == FloorKind.Trap)
+            {
+                if (!_showTraps())
+                    continue;
+                traps++;
+            }
+            else
+            {
+                if (!_showChests() || distance > ChestDrawRange)
+                    continue;
+                chests++;
+            }
+
+            DrawFloorObject(drawList, obj, visual);
         }
+
+        Status = $"{mobs} mobs · {chests} chests/waypoints · {traps} traps"
+                 + (_unknownIds.Count > 0 ? $" · {_unknownIds.Count} unknown ids (see log)" : "");
     }
 
     // --- Mobs: aggro circles by how they notice you, patrol arrows, names ---
 
-    private void DrawMob(ImDrawListPtr drawList, IGameObject obj, bool inPotd)
+    private bool DrawMob(ImDrawListPtr drawList, IGameObject obj, bool inPotd)
     {
         if (obj is not IBattleNpc npc || npc.CurrentHp == 0)
-            return;
+            return false;
 
         if (npc.SubKind != (byte)BattleNpcSubKind.Combatant
             || DeepDungeonIds.FriendlyNames.Contains(npc.NameId))
-            return;
+            return false;
 
         // Aggroed mobs are the rotation's problem — circles only matter before the pull.
         if (npc.StatusFlags.HasFlag(StatusFlags.InCombat))
-            return;
+            return false;
 
         var record = _mobs.Find(npc.NameId);
         var isMimic = DeepDungeonIds.MimicNames.Contains(npc.NameId);
@@ -141,41 +182,49 @@ public sealed class EspOverlayWindow : Window
             drawList.AddText(new Vector2(screen.X - size.X / 2f, screen.Y - size.Y - 2f),
                 ImGui.GetColorU32(new Vector4(0.95f, 0.95f, 0.95f, 0.9f)), name);
         }
+
+        return true;
     }
 
     // --- Chests, passage, return, traps ---
 
-    private void DrawFloorObject(ImDrawListPtr drawList, IGameObject obj)
+    private enum FloorKind
     {
-        var baseId = obj.BaseId;
-        var (radius, color, label) = baseId switch
-        {
-            _ when DeepDungeonIds.BronzeChests.Contains(baseId) =>
-                (1f, new Vector4(0.80f, 0.55f, 0.30f, 0.9f), "Bronze"),
-            DeepDungeonIds.SilverChest => (1f, new Vector4(0.85f, 0.85f, 0.90f, 0.9f), "Silver"),
-            DeepDungeonIds.GoldChest => (1f, new Vector4(1f, 0.84f, 0.25f, 0.9f), "Gold"),
-            DeepDungeonIds.MimicChest => (1f, new Vector4(1f, 0.30f, 0.30f, 0.95f), "MIMIC?"),
-            DeepDungeonIds.AccursedHoard => (2f, new Vector4(0.55f, 0.90f, 0.95f, 0.9f), "Hoard"),
-            DeepDungeonIds.AccursedHoardCoffer => (1f, new Vector4(0.55f, 0.90f, 0.95f, 0.9f), "Hoard"),
-            _ when DeepDungeonIds.Passages.Contains(baseId) =>
-                (2f, new Vector4(0.35f, 0.85f, 0.45f, 0.9f), "Passage"),
-            _ when DeepDungeonIds.Returns.Contains(baseId) =>
-                (2f, new Vector4(0.90f, 0.80f, 0.30f, 0.9f), "Return"),
-            _ when DeepDungeonIds.Traps.ContainsKey(baseId) =>
-                (1.7f, new Vector4(1f, 0.25f, 0.25f, 0.95f), DeepDungeonIds.Traps[baseId]),
-            _ => (0f, default, ""),
-        };
+        None,
+        Chest,
+        Trap,
+        Waypoint,
+    }
 
-        if (radius <= 0f)
-            return;
+    private readonly record struct FloorVisual(FloorKind Kind, float Radius, Vector4 Color, string Label);
 
-        var packed = ImGui.GetColorU32(color);
-        DrawWorldCircle(drawList, obj.Position, radius, packed, filled: true);
+    private static FloorVisual Classify(uint baseId) => baseId switch
+    {
+        _ when DeepDungeonIds.BronzeChests.Contains(baseId) =>
+            new(FloorKind.Chest, 1f, new Vector4(0.80f, 0.55f, 0.30f, 0.9f), "Bronze"),
+        DeepDungeonIds.SilverChest => new(FloorKind.Chest, 1f, new Vector4(0.85f, 0.85f, 0.90f, 0.9f), "Silver"),
+        DeepDungeonIds.GoldChest => new(FloorKind.Chest, 1f, new Vector4(1f, 0.84f, 0.25f, 0.9f), "Gold"),
+        DeepDungeonIds.MimicChest => new(FloorKind.Chest, 1f, new Vector4(1f, 0.30f, 0.30f, 0.95f), "MIMIC?"),
+        DeepDungeonIds.AccursedHoard => new(FloorKind.Chest, 2f, new Vector4(0.55f, 0.90f, 0.95f, 0.9f), "Hoard"),
+        DeepDungeonIds.AccursedHoardCoffer => new(FloorKind.Chest, 1f, new Vector4(0.55f, 0.90f, 0.95f, 0.9f), "Hoard"),
+        _ when DeepDungeonIds.Passages.Contains(baseId) =>
+            new(FloorKind.Waypoint, 2f, new Vector4(0.35f, 0.85f, 0.45f, 0.9f), "Passage"),
+        _ when DeepDungeonIds.Returns.Contains(baseId) =>
+            new(FloorKind.Waypoint, 2f, new Vector4(0.90f, 0.80f, 0.30f, 0.9f), "Return"),
+        _ when DeepDungeonIds.Traps.ContainsKey(baseId) =>
+            new(FloorKind.Trap, 1.7f, new Vector4(1f, 0.25f, 0.25f, 0.95f), DeepDungeonIds.Traps[baseId]),
+        _ => new(FloorKind.None, 0f, default, ""),
+    };
+
+    private void DrawFloorObject(ImDrawListPtr drawList, IGameObject obj, FloorVisual visual)
+    {
+        var packed = ImGui.GetColorU32(visual.Color);
+        DrawWorldCircle(drawList, obj.Position, visual.Radius, packed, filled: true);
 
         if (_gameGui.WorldToScreen(obj.Position, out var screen))
         {
-            var size = ImGui.CalcTextSize(label);
-            drawList.AddText(new Vector2(screen.X - size.X / 2f, screen.Y - size.Y - 2f), packed, label);
+            var size = ImGui.CalcTextSize(visual.Label);
+            drawList.AddText(new Vector2(screen.X - size.X / 2f, screen.Y - size.Y - 2f), packed, visual.Label);
         }
     }
 

@@ -158,7 +158,7 @@ public sealed class GilCapSeller
 
         if (!_nav.IsAvailable)
         {
-            Status = "refused — vnavmesh unavailable (needed to reach the vendor)";
+            Status = "refused — navigation unavailable (needed to reach the vendor)";
             return false;
         }
 

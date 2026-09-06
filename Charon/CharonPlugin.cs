@@ -4,6 +4,7 @@ using System.Linq;
 using Dalamud.Game.Addon.Lifecycle;
 using Dalamud.Game.Addon.Lifecycle.AddonArgTypes;
 using Dalamud.Game.ClientState.Conditions;
+using Dalamud.Game;
 using Dalamud.Game.Command;
 using Dalamud.Interface.Windowing;
 using Dalamud.Plugin;
@@ -24,7 +25,7 @@ namespace Charon;
 
 public sealed class CharonPlugin : IDalamudPlugin
 {
-    public const string PluginVersion = "0.1.35";
+    public const string PluginVersion = "0.1.36";
     private const string CommandName = "/charon";
 
     /// <summary>
@@ -78,6 +79,9 @@ public sealed class CharonPlugin : IDalamudPlugin
     private readonly CommendationVoter _commend;
     private readonly TurnInFiller _turnIn;
     private readonly DeepDungeonReader _ddReader;
+    private readonly InventoryQuantityMover _qtyMover;
+    private readonly ChestSearchFilter _chestSearch;
+    private readonly FcChestSearchOverlay _fcSearchOverlay;
     private readonly PillionRidersWindow _pillionRidersWindow;
     private readonly DeepDungeonMapWindow _ddMapWindow;
     private readonly EspOverlayWindow _ddEsp;
@@ -244,6 +248,7 @@ public sealed class CharonPlugin : IDalamudPlugin
 
     public CharonPlugin(
         IDalamudPluginInterface pluginInterface,
+        ISigScanner sigScanner,
         ICommandManager commandManager,
         IFramework framework,
         IObjectTable objectTable,
@@ -282,7 +287,7 @@ public sealed class CharonPlugin : IDalamudPlugin
         _relay.OnMessage += OnRelayMessage;
 
         _mountReader = new MountStateReader(objectTable, dataManager, partyList);
-        _nav = new NavClient(pluginInterface, log);
+        _nav = new NavClient(pluginInterface, () => _config.NavProvider, log);
         _healWatch = new HealWatchManager(HealWatchConfig.From(_config));
         _healExecutor = new HealExecutor(objectTable, log);
         _groupInvites = new InviteManager(
@@ -292,7 +297,8 @@ public sealed class CharonPlugin : IDalamudPlugin
                 return (ok, detail);
             },
             log: message => _log.Debug("[GroupMgmt] {0}", message));
-        _fcChest = new FcChestManager(gameGui, dataManager, log);
+        _qtyMover = new InventoryQuantityMover(sigScanner, log);
+        _fcChest = new FcChestManager(gameGui, dataManager, _qtyMover, chatGui, log);
         _collection = new CollectionScanner(dataManager, clientState, condition, log);
         _gear = new GearManager(clientState, objectTable, dataManager, condition,
             () => !_config.GearArmouryOnly, () => _config.GearUpdateGearsetAfterPass,
@@ -396,7 +402,9 @@ public sealed class CharonPlugin : IDalamudPlugin
             DescribeAccount,
             () => $"{_collection.Status} · auto: {_collection.AutoStatus}",
             () => _sprintStatus,
-            () => $"chests: {_chests.Status} · ATM: {_qte.Status} · saddlebag: {_saddlebag.Status} · commend: {_commend.Status} · turn-in: {_turnIn.Status} · talk: {_textAdvance.Status} · DD: {_ddReader.Status}",
+            () => $"{_nav.ProviderName}: {(_nav.IsAvailable ? "ready" : "not ready/installed")}"
+                  + $" · path {(_nav.IsPathRunning ? "running" : "idle")}",
+            () => $"chests: {_chests.Status} · ATM: {_qte.Status} · saddlebag: {_saddlebag.Status} · commend: {_commend.Status} · turn-in: {_turnIn.Status} · talk: {_textAdvance.Status} · chest search: {_chestSearch!.Status} · DD: {_ddReader.Status} · ESP: {(_ddEsp!.IsOpen ? _ddEsp.Status : "closed")}",
             () => _lootWatcher.Status,
             // Reading the line IS the refresh: the reader is lazy (nothing local polls it — it
             // exists for IPC), so without this nudge Debug would say "not read yet" forever.
@@ -427,16 +435,20 @@ public sealed class CharonPlugin : IDalamudPlugin
         _saddlebagOverlay = new SaddlebagOverlay(gameGui, _saddlebag);
         _windowSystem.AddWindow(_saddlebagOverlay);
 
-        _ddMapWindow = new DeepDungeonMapWindow(_ddReader);
+        _ddMapWindow = new DeepDungeonMapWindow(_ddReader, _objectTable);
         _windowSystem.AddWindow(_ddMapWindow);
 
         _pillionRidersWindow = new PillionRidersWindow(ReadRawSeatOccupancy, _pillionManager);
         _windowSystem.AddWindow(_pillionRidersWindow);
 
-        _ddEsp = new EspOverlayWindow(_objectTable, gameGui, _clientState,
+        _chestSearch = new ChestSearchFilter(gameGui, dataManager, log);
+        _fcSearchOverlay = new FcChestSearchOverlay(gameGui);
+        _windowSystem.AddWindow(_fcSearchOverlay);
+
+        _ddEsp = new EspOverlayWindow(_objectTable, gameGui, _clientState, log,
             new Charon.Features.DeepDungeon.MobDatabase(),
             () => _config.DeepDungeonEspMobs, () => _config.DeepDungeonEspChests,
-            () => _config.DeepDungeonEspMobNames);
+            () => _config.DeepDungeonEspTraps, () => _config.DeepDungeonEspMobNames);
         _windowSystem.AddWindow(_ddEsp);
 
         _commandManager.AddHandler(CommandName, new CommandInfo(OnCommand)
@@ -481,6 +493,8 @@ public sealed class CharonPlugin : IDalamudPlugin
         _relay.OnMessage -= OnRelayMessage;
         _commend.Dispose();
         _doman.Dispose();
+        _fcChest.Dispose();
+        _chestSearch.Dispose();
         _textAdvanceIpc.Dispose();
         _levelingIpc.Dispose();
         _gearIpc.Dispose();
@@ -591,6 +605,9 @@ public sealed class CharonPlugin : IDalamudPlugin
         // The riders window follows the mount: open while driving a multi-seat mount, gone on
         // dismount (the occupancy read is the tick-cached snapshot — no rescan).
         _pillionRidersWindow.IsOpen = _config.PillionRidersWindowEnabled && ReadRawSeatOccupancy().Count > 0;
+        // Search bar rides the FC chest window; the filter also runs while it closes (restores alpha).
+        _fcSearchOverlay.IsOpen = _config.FcChestSearchEnabled && _fcChest.IsChestOpen();
+        _chestSearch.Update(_fcSearchOverlay.IsOpen ? _fcSearchOverlay.Query : string.Empty);
         RestoreTargetIfDue(now);
         UpdateHealWatch(now);
         _groupInvites.Update(now);
@@ -1052,7 +1069,7 @@ public sealed class CharonPlugin : IDalamudPlugin
     {
         if (!_nav.IsAvailable)
         {
-            _followFleetStatus += " — vnavmesh unavailable";
+            _followFleetStatus += $" — {_nav.ProviderName} unavailable";
             return;
         }
 
@@ -1710,7 +1727,7 @@ public sealed class CharonPlugin : IDalamudPlugin
     {
         if (!_nav.IsAvailable)
         {
-            _boardingStatus = $"owner {ownerName} — too far to board ({distance:F1}y) and vnavmesh unavailable";
+            _boardingStatus = $"owner {ownerName} — too far to board ({distance:F1}y) and {_nav.ProviderName} unavailable";
             return;
         }
 

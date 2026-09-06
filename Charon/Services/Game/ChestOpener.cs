@@ -1,7 +1,10 @@
 using System;
+using System.Collections.Generic;
 using System.Numerics;
 using Dalamud.Game.ClientState.Conditions;
+using Dalamud.Game.ClientState.Objects.Types;
 using Dalamud.Plugin.Services;
+using Charon.Features.DeepDungeon;
 using FFXIVClientStructs.FFXIV.Client.Game;
 using FFXIVClientStructs.FFXIV.Client.Game.UI;
 using Lumina.Excel.Sheets;
@@ -31,6 +34,10 @@ public sealed unsafe class ChestOpener
 
     private DateTime _lastScanUtc = DateTime.MinValue;
     private DateTime _lastOpenUtc = DateTime.MinValue;
+
+    /// <summary>Coffers we have already reached for, by entity id — see <see cref="TryOpenCoffer"/>.</summary>
+    private readonly Dictionary<uint, DateTime> _cofferTouched = new();
+    private static readonly TimeSpan CofferRetry = TimeSpan.FromSeconds(10);
 
     public ChestOpener(IObjectTable objectTable, ICondition condition, IDataManager dataManager,
         InteractHelper interact, Func<bool> enabled, Func<float> openRange, IPluginLog log)
@@ -85,9 +92,22 @@ public sealed unsafe class ChestOpener
 
             foreach (var obj in _objectTable)
             {
+                if (!obj.IsTargetable)
+                    continue;
+
+                var distance = Vector3.Distance(local.Position, obj.Position);
+
+                // Deep-dungeon coffers are EventObj, NOT ObjectKind.Treasure — the Pandora rules
+                // below can never see them, which is why they went unopened in Eureka Orthos.
+                if (obj.ObjectKind == Dalamud.Game.ClientState.Objects.Enums.ObjectKind.EventObj)
+                {
+                    if (TryOpenCoffer(obj, distance, local, now))
+                        return;
+                    continue;
+                }
+
                 if (obj.ObjectKind != Dalamud.Game.ClientState.Objects.Enums.ObjectKind.Treasure
-                    || !obj.IsTargetable
-                    || Vector3.Distance(local.Position, obj.Position) > _openRange())
+                    || distance > _openRange())
                     continue;
 
                 var treasure = (FFXIVClientStructs.FFXIV.Client.Game.Object.Treasure*)obj.Address;
@@ -123,5 +143,62 @@ public sealed unsafe class ChestOpener
             _log.Warning(ex, "Chest opener threw");
             Status = "threw (see log)";
         }
+    }
+
+    /// <summary>
+    /// Deep-dungeon coffers (bronze/silver/gold and the dug-up Accursed Hoard), which the game
+    /// models as EventObj rather than Treasure. Rules are NecroLens's (MIT), which are stricter
+    /// than the overworld ones for good reason:
+    /// - the mimic coffer id is never touched;
+    /// - a SILVER coffer is left alone below 77% HP — silver coffers can be trap chests, and the
+    ///   damage has killed unattended toons;
+    /// - per-type interact reach (bronze 3.1y, the rest 4.4y), taken together with the user's own
+    ///   range so a tightened slider still wins;
+    /// - an EventObj carries no "opened" flag, so an interacted coffer is remembered by entity id
+    ///   and only retried after 10s (a coffer that really opened is gone from the table by then).
+    /// </summary>
+    private bool TryOpenCoffer(IGameObject obj, float distance, IGameObject local, DateTime now)
+    {
+        var baseId = obj.BaseId;
+        float reach;
+        var silver = false;
+
+        if (DeepDungeonIds.BronzeChests.Contains(baseId))
+        {
+            reach = 3.1f;
+        }
+        else if (baseId == DeepDungeonIds.SilverChest)
+        {
+            reach = 4.4f;
+            silver = true;
+        }
+        else if (baseId == DeepDungeonIds.GoldChest || baseId == DeepDungeonIds.AccursedHoardCoffer)
+        {
+            reach = 4.4f;
+        }
+        else
+        {
+            return false; // scenery, a mimic coffer, or an undug hoard mound — none are ours
+        }
+
+        if (distance > MathF.Min(_openRange(), reach))
+            return false;
+
+        if (silver && local is ICharacter character && character.MaxHp > 0
+            && character.CurrentHp <= character.MaxHp * 0.77f)
+        {
+            Status = "holding — silver coffer below 77% HP";
+            return false;
+        }
+
+        if (_cofferTouched.TryGetValue(obj.EntityId, out var touchedAt) && now - touchedAt < CofferRetry)
+            return false;
+
+        _cofferTouched[obj.EntityId] = now;
+        _lastOpenUtc = now;
+        _interact.TryInteract(obj);
+        Status = "opened a deep dungeon coffer";
+        _log.Info("Auto-chest: opened coffer {0} (base {1})", obj.EntityId, baseId);
+        return true;
     }
 }

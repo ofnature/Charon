@@ -78,6 +78,14 @@ public sealed class CharonConfig : IPluginConfiguration
     /// </summary>
     public bool PillionRidersWindowEnabled { get; set; } = true;
 
+    // Movement
+    /// <summary>
+    /// Which navigation plugin drives all Charon movement (follow, boarding walks, vendor trips):
+    /// 0 = vnavmesh, 1 = Ariadne. Everything routes through <see cref="Services.Game.NavClient"/>,
+    /// so this one switch covers every consumer.
+    /// </summary>
+    public int NavProvider { get; set; } = 0;
+
     // Follow Teleport
     /// <summary>When a trusted party member teleports to another zone, follow them there.</summary>
     public bool FollowTeleportEnabled { get; set; } = false;
@@ -210,6 +218,11 @@ public sealed class CharonConfig : IPluginConfiguration
     /// <summary>ESP: chest/passage/return/trap highlights.</summary>
     public bool DeepDungeonEspChests { get; set; } = true;
 
+    /// <summary>Draw revealed deep-dungeon traps. Separate from chests (NecroLens keeps them
+    /// apart too) and drawn at any distance, since a trap you can see far down a corridor is
+    /// exactly the one worth routing around.</summary>
+    public bool DeepDungeonEspTraps { get; set; } = true;
+
     /// <summary>
     /// Learn unlearned collectibles in the bags automatically (out of combat, one per 1.5s).
     /// NEVER the sellable kinds — fashion accessories and chocobo barding stay a manual click,
@@ -315,6 +328,9 @@ public sealed class CharonConfig : IPluginConfiguration
 
     /// <inheritdoc cref="DomanEnclaveSnapshot"/>
     public Dictionary<ulong, DomanEnclaveSnapshot> DomanEnclaveCache { get; set; } = new();
+
+    /// <summary>Search bar on the game's FC chest window that dims non-matching slots.</summary>
+    public bool FcChestSearchEnabled { get; set; } = true;
 
     // Window state
     public bool MainWindowVisible { get; set; } = true;
