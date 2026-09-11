@@ -25,7 +25,7 @@ namespace Charon;
 
 public sealed class CharonPlugin : IDalamudPlugin
 {
-    public const string PluginVersion = "0.1.37";
+    public const string PluginVersion = "0.1.38";
     private const string CommandName = "/charon";
 
     /// <summary>
@@ -364,7 +364,9 @@ public sealed class CharonPlugin : IDalamudPlugin
         _spawnScanner = new SpawnScanner(_objectTable, _clientState,
             () => _config.SpawnTrackerEnabled, () => _config.SpawnWatchNames, log);
         _quickKill = new QuickKillExecutor(_objectTable, _partyList, _targetManager,
-            () => _config.QuickKillEnabled, () => _config.QuickKillMode, () => _daedalusIpc.IsRotationEnabled,
+            () => _config.QuickKillFor(_jobLevels.LocalContentId).Enabled,
+            () => _config.QuickKillFor(_jobLevels.LocalContentId).Mode, () => _daedalusIpc.IsRotationEnabled,
+            () => _condition[ConditionFlag.InCombat],
             () => _daedalusIpc.GetLanPartyMembers().Select(t => t.EntityId).ToList(), log);
         _textAdvance = new TextAdvancer(gameGui, () => _config.TextAdvanceEnabled, log);
         _textAdvanceIpc = new TextAdvanceIpc(pluginInterface, _textAdvance);
@@ -424,6 +426,7 @@ public sealed class CharonPlugin : IDalamudPlugin
                 return $"{_jobLevels.Status} · switch: {_jobSwitcher.Status} · sell: {_gilSeller.Status} · donate: {_doman.Status} · IPC: {_levelingIpc.Status}";
             },
             _quickKill,
+            () => _jobLevels.LocalContentId,
             _spawnScanner,
             _gilSeller,
             _doman,

@@ -96,6 +96,7 @@ public sealed class MainWindow : Window
     private readonly Func<string> _lootStatus;
     private readonly Func<string> _levelingStatus;
     private readonly QuickKillExecutor _quickKill;
+    private readonly Func<ulong> _localContentId;
     private readonly SpawnScanner _spawnScanner;
     private readonly GilCapSeller _gilSeller;
     private readonly DomanDonator _doman;
@@ -164,6 +165,7 @@ public sealed class MainWindow : Window
         Func<string> lootStatus,
         Func<string> levelingStatus,
         QuickKillExecutor quickKill,
+        Func<ulong> localContentId,
         SpawnScanner spawnScanner,
         GilCapSeller gilSeller,
         DomanDonator domanDonator,
@@ -208,6 +210,7 @@ public sealed class MainWindow : Window
         _lootStatus = lootStatus;
         _levelingStatus = levelingStatus;
         _quickKill = quickKill;
+        _localContentId = localContentId;
         _spawnScanner = spawnScanner;
         _gilSeller = gilSeller;
         _doman = domanDonator;
@@ -262,7 +265,7 @@ public sealed class MainWindow : Window
 
         DrawCategoryHeader("POWER LEVEL");
         DrawNavItem("Heal Watch", Section.HealWatch, _config.HealWatchEnabled);
-        DrawNavItem("Quick Kill", Section.QuickKill, _config.QuickKillEnabled);
+        DrawNavItem("Quick Kill", Section.QuickKill, _config.QuickKillFor(_localContentId()).Enabled);
         ImGui.Spacing();
 
         DrawCategoryHeader("FLEET");
@@ -1650,34 +1653,44 @@ public sealed class MainWindow : Window
     {
         DrawPageHeader("Quick Kill");
 
-        var enabled = _config.QuickKillEnabled;
-        if (ImGui.Checkbox("Enabled##quickkill", ref enabled))
+        // Per CHARACTER: every client on a PC shares one Charon.json, so a plain field would make
+        // the Machinist carry and a hand-played toon on the same PC share one role.
+        var contentId = _localContentId();
+        var setting = _config.QuickKillFor(contentId);
+        ImGui.TextColored(CharonTheme.TextSecondary, contentId == 0
+            ? "Log in to set this character's role."
+            : $"For {Display(_localName())} only — every character keeps its own setting.");
+
+        var enabled = setting.Enabled;
+        if (ImGui.Checkbox("Enabled##quickkill", ref enabled) && contentId != 0)
         {
-            _config.QuickKillEnabled = enabled;
+            setting.Enabled = enabled;
             _save();
         }
         CharonTheme.HelpMarker("Only ever acts on mobs ALREADY fighting your party or a fleet toon,\n"
-                               + "so it never pulls anything. Set per box: pick the role this toon\n"
+                               + "so it never pulls anything. Set per character: pick the role this toon\n"
                                + "plays below.");
 
         ImGui.Spacing();
-        var mode = _config.QuickKillMode;
-        if (ImGui.RadioButton("Kill — this toon is the carry##qkmode", mode == 0))
+        var mode = setting.Mode;
+        if (ImGui.RadioButton("Kill — this toon is the carry##qkmode", mode == 0) && contentId != 0)
         {
-            _config.QuickKillMode = 0;
+            setting.Mode = 0;
             _save();
         }
         CharonTheme.HelpMarker("Targets whatever is fighting the fleet — nearest first, and it sticks\n"
                                + "with a mob until it dies — so this toon's own rotation (Daedalus,\n"
-                               + "RSR...) kills it. Quick Kill only aims; it never presses attacks.\n\n"
+                               + "RSR...) kills it. Rotations only fire once their toon is in combat,\n"
+                               + "so if this one isn't yet, Quick Kill opens with ONE ranged shot and\n"
+                               + "the rotation does everything after that.\n\n"
                                + "It never goes after a mob nothing has engaged: hitting one first\n"
                                + "would take the claim, and the EXP, away from the toons you carry.\n"
                                + "Works across parties, so the carry can stay OUT of their group.\n"
                                + "Pair it with Follow so this toon stays in range of them.");
 
-        if (ImGui.RadioButton("Tag — this toon is being carried##qkmode", mode == 1))
+        if (ImGui.RadioButton("Tag — this toon is being carried##qkmode", mode == 1) && contentId != 0)
         {
-            _config.QuickKillMode = 1;
+            setting.Mode = 1;
             _save();
         }
         CharonTheme.HelpMarker("Every mob fighting the party or the fleet gets ONE ranged hit from\n"

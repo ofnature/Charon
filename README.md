@@ -94,8 +94,9 @@ A healer toon babysits the whole fleet from Daedalus LAN vitals — **including 
 
 Power-levelling support under the POWER LEVEL heading, alongside Heal Watch. One per-box toggle, two roles:
 
-- **Kill — for the carry.** A high-level toon goes after whatever is fighting your fleet, nearest first, and stays on each mob until it dies. It works across parties through the LAN roster, so the carry can stay *outside* the group it's levelling. Charon only aims; the toon's own rotation does the damage.
+- **Kill — for the carry.** A high-level toon goes after whatever is fighting your fleet, nearest first, and stays on each mob until it dies. It works across parties through the LAN roster, so the carry can stay *outside* the group it's levelling. Charon aims, and if the carry isn't in combat yet it fires one opening shot — rotations only fire once their toon is in combat, and a carry outside the party never gets hit, so without it nothing would ever shoot. A level-100 carry's opener simply kills a low-level mob outright. Set the carry's Daedalus **Enemy Strategy to Current Target**, so that in combat it shoots only what Charon aims at.
 - **Tag — for a toon being carried.** Each mob the party or fleet is fighting gets one ranged hit from this toon so it joins the kill, and is then left alone. Tags are each job's own ranged opener, verified per job; Beastmasters use **Capture**, which also marks the beast so a pact forms if it dies while marked.
+- **Set per character.** Every client on a PC shares one settings file, so each character keeps its own role — a carry and a hand-played toon on the same machine never end up sharing one.
 - **Never pulls.** Both roles only ever touch mobs already fighting a fleet toon. A carry hitting a fresh mob first would take the claim — and the EXP — away from the toons it's carrying, so it simply never does.
 
 ## FC Chest Management

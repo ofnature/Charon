@@ -20,12 +20,13 @@ namespace Charon.Services.Game;
 /// Kill cannot pull. The fleet half matters most for KILL: the carry usually stands OUTSIDE the
 /// party it is levelling, so a party-only test would see none of their mobs.
 ///
-/// KILL only AIMS — it sets this toon's target and the toon's own rotation does the damage.
-/// TAG fires one ranged hit itself, asking the game first (<c>GetActionStatus</c> with the
-/// target decides level, range, line of sight and cooldown), with the base id run through
-/// <c>GetAdjustedActionId</c> so an upgraded form (Stone to Glare) is what actually fires. A mob
-/// counts as tagged once it is on OUR enmity list (<c>UIState.Hater</c>, the list the game's own
-/// enmity display reads) — the game's record of the hit, not a guess about it.
+/// KILL aims — it sets this toon's target — and fires ONE ranged opener only while this toon is
+/// out of combat, because rotations only fire once their own toon is in combat; after that the
+/// rotation owns every action. TAG fires one ranged hit per mob. Every shot asks the game first
+/// (<c>GetActionStatus</c> with the target decides level, range, line of sight and cooldown), with
+/// the base id run through <c>GetAdjustedActionId</c> so an upgraded form (Stone to Glare) is what
+/// actually fires. A mob counts as tagged once it is on OUR enmity list (<c>UIState.Hater</c>, the
+/// list the game's own enmity display reads) — the game's record of the hit, not a guess.
 /// </summary>
 public sealed unsafe class QuickKillExecutor
 {
@@ -48,6 +49,7 @@ public sealed unsafe class QuickKillExecutor
     private readonly Func<bool> _enabled;
     private readonly Func<int> _mode;
     private readonly Func<bool> _rotationActive;
+    private readonly Func<bool> _inCombat;
     private readonly Func<IReadOnlyCollection<uint>> _fleetEntityIds;
     private readonly IPluginLog _log;
 
@@ -59,7 +61,7 @@ public sealed unsafe class QuickKillExecutor
     private Vector3 _lastPosition;
 
     public QuickKillExecutor(IObjectTable objectTable, IPartyList partyList, ITargetManager targets,
-        Func<bool> enabled, Func<int> mode, Func<bool> rotationActive,
+        Func<bool> enabled, Func<int> mode, Func<bool> rotationActive, Func<bool> inCombat,
         Func<IReadOnlyCollection<uint>> fleetEntityIds, IPluginLog log)
     {
         _objectTable = objectTable;
@@ -68,6 +70,7 @@ public sealed unsafe class QuickKillExecutor
         _enabled = enabled;
         _mode = mode;
         _rotationActive = rotationActive;
+        _inCombat = inCombat;
         _fleetEntityIds = fleetEntityIds;
         _log = log;
     }
@@ -122,9 +125,14 @@ public sealed unsafe class QuickKillExecutor
             CollectCandidates(local.Position, nowUtc);
 
             if (_mode() == ModeKill)
-                Aim(TagActionTable.ForJob(jobId)?.Range ?? DefaultKillReach, hasCarry);
+            {
+                Aim(TagActionTable.ForJob(jobId)?.Range ?? DefaultKillReach, hasCarry, _friendlyIds.Count - 1,
+                    tag, _inCombat(), nowUtc);
+            }
             else
+            {
                 TagOnce(tag, hasCarry, local.IsCasting, moving, nowUtc);
+            }
         }
         catch (Exception ex)
         {
@@ -133,13 +141,18 @@ public sealed unsafe class QuickKillExecutor
         }
     }
 
-    /// <summary>KILL: put the chosen mob under the crosshair; the toon's rotation does the rest.</summary>
-    private void Aim(float reach, bool hasCarry)
+    /// <summary>
+    /// KILL: put the chosen mob under the crosshair, and if this toon is not in combat yet, open on
+    /// it once so the rotation can start. The status names how many friendly toons it is watching —
+    /// 0 would mean the LAN roster handed over no entity ids.
+    /// </summary>
+    private void Aim(float reach, bool hasCarry, int watching, TagAction? opener, bool inCombat, DateTime nowUtc)
     {
         var current = _targets.Target?.EntityId ?? 0;
         var decision = QuickKillPolicy.DecideKill(hasCarry, reach, current, _candidates);
-        Status = decision.Reason;
-        if (!decision.HasTarget || decision.TargetEntityId == current)
+        var watchingText = $"(watching {watching} toon{(watching == 1 ? "" : "s")})";
+        Status = $"{decision.Reason} {watchingText}";
+        if (!decision.HasTarget)
             return;
 
         var target = _objectTable.SearchByEntityId(decision.TargetEntityId);
@@ -149,11 +162,34 @@ public sealed unsafe class QuickKillExecutor
             return;
         }
 
-        _targets.Target = target;
-        _log.Debug("Quick Kill: targeting {0}", decision.TargetName);
+        if (decision.TargetEntityId != current)
+        {
+            _targets.Target = target;
+            _log.Debug("Quick Kill: targeting {0}", decision.TargetName);
+        }
+
+        // Rotations only fire once THEIR toon is in combat — every Daedalus damage module returns
+        // early otherwise, and its BaseRotation reads ConditionFlag.InCombat, the very flag passed
+        // in here (both verified in its source), so the two can never disagree about the fight. A
+        // carry standing outside the party is never hit, so it would never enter combat and would
+        // aim at the mob forever (seen live: "killing Grenade" and not a single shot). One opener on
+        // the engaged mob starts the fight; from then on the rotation owns the action queue.
+        if (inCombat)
+            return;
+
+        if (opener == null)
+        {
+            Status = $"{decision.Reason} — out of combat, and this job has no ranged opener {watchingText}";
+            return;
+        }
+
+        if (TryFire(opener, target, decision.TargetEntityId, nowUtc, out var refusal))
+            Status = $"opened on {decision.TargetName} with {opener.Name} — the rotation takes it from here";
+        else if (refusal != null)
+            Status = refusal;
     }
 
-    /// <summary>TAG: one ranged hit on the chosen mob, asking the game before firing.</summary>
+    /// <summary>TAG: one ranged hit on the chosen mob.</summary>
     private void TagOnce(TagAction? tag, bool hasCarry, bool casting, bool moving, DateTime nowUtc)
     {
         var decision = QuickKillPolicy.DecideTag(_rotationActive(), hasCarry, tag, casting, moving, _candidates);
@@ -170,28 +206,47 @@ public sealed unsafe class QuickKillExecutor
             return;
         }
 
+        if (TryFire(tag!, target, decision.TargetEntityId, nowUtc, out var refusal))
+        {
+            Status = $"tagged {decision.TargetName} with {tag!.Name}";
+            _log.Debug("Quick Kill: {0} on {1}", tag.Name, decision.TargetName);
+        }
+        else
+        {
+            Status = refusal ?? decision.Reason;
+        }
+    }
+
+    /// <summary>
+    /// One hit on the target, the game asked first. A mob fired at is left alone for a few seconds
+    /// either way, so a refusal can never pin the loop; <paramref name="refusal"/> is null when the
+    /// shot was merely held back because one went out moments ago.
+    /// </summary>
+    private bool TryFire(TagAction action, IGameObject target, uint entityId, DateTime nowUtc, out string? refusal)
+    {
+        refusal = null;
+        if (_tried.TryGetValue(entityId, out var at) && nowUtc - at < RetryAfter)
+            return false;
+
         var manager = ActionManager.Instance();
         if (manager == null)
         {
-            Status = "action manager unavailable";
-            return;
+            refusal = "action manager unavailable";
+            return false;
         }
 
-        var actionId = manager->GetAdjustedActionId(tag!.ActionId);
-
-        // Either way we move on from this mob for a moment — a refusal should not pin the loop.
-        _tried[decision.TargetEntityId] = nowUtc;
+        var actionId = manager->GetAdjustedActionId(action.ActionId);
+        _tried[entityId] = nowUtc;
 
         var status = manager->GetActionStatus(ActionType.Action, actionId, target.GameObjectId);
         if (status != 0)
         {
-            Status = $"game refused {tag.Name} on {decision.TargetName} (status {status})";
-            return;
+            refusal = $"game refused {action.Name} on {target.Name.TextValue} (status {status})";
+            return false;
         }
 
         manager->UseAction(ActionType.Action, actionId, target.GameObjectId);
-        Status = $"tagged {decision.TargetName} with {tag.Name}";
-        _log.Debug("Quick Kill: {0} on {1}", tag.Name, decision.TargetName);
+        return true;
     }
 
     private void ReadTagged()

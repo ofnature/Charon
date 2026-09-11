@@ -333,18 +333,41 @@ public sealed class CharonConfig : IPluginConfiguration
     public bool FcChestSearchEnabled { get; set; } = true;
 
     // Power level
-    /// <summary>
-    /// Quick Kill on this box — see <see cref="QuickKillMode"/> for the role it plays. Opt-in: it
-    /// acts on its own. Only ever touches mobs already fighting the party or a fleet toon.
-    /// </summary>
-    public bool QuickKillEnabled { get; set; } = false;
+    /// <summary>One character's Quick Kill role.</summary>
+    public sealed class QuickKillSetting
+    {
+        public bool Enabled { get; set; }
+
+        /// <summary>0 = Kill (this toon is the carry — aim its rotation at whatever is fighting the
+        /// fleet), 1 = Tag (this toon is being carried — one ranged hit per mob).</summary>
+        public int Mode { get; set; }
+    }
 
     /// <summary>
-    /// Quick Kill's role on THIS box: 0 = Kill (this toon is the carry — aim its rotation at
-    /// whatever is fighting the fleet), 1 = Tag (this toon is being carried — one ranged hit per
-    /// mob so it joins the kill).
+    /// Quick Kill, PER CHARACTER (keyed by content id). It cannot be a plain field: every client
+    /// launched from one XIVLauncher shares this single Charon.json, so a "per-box" field is really
+    /// per-MACHINE and the last client to save decides for all of them. 0.1.37 shipped it as plain
+    /// fields and on the Beastmaster PC the role picked on one client applied to every client there
+    /// (Kill retargeted a hand-played Beastmaster, then everything flipped to Tag). A character with
+    /// no entry is OFF.
     /// </summary>
-    public int QuickKillMode { get; set; } = 0;
+    public Dictionary<ulong, QuickKillSetting> QuickKillByCharacter { get; set; } = new();
+
+    /// <summary>This character's Quick Kill entry, created on first use. Content id 0 (not logged
+    /// in yet) gets a throwaway OFF entry that is never stored.</summary>
+    public QuickKillSetting QuickKillFor(ulong contentId)
+    {
+        if (contentId == 0)
+            return new QuickKillSetting();
+
+        if (!QuickKillByCharacter.TryGetValue(contentId, out var setting))
+        {
+            setting = new QuickKillSetting();
+            QuickKillByCharacter[contentId] = setting;
+        }
+
+        return setting;
+    }
 
     // Spawn tracker
     /// <summary>Watch for mobs by name and log each one when it appears nearby.</summary>
