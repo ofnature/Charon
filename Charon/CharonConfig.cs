@@ -332,6 +332,33 @@ public sealed class CharonConfig : IPluginConfiguration
     /// <summary>Search bar on the game's FC chest window that dims non-matching slots.</summary>
     public bool FcChestSearchEnabled { get; set; } = true;
 
+    // Power level
+    /// <summary>
+    /// Quick Kill on this box — see <see cref="QuickKillMode"/> for the role it plays. Opt-in: it
+    /// acts on its own. Only ever touches mobs already fighting the party or a fleet toon.
+    /// </summary>
+    public bool QuickKillEnabled { get; set; } = false;
+
+    /// <summary>
+    /// Quick Kill's role on THIS box: 0 = Kill (this toon is the carry — aim its rotation at
+    /// whatever is fighting the fleet), 1 = Tag (this toon is being carried — one ranged hit per
+    /// mob so it joins the kill).
+    /// </summary>
+    public int QuickKillMode { get; set; } = 0;
+
+    // Spawn tracker
+    /// <summary>Watch for mobs by name and log each one when it appears nearby.</summary>
+    public bool SpawnTrackerEnabled { get; set; } = true;
+
+    /// <summary>Mob names to watch for, matched case-insensitively as substrings.</summary>
+    public List<string> SpawnWatchNames { get; set; } = new();
+
+    /// <summary>Spawn log window left open — restored on load.</summary>
+    public bool SpawnWindowVisible { get; set; } = false;
+
+    /// <summary>Pop the spawn log open the moment a watched mob appears.</summary>
+    public bool SpawnWindowAutoOpen { get; set; } = true;
+
     // Window state
     public bool MainWindowVisible { get; set; } = true;
     public bool DebugSectionOpen { get; set; } = false;

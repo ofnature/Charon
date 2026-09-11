@@ -92,6 +92,9 @@ public sealed unsafe class GearManager
     // Job-eligibility answers are stable per (category, job) — the lookup behind them is reflection.
     private readonly Dictionary<(uint Category, uint Job), bool> _jobFitCache = new();
 
+    /// <summary>Stand-in job for jobs the sheet has no column for (Beastmaster); null = none found.</summary>
+    private readonly Dictionary<uint, string?> _proxyJobCache = new();
+
     // Equip pass state.
     private bool _passRunning;
     private DateTime _passDeadlineUtc;
@@ -988,6 +991,8 @@ public sealed unsafe class GearManager
                 var property = typeof(ClassJobCategory).GetProperty(abbreviation);
                 if (property?.GetValue(category) is bool allowed)
                     fits = allowed;
+                else
+                    fits = FitsColumnlessJob(job, abbreviation, category, jobs);
             }
         }
         catch
@@ -997,6 +1002,62 @@ public sealed unsafe class GearManager
 
         _jobFitCache[(categoryId, jobId)] = fits;
         return fits;
+    }
+
+    /// <summary>
+    /// A job the sheet has NO column for. Beastmaster is the live case: "All Classes" lists every
+    /// abbreviation from ACN to WVR and BST is simply absent, so the reflective lookup finds
+    /// nothing and — before this — every single piece read as unwearable, which is why a BST toon
+    /// was offered no upgrades at all.
+    ///
+    /// Two sources of truth, in order. A category NAMED as a job list ("PGL MNK SAM BST") says so
+    /// outright, and those rows do exist. A category named as a DESCRIPTION ("All Classes") names
+    /// nobody, so we ask a PROXY job instead: one with the same primary stat and role that does
+    /// have a column. Gear open to every STR melee job is open to this one; gear that admits none
+    /// of them still refuses, so caster robes cannot leak onto a Beastmaster.
+    /// </summary>
+    private bool FitsColumnlessJob(ClassJob job, string abbreviation, ClassJobCategory category,
+        Lumina.Excel.ExcelSheet<ClassJob> jobs)
+    {
+        var name = category.Name.ExtractText();
+        if (JobCategoryName.IsJobList(name))
+            return JobCategoryName.Mentions(name, abbreviation);
+
+        var proxy = ResolveProxyJob(job, abbreviation, jobs);
+        return proxy != null
+               && typeof(ClassJobCategory).GetProperty(proxy)?.GetValue(category) is bool allowed
+               && allowed;
+    }
+
+    /// <summary>
+    /// The stand-in for a column-less job: the first job sharing its primary stat and role that
+    /// the sheet DOES have a column for. Resolved once per job and logged, so the substitution is
+    /// visible in the log rather than silently deciding what a toon may wear.
+    /// </summary>
+    private string? ResolveProxyJob(ClassJob job, string abbreviation, Lumina.Excel.ExcelSheet<ClassJob> jobs)
+    {
+        if (_proxyJobCache.TryGetValue(job.RowId, out var cached))
+            return cached;
+
+        string? proxy = null;
+        foreach (var candidate in jobs)
+        {
+            if (candidate.RowId == job.RowId || candidate.PrimaryStat != job.PrimaryStat
+                || candidate.Role != job.Role)
+                continue;
+
+            var code = candidate.Abbreviation.ExtractText();
+            if (code.Length == 0 || typeof(ClassJobCategory).GetProperty(code) == null)
+                continue;
+
+            proxy = code;
+            break;
+        }
+
+        _log.Info("Gear: {0} has no ClassJobCategory column — job fit falls back to category names{1}",
+            abbreviation, proxy == null ? " only (no proxy job found)" : $" and {proxy} as the proxy job");
+        _proxyJobCache[job.RowId] = proxy;
+        return proxy;
     }
 
     // BaseParam row ids (verified against the sheet, not assumed).

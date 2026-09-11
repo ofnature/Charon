@@ -108,6 +108,19 @@ public static class CollectibleKinds
     public const uint PhantomJobShard = 43142;
 
     /// <summary>
+    /// Beastmaster pact vessel — the Kornago vessels that forge a pact with a tamed creature.
+    /// VERIFIED from a live bag: "Cu Sith Gourd" logged ItemAction kind 50454, tooltip
+    /// "[Unobtained/Unregistered]", Unsellable + Market Prohibited (so nothing of value is
+    /// destroyed by learning it, unlike fashion accessories or barding).
+    ///
+    /// Its tooltip also says "Only for use by beastmasters": on any other job the game refuses
+    /// the use, which auto-collect handles the way it handles every refusal — the item is skipped
+    /// for the session rather than retried. Only ONE sample has been seen, so if a second vessel
+    /// ever logs a DIFFERENT kind, add it rather than assuming this one covers the family.
+    /// </summary>
+    public const uint BeastmasterPact = 50454;
+
+    /// <summary>
     /// Occult Crescent territories, where phantom job shards can actually be used.
     /// VERIFIED: South Horn = 1252 (o6b1), North Horn = 1346 (o6b2).
     /// </summary>
@@ -159,6 +172,7 @@ public static class CollectibleKinds
         FolkloreTome,
         OccultRecordNote,
         PhantomJobShard,
+        BeastmasterPact,
     };
 
     /// <summary>Human-readable name for a known kind; empty for anything unrecognised.</summary>
@@ -176,6 +190,7 @@ public static class CollectibleKinds
         FolkloreTome => "folklore tome",
         OccultRecordNote => "occult record",
         PhantomJobShard => "phantom job",
+        BeastmasterPact => "beastmaster pact",
         _ => string.Empty,
     };
 }

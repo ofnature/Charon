@@ -25,7 +25,7 @@ namespace Charon;
 
 public sealed class CharonPlugin : IDalamudPlugin
 {
-    public const string PluginVersion = "0.1.36";
+    public const string PluginVersion = "0.1.37";
     private const string CommandName = "/charon";
 
     /// <summary>
@@ -80,6 +80,10 @@ public sealed class CharonPlugin : IDalamudPlugin
     private readonly TurnInFiller _turnIn;
     private readonly DeepDungeonReader _ddReader;
     private readonly InventoryQuantityMover _qtyMover;
+    private readonly QuickKillExecutor _quickKill;
+    private readonly SpawnScanner _spawnScanner;
+    private bool _spawnWindowShown;
+    private readonly SpawnTrackerWindow _spawnWindow;
     private readonly ChestSearchFilter _chestSearch;
     private readonly FcChestSearchOverlay _fcSearchOverlay;
     private readonly PillionRidersWindow _pillionRidersWindow;
@@ -357,6 +361,11 @@ public sealed class CharonPlugin : IDalamudPlugin
             () => _config.AutoTurnInEnabled, () => _config.AutoTurnInConfirm, log);
         _ddReader = new DeepDungeonReader(log);
         _weeklies = new WeekliesReader(log);
+        _spawnScanner = new SpawnScanner(_objectTable, _clientState,
+            () => _config.SpawnTrackerEnabled, () => _config.SpawnWatchNames, log);
+        _quickKill = new QuickKillExecutor(_objectTable, _partyList, _targetManager,
+            () => _config.QuickKillEnabled, () => _config.QuickKillMode, () => _daedalusIpc.IsRotationEnabled,
+            () => _daedalusIpc.GetLanPartyMembers().Select(t => t.EntityId).ToList(), log);
         _textAdvance = new TextAdvancer(gameGui, () => _config.TextAdvanceEnabled, log);
         _textAdvanceIpc = new TextAdvanceIpc(pluginInterface, _textAdvance);
         _teleportOffer = new TeleportOfferInterop(
@@ -404,7 +413,7 @@ public sealed class CharonPlugin : IDalamudPlugin
             () => _sprintStatus,
             () => $"{_nav.ProviderName}: {(_nav.IsAvailable ? "ready" : "not ready/installed")}"
                   + $" · path {(_nav.IsPathRunning ? "running" : "idle")}",
-            () => $"chests: {_chests.Status} · ATM: {_qte.Status} · saddlebag: {_saddlebag.Status} · commend: {_commend.Status} · turn-in: {_turnIn.Status} · talk: {_textAdvance.Status} · chest search: {_chestSearch!.Status} · DD: {_ddReader.Status} · ESP: {(_ddEsp!.IsOpen ? _ddEsp.Status : "closed")}",
+            () => $"chests: {_chests.Status} · ATM: {_qte.Status} · saddlebag: {_saddlebag.Status} · commend: {_commend.Status} · turn-in: {_turnIn.Status} · talk: {_textAdvance.Status} · spawns: {_spawnScanner.Status} · quick kill: {_quickKill.Status} · chest search: {_chestSearch!.Status} · DD: {_ddReader.Status} · ESP: {(_ddEsp!.IsOpen ? _ddEsp.Status : "closed")}",
             () => _lootWatcher.Status,
             // Reading the line IS the refresh: the reader is lazy (nothing local polls it — it
             // exists for IPC), so without this nudge Debug would say "not read yet" forever.
@@ -414,6 +423,8 @@ public sealed class CharonPlugin : IDalamudPlugin
                 _jobLevels.GetTracks();
                 return $"{_jobLevels.Status} · switch: {_jobSwitcher.Status} · sell: {_gilSeller.Status} · donate: {_doman.Status} · IPC: {_levelingIpc.Status}";
             },
+            _quickKill,
+            _spawnScanner,
             _gilSeller,
             _doman,
             _weeklies,
@@ -440,6 +451,13 @@ public sealed class CharonPlugin : IDalamudPlugin
 
         _pillionRidersWindow = new PillionRidersWindow(ReadRawSeatOccupancy, _pillionManager);
         _windowSystem.AddWindow(_pillionRidersWindow);
+
+        _spawnWindow = new SpawnTrackerWindow(_spawnScanner)
+        {
+            IsOpen = _config.SpawnWindowVisible,
+        };
+        _spawnWindowShown = _config.SpawnWindowVisible;
+        _windowSystem.AddWindow(_spawnWindow);
 
         _chestSearch = new ChestSearchFilter(gameGui, dataManager, log);
         _fcSearchOverlay = new FcChestSearchOverlay(gameGui);
@@ -597,6 +615,28 @@ public sealed class CharonPlugin : IDalamudPlugin
         _commend.Update();
         _turnIn.Update(now);
         _textAdvance.Update(now);
+        _quickKill.Update(now);
+        _spawnScanner.Update(now);
+        // A sighting pops the log open (opt-in); the window writes the flag back when closed.
+        if (_spawnScanner.SightedThisTick && _config.SpawnWindowAutoOpen && !_config.SpawnWindowVisible)
+        {
+            _config.SpawnWindowVisible = true;
+            SaveConfig();
+        }
+
+        // Two-way and EDGE-triggered: whichever side changed wins. Forcing IsOpen from the config
+        // every tick made the window impossible to close — it reopened the instant it was shut.
+        if (_config.SpawnWindowVisible != _spawnWindowShown)
+        {
+            _spawnWindow.IsOpen = _config.SpawnWindowVisible; // the button, or an auto-open
+            _spawnWindowShown = _config.SpawnWindowVisible;
+        }
+        else if (_spawnWindow.IsOpen != _spawnWindowShown)
+        {
+            _spawnWindowShown = _spawnWindow.IsOpen;          // the user opened or closed it
+            _config.SpawnWindowVisible = _spawnWindow.IsOpen;
+            SaveConfig();
+        }
         // Shown ONLY while a deep-dungeon instance is live — the director pointer is the signal,
         // so no territory list to go stale.
         var ddActive = _ddReader.GetSnapshot().Active;

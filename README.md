@@ -4,7 +4,7 @@
 
 # Charon
 
-**The ferryman for your fleet.** A Dalamud plugin for FFXIV, companion to [Daedalus](https://github.com/ofnature/Daedalus) — party assembly, auto pillion with smart seat scanning, whitelisted auto group invite, follow teleport, fleet follow, duty-pop and trade automation, a heal-watch babysitter for leveling alts, automatic gear upgrades, fleet-leader commands, collectible sweeping, FC chest management, gil-cap selling, Doman Enclave donations and a weekly-chores board.
+**The ferryman for your fleet.** A Dalamud plugin for FFXIV, companion to [Daedalus](https://github.com/ofnature/Daedalus) — party assembly, auto pillion with smart seat scanning, whitelisted auto group invite, follow teleport, fleet follow, duty-pop and trade automation, a heal-watch babysitter for leveling alts, automatic gear upgrades, fleet-leader commands, collectible sweeping, FC chest management, gil-cap selling, Doman Enclave donations, a weekly-chores board, a power-levelling carry and a mob spawn watchlist.
 
 Built for multibox setups: invite the fleet, group up, mount up, teleport out, follow you around, keep the bots alive, and manage the FC chest — without touching seven other keyboards.
 
@@ -90,6 +90,14 @@ A healer toon babysits the whole fleet from Daedalus LAN vitals — **including 
 - **Accepts the revival** on the raised toon. Unattended characters have nobody to click the prompt, so without this the raise resolves and the bot stays on the floor. Only ever fires while dead with a raise incoming — it never guesses at other dialogs.
 - Live HP is re-checked before every cast (LAN vitals are detection only), and Heal Watch stands down automatically whenever the Daedalus rotation is enabled.
 
+## Quick Kill
+
+Power-levelling support under the POWER LEVEL heading, alongside Heal Watch. One per-box toggle, two roles:
+
+- **Kill — for the carry.** A high-level toon goes after whatever is fighting your fleet, nearest first, and stays on each mob until it dies. It works across parties through the LAN roster, so the carry can stay *outside* the group it's levelling. Charon only aims; the toon's own rotation does the damage.
+- **Tag — for a toon being carried.** Each mob the party or fleet is fighting gets one ranged hit from this toon so it joins the kill, and is then left alone. Tags are each job's own ranged opener, verified per job; Beastmasters use **Capture**, which also marks the beast so a pact forms if it dies while marked.
+- **Never pulls.** Both roles only ever touch mobs already fighting a fleet toon. A carry hitting a fresh mob first would take the claim — and the EXP — away from the toons it's carrying, so it simply never does.
+
 ## FC Chest Management
 
 Consolidate and reclaim the Free Company chest, per page:
@@ -113,6 +121,7 @@ Leveling alts wear whatever dropped three dungeons ago. Charon finds the upgrade
 
 - **Scans bags *and* armoury** — dungeon and [SealBreaker](https://github.com/ofnature/SealBreaker) loot lands in your main inventory, so that's where it looks first (armoury-only is an opt-in checkbox). Filters by job, equip level, and slot; handles the ring pair and unique-equip rings, and skips the offhand when you're wielding a two-hander. **Gathering and crafting gear is never equipped on a combat job** — much of it sits in the "All Classes" category, so the game will happily let a Paladin wear a ring statted for Perception, and its item level would otherwise win. **Race-locked gear is skipped too** — starting pieces like the Roegadyn Bodice read as "All Classes" at level 1 but only one race and sex can actually wear them.
 - **Item level first, then stats — and it still works at cap.** A higher item level always wins. At the *same* item level it compares a job-weighted stat score (main stat, crit/determination/direct hit, tenacity for tanks, piety for healers) and swaps when the spread is clearly better, so a max-level toon whose gear is all one item level keeps improving instead of going dead. A **lower** item level never wins, however good the stats — item level gates duty entry.
+- **Works on Beastmaster too.** The game's job-category data has a column for every job except Beastmaster, so a naive lookup reads every piece as unwearable and shows no upgrades at all. Charon reads categories that list jobs by name ("PGL MNK SAM BST") and, for catch-alls like "All Classes", asks a job with the same main stat and role — so Beastmaster gets exactly the gear it can actually wear.
 - **Bags → armoury → equip:** an upgrade sitting in a bag moves into the armoury *first*, then gets equipped from there — so the piece it replaces swaps into the armoury and your bags stay clear for loot.
 - **Preview first.** The window always shows exactly what would change (slot, what you're wearing, what replaces it, ilvl gained) with a manual Equip button. Every step is re-planned against live inventory and verified before the next one fires — never a replayed batch. If one piece refuses to equip it's set aside and the rest still go on, with the skip reported.
 - **Clean armoury** — lists every armoury item that no saved gearset uses, then moves them back to your bags on one button. Each row has a **Keep** tick to protect that item permanently (glamour pieces, spare weapons), and a separate **Protected from cleanup** list shows everything you've protected — including items not currently in the armoury — so a stray tick is always visible and undoable. Moving items asks for confirmation first, and warns when you don't have the bag space for the whole sweep. **EXP-bonus gear is protected out of the box** — Brand-new Ring, Friendship Circlet, the pre-order earrings (Ala Mhigan / Aetheryte / Menphina's / Azeyma's) and friends are tagged `[EXP]` and pre-ticked, since they belong to no gearset and several can never be re-obtained. Gearset gear is never touched, soul crystals always stay put, and if your gearsets haven't loaded yet nothing is evicted at all.
@@ -135,7 +144,7 @@ Charon works out Need / Greed / Pass for everything on the loot window and **sho
 Quest rewards, trust runs and AutoDuty runs hand you items directly — no loot roll involved — so an unattended toon quietly accumulates unlearned minions, mounts and orchestrion rolls for weeks.
 
 - **Lists what you're holding but haven't learned**, with a Collect button on each row. Nothing is ever consumed without a click — unless you turn on **Auto-collect**, which learns the safe kinds on its own (out of combat, not while at a vendor or in a cutscene, one every 1.5s) and still never touches the two kinds below that can be worth real gil.
-- **Only real one-time unlocks are offered.** The game reports an ordinary potion as "not unlocked" exactly like a genuinely unlearned collectible, so Charon works from a verified allowlist: minions, mounts, emotes and hairstyles, orchestrion rolls, fashion accessories, facewear, chocobo barding, master recipe books, gathering folklore tomes, Triple Triad cards, Occult Record notes and phantom job soul shards. Anything it doesn't recognise is logged rather than offered, which is how the list grows — from observed values, never guesses.
+- **Only real one-time unlocks are offered.** The game reports an ordinary potion as "not unlocked" exactly like a genuinely unlearned collectible, so Charon works from a verified allowlist: minions, mounts, emotes and hairstyles, orchestrion rolls, fashion accessories, facewear, chocobo barding, master recipe books, gathering folklore tomes, Triple Triad cards, Occult Record notes, phantom job soul shards and Beastmaster pact vessels. Anything it doesn't recognise is logged rather than offered, which is how the list grows — from observed values, never guesses.
 - **Booster packs are not cards.** The seven Triad Card packs open into random cards, so "already collected" isn't a question you can ask of one — they're excluded, while the individual cards they contain are listed.
 - **Duplicates never appear.** The game won't relearn something you own, so a spare mount stays sellable by construction. Fashion accessories and chocobo barding are the kinds where an *unlearned* item can still be worth real gil — so those two are **manual only**, always a deliberate per-item click, even with Auto-collect on.
 - **Phantom job shards are zone-aware** — listed anywhere so you can see you have one, but only collectable in the Occult Crescent where they actually work.
@@ -179,6 +188,14 @@ Palace of the Dead, Heaven-on-High, Eureka Orthos and Pilgrim's Traverse support
 - **Coffers open themselves** — bronze, silver, gold and dug-up hoards, which the game models differently from overworld chests and so were previously ignored. A silver coffer is left alone below 77% HP, because those can be trap chests and the damage kills unattended toons.
 - Traps draw at any distance once revealed — but an unrevealed trap is server-side and exists in no plugin's world until a Pomander of Sight reveals it.
 - Boss fights stay BossMod's job, exactly as with Fleet Follow — Charon adds the pieces BMR doesn't have.
+
+## Spawn Tracker
+
+A name watchlist under FEATURES → Spawns: add a mob by typing part of its name, or click it from a list of what's nearby, and a small log window records each one as it turns up — time and distance, newest first — popping itself open on a sighting.
+
+- Matching ignores case and works on part of a name.
+- Each mob is logged once per zone visit. A client can't tell a fresh spawn from a mob that just came into view, so the log honestly answers "is it up, and when did it appear" rather than pretending to know the difference.
+- Read-only: it never targets or attacks anything.
 
 ## Movement
 

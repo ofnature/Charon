@@ -31,6 +31,8 @@ public sealed class MainWindow : Window
         General,
         AutoPillion,
         HealWatch,
+        QuickKill,
+        Spawns,
         GroupMgmt,
         FleetLeader,
         Follow,
@@ -93,6 +95,8 @@ public sealed class MainWindow : Window
     private readonly Func<string> _qolStatus;
     private readonly Func<string> _lootStatus;
     private readonly Func<string> _levelingStatus;
+    private readonly QuickKillExecutor _quickKill;
+    private readonly SpawnScanner _spawnScanner;
     private readonly GilCapSeller _gilSeller;
     private readonly DomanDonator _doman;
     private readonly WeekliesReader _weeklies;
@@ -107,6 +111,7 @@ public sealed class MainWindow : Window
     private readonly FleetCommands _fleetCommands;
 
     private Section _section = Section.General;
+    private string _spawnName = string.Empty;
     private string _addName = string.Empty;
     private string _addWorld = string.Empty;
     private bool _addOpen;
@@ -158,6 +163,8 @@ public sealed class MainWindow : Window
         Func<string> qolStatus,
         Func<string> lootStatus,
         Func<string> levelingStatus,
+        QuickKillExecutor quickKill,
+        SpawnScanner spawnScanner,
         GilCapSeller gilSeller,
         DomanDonator domanDonator,
         WeekliesReader weeklies,
@@ -200,6 +207,8 @@ public sealed class MainWindow : Window
         _qolStatus = qolStatus;
         _lootStatus = lootStatus;
         _levelingStatus = levelingStatus;
+        _quickKill = quickKill;
+        _spawnScanner = spawnScanner;
         _gilSeller = gilSeller;
         _doman = domanDonator;
         _weeklies = weeklies;
@@ -247,7 +256,13 @@ public sealed class MainWindow : Window
         DrawCategoryHeader("FEATURES");
         DrawNavItem("General", Section.General, _config.AutoAcceptEnabled || _config.FollowTeleportEnabled);
         DrawNavItem("Auto Pillion", Section.AutoPillion, _config.AutoPillionEnabled);
+        DrawNavItem("Spawns", Section.Spawns,
+            _config.SpawnTrackerEnabled && _config.SpawnWatchNames.Count > 0);
+        ImGui.Spacing();
+
+        DrawCategoryHeader("POWER LEVEL");
         DrawNavItem("Heal Watch", Section.HealWatch, _config.HealWatchEnabled);
+        DrawNavItem("Quick Kill", Section.QuickKill, _config.QuickKillEnabled);
         ImGui.Spacing();
 
         DrawCategoryHeader("FLEET");
@@ -340,6 +355,8 @@ public sealed class MainWindow : Window
             case Section.General: DrawGeneralSection(); break;
             case Section.AutoPillion: DrawAutoPillionSection(); break;
             case Section.HealWatch: DrawHealWatchSection(); break;
+            case Section.QuickKill: DrawQuickKillSection(); break;
+            case Section.Spawns: DrawSpawnsSection(); break;
             case Section.GroupMgmt: DrawGroupSection(); break;
             case Section.FleetLeader: DrawFleetLeaderSection(); break;
             case Section.Follow: DrawFollowSection(); break;
@@ -1621,6 +1638,176 @@ public sealed class MainWindow : Window
 
         ImGui.Spacing();
         DrawStatusLine(_collection.Status, CharonTheme.TextDisabled);
+    }
+
+    // --- Power level: Quick Kill ---
+
+    /// <summary>
+    /// Two roles on one per-box toggle: KILL for the carry (aim its rotation at whatever is fighting
+    /// the fleet) and TAG for a toon being carried (one ranged hit per mob).
+    /// </summary>
+    private void DrawQuickKillSection()
+    {
+        DrawPageHeader("Quick Kill");
+
+        var enabled = _config.QuickKillEnabled;
+        if (ImGui.Checkbox("Enabled##quickkill", ref enabled))
+        {
+            _config.QuickKillEnabled = enabled;
+            _save();
+        }
+        CharonTheme.HelpMarker("Only ever acts on mobs ALREADY fighting your party or a fleet toon,\n"
+                               + "so it never pulls anything. Set per box: pick the role this toon\n"
+                               + "plays below.");
+
+        ImGui.Spacing();
+        var mode = _config.QuickKillMode;
+        if (ImGui.RadioButton("Kill — this toon is the carry##qkmode", mode == 0))
+        {
+            _config.QuickKillMode = 0;
+            _save();
+        }
+        CharonTheme.HelpMarker("Targets whatever is fighting the fleet — nearest first, and it sticks\n"
+                               + "with a mob until it dies — so this toon's own rotation (Daedalus,\n"
+                               + "RSR...) kills it. Quick Kill only aims; it never presses attacks.\n\n"
+                               + "It never goes after a mob nothing has engaged: hitting one first\n"
+                               + "would take the claim, and the EXP, away from the toons you carry.\n"
+                               + "Works across parties, so the carry can stay OUT of their group.\n"
+                               + "Pair it with Follow so this toon stays in range of them.");
+
+        if (ImGui.RadioButton("Tag — this toon is being carried##qkmode", mode == 1))
+        {
+            _config.QuickKillMode = 1;
+            _save();
+        }
+        CharonTheme.HelpMarker("Every mob fighting the party or the fleet gets ONE ranged hit from\n"
+                               + "this toon so it joins the kill, and is then left alone. The toon\n"
+                               + "never walks toward a mob and never keeps attacking.\n\n"
+                               + "Beastmasters tag with Capture (10y): the beast is also marked, and\n"
+                               + "if it dies while marked the Beastmaster forges a pact with it.\n\n"
+                               + "A mob counts as tagged once it is on this toon's enmity list. Stands\n"
+                               + "down while the Daedalus rotation is enabled (it is already attacking).");
+
+        ImGui.Spacing();
+        if (mode == 1)
+            DrawStatusLine($"Tag action: {_quickKill.TagDescription}", CharonTheme.TextSecondary);
+        DrawStatusLine(_quickKill.Status, CharonTheme.TextDisabled);
+    }
+
+    // --- Spawns ---
+
+    /// <summary>The watchlist editor; the sightings themselves live in the spawn log window.</summary>
+    private void DrawSpawnsSection()
+    {
+        DrawPageHeader("Spawns");
+
+        var enabled = _config.SpawnTrackerEnabled;
+        if (ImGui.Checkbox("Watch for mobs by name##spawn", ref enabled))
+        {
+            _config.SpawnTrackerEnabled = enabled;
+            _save();
+        }
+        CharonTheme.HelpMarker("Logs a watched mob the first time it turns up near you, with the\n"
+                               + "time and how far away it was. Read-only — nothing is targeted or\n"
+                               + "attacked.\n\n"
+                               + "A client cannot tell a fresh spawn from a mob that simply came\n"
+                               + "into render range: both arrive the same way. Each mob is logged\n"
+                               + "once per zone visit, so walking past one twice logs it once.");
+
+        var autoOpen = _config.SpawnWindowAutoOpen;
+        if (ImGui.Checkbox("Pop the log open on a sighting##spawn", ref autoOpen))
+        {
+            _config.SpawnWindowAutoOpen = autoOpen;
+            _save();
+        }
+
+        if (ImGui.Button("Open spawn log"))
+        {
+            _config.SpawnWindowVisible = true;
+            _save();
+        }
+        ImGui.SameLine();
+        ImGui.TextColored(CharonTheme.TextDisabled, $"{_spawnScanner.Watcher.History.Count} logged");
+
+        ImGui.Spacing();
+        ImGui.TextColored(CharonTheme.TextSecondary, "Watchlist");
+        ImGui.TextColored(CharonTheme.TextDisabled, "Matched anywhere in the name, ignoring case.");
+
+        ImGui.SetNextItemWidth(190f);
+        var submitted = ImGui.InputTextWithHint("##spawnname", "Mob name (or part of one)", ref _spawnName, 48,
+            ImGuiInputTextFlags.EnterReturnsTrue);
+        ImGui.SameLine();
+        if ((ImGui.Button("Add##spawn") || submitted) && _spawnName.Trim().Length > 0)
+        {
+            AddWatchName(_spawnName);
+            _spawnName = string.Empty;
+        }
+
+        if (_config.SpawnWatchNames.Count == 0)
+        {
+            ImGui.TextColored(CharonTheme.TextDisabled, "Nothing watched yet.");
+        }
+        else
+        {
+            var remove = -1;
+            for (var i = 0; i < _config.SpawnWatchNames.Count; i++)
+            {
+                if (ImGui.SmallButton($"Remove##spawnrm{i}"))
+                    remove = i;
+                ImGui.SameLine();
+                ImGui.TextUnformatted(_config.SpawnWatchNames[i]);
+            }
+
+            if (remove >= 0)
+            {
+                _config.SpawnWatchNames.RemoveAt(remove);
+                _save();
+            }
+        }
+
+        ImGui.Spacing();
+        if (ImGui.TreeNode("Add from nearby"))
+        {
+            var nearby = _spawnScanner.NearbyNames();
+            if (nearby.Count == 0)
+            {
+                ImGui.TextColored(CharonTheme.TextDisabled, "No mobs in range.");
+            }
+            else
+            {
+                foreach (var name in nearby)
+                {
+                    var watched = Charon.Features.Spawns.SpawnWatcher.IsWatched(name, _config.SpawnWatchNames);
+                    if (watched)
+                    {
+                        ImGui.TextColored(CharonTheme.StatusGreen, "watched");
+                    }
+                    else if (ImGui.SmallButton($"Watch##add{name}"))
+                    {
+                        AddWatchName(name);
+                    }
+
+                    ImGui.SameLine();
+                    ImGui.TextUnformatted(Display(name));
+                }
+            }
+
+            ImGui.TreePop();
+        }
+
+        ImGui.Spacing();
+        DrawStatusLine(_spawnScanner.Status, CharonTheme.TextDisabled);
+    }
+
+    private void AddWatchName(string name)
+    {
+        var trimmed = name.Trim();
+        if (trimmed.Length == 0
+            || _config.SpawnWatchNames.Exists(n => string.Equals(n, trimmed, StringComparison.OrdinalIgnoreCase)))
+            return;
+
+        _config.SpawnWatchNames.Add(trimmed);
+        _save();
     }
 
     // --- WEEKLIES ---
