@@ -121,6 +121,17 @@ public static class CollectibleKinds
     public const uint BeastmasterPact = 50454;
 
     /// <summary>
+    /// Bozjan field records — the 40+ "Field Notes on X" items ALL share this one ItemAction
+    /// (verified on XIVAPI), with the record itself in Data[0] as a MYCWarResultNotebook row id
+    /// (row 47 = "Cid Garlond", matching Field Notes on Cid). Untradeable, PriceLow 0-8.
+    ///
+    /// Registration state is UNKNOWABLE from here: <c>IsItemActionUnlocked</c> answers "not tracked"
+    /// for them and neither PlayerState nor UIState exposes a field-record check to call instead —
+    /// which is why these are in <see cref="UnverifiedUnlock"/> and NEVER auto-collected.
+    /// </summary>
+    public const uint BozjaFieldNote = 19743;
+
+    /// <summary>
     /// Occult Crescent territories, where phantom job shards can actually be used.
     /// VERIFIED: South Horn = 1252 (o6b1), North Horn = 1346 (o6b2).
     /// </summary>
@@ -146,8 +157,17 @@ public static class CollectibleKinds
     /// </summary>
     public static readonly IReadOnlySet<uint> ManualOnly = new HashSet<uint> { FashionAccessory, ChocoboBarding };
 
+    /// <summary>
+    /// Kinds that ARE real one-time unlocks but whose registration the game exposes NO check for, so
+    /// Charon cannot tell a fresh one from a duplicate. They are listed with their state marked
+    /// unknown — hiding them made a held item invisible, which is worse — and are never auto-
+    /// collected, since "collect everything unlearned" is a claim this kind cannot support.
+    /// </summary>
+    public static readonly IReadOnlySet<uint> UnverifiedUnlock = new HashSet<uint> { BozjaFieldNote };
+
     /// <summary>Whether the auto-collect toggle may consume this kind unprompted.</summary>
-    public static bool IsAutoCollectSafe(uint actionKind) => !ManualOnly.Contains(actionKind);
+    public static bool IsAutoCollectSafe(uint actionKind) =>
+        !ManualOnly.Contains(actionKind) && !UnverifiedUnlock.Contains(actionKind);
 
     /// <summary>
     /// Kinds Charon will offer to learn — only VERIFIED one-time unlocks. A wrong entry means
@@ -173,6 +193,7 @@ public static class CollectibleKinds
         OccultRecordNote,
         PhantomJobShard,
         BeastmasterPact,
+        BozjaFieldNote,
     };
 
     /// <summary>Human-readable name for a known kind; empty for anything unrecognised.</summary>
@@ -191,6 +212,7 @@ public static class CollectibleKinds
         OccultRecordNote => "occult record",
         PhantomJobShard => "phantom job",
         BeastmasterPact => "beastmaster pact",
+        BozjaFieldNote => "bozjan field record",
         _ => string.Empty,
     };
 }

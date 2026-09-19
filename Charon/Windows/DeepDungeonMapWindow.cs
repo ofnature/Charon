@@ -45,7 +45,7 @@ public sealed class DeepDungeonMapWindow : Window
         var cells = FloorMap.Build(snapshot.Rooms);
         var (known, revealed) = FloorMap.Counts(cells);
 
-        ImGui.TextColored(CharonTheme.AccentGold, $"Floor {snapshot.Floor}");
+        ImGui.TextColored(CharonTheme.Accent, $"Floor {snapshot.Floor}");
         ImGui.SameLine();
         ImGui.TextColored(CharonTheme.TextSecondary, $"· {known} rooms · {revealed} revealed");
         ImGui.TextColored(CharonTheme.TextSecondary,
@@ -112,7 +112,7 @@ public sealed class DeepDungeonMapWindow : Window
             drawList.AddRectFilled(topLeft, bottomRight, fill, 4f);
 
             if (cell.IsHome)
-                drawList.AddRect(topLeft, bottomRight, ImGui.GetColorU32(CharonTheme.AccentGold), 4f, ImDrawFlags.None, 2f);
+                drawList.AddRect(topLeft, bottomRight, ImGui.GetColorU32(CharonTheme.Accent), 4f, ImDrawFlags.None, 2f);
             else
                 drawList.AddRect(topLeft, bottomRight, ImGui.GetColorU32(CharonTheme.TextDisabled), 4f);
 

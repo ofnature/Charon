@@ -3,6 +3,9 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Numerics;
 using Dalamud.Bindings.ImGui;
+using Dalamud.Interface;
+using Dalamud.Interface.Utility;
+using Dalamud.Interface.Utility.Raii;
 using Dalamud.Interface.Windowing;
 using Charon.Features.AutoAccept;
 using Charon.Features.AutoPillion;
@@ -12,22 +15,26 @@ using Charon.Features.GroupManagement;
 using Charon.Features.HealWatch;
 using Charon.Features.Leveling;
 using Charon.Features.Loot;
+using Charon.Features.Retainers;
 using Charon.Features.Weeklies;
 using Charon.Services;
 using Charon.Services.Game;
+using Charon.Windows.Components;
 
 namespace Charon.Windows;
 
 /// <summary>
-/// Charon's window, Daedalus-config style: sidebar navigation on the left (grey small-cap
-/// category headers, gold selection with a left accent bar over a faint gold wash), content
-/// page on the right. Sections: General (auto accept + follow teleport), Auto Pillion
-/// (settings + rider list + collapsible debug details), Heal Watch, Trusted Characters, Debug.
+/// Charon's window in the Argus idiom (see sketches/004-board-teal-selected): a compact identity strip
+/// across the top (obol mark, wordmark, status pill, cog), an icon sidebar with category labels and
+/// badges, and a content page per section. The landing page is the fleet board — every background
+/// feature's status line with a state dot and its reason for being idle, the LAN fleet as a table, and
+/// this character's switches next to it. Section pages keep their existing controls.
 /// </summary>
 public sealed class MainWindow : Window
 {
     private enum Section
     {
+        Board,
         General,
         AutoPillion,
         HealWatch,
@@ -64,9 +71,6 @@ public sealed class MainWindow : Window
         Action<string> SetLeader,
         Action LeaveDuty);
 
-    private const float SidebarWidth = 140f;
-    private static readonly Vector4 AccentWash = new(0.85f, 0.65f, 0.20f, 0.10f);
-
     private readonly CharonConfig _config;
     private readonly Action _save;
     private readonly WhitelistService _whitelist;
@@ -101,6 +105,8 @@ public sealed class MainWindow : Window
     private readonly GilCapSeller _gilSeller;
     private readonly DomanDonator _doman;
     private readonly WeekliesReader _weeklies;
+    private readonly RetainerReader _retainers;
+    private readonly VentureRunner _ventureRunner;
     private readonly Func<bool> _isFreeTrial;
     private readonly LootWatcher _lootWatcher;
     private readonly CollectionScanner _collection;
@@ -170,6 +176,8 @@ public sealed class MainWindow : Window
         GilCapSeller gilSeller,
         DomanDonator domanDonator,
         WeekliesReader weeklies,
+        RetainerReader retainers,
+        VentureRunner ventureRunner,
         Func<bool> isFreeTrial,
         LootWatcher lootWatcher,
         CollectionScanner collection,
@@ -215,6 +223,8 @@ public sealed class MainWindow : Window
         _gilSeller = gilSeller;
         _doman = domanDonator;
         _weeklies = weeklies;
+        _retainers = retainers;
+        _ventureRunner = ventureRunner;
         _isFreeTrial = isFreeTrial;
         _lootWatcher = lootWatcher;
         _collection = collection;
@@ -225,136 +235,243 @@ public sealed class MainWindow : Window
         _reportedFollowLeader = reportedFollowLeader;
         _fleetCommands = fleetCommands;
 
-        Size = new Vector2(600, 440);
+        Size = new Vector2(1080, 700);
         SizeCondition = ImGuiCond.FirstUseEver;
         SizeConstraints = new WindowSizeConstraints
         {
-            MinimumSize = new Vector2(520, 340),
-            MaximumSize = new Vector2(900, 800),
+            MinimumSize = new Vector2(940, 560),
+            MaximumSize = new Vector2(1600, 1200),
         };
     }
 
     public override void Draw()
     {
-        ImGui.PushStyleVar(ImGuiStyleVar.FrameRounding, 4f);
-        ImGui.PushStyleVar(ImGuiStyleVar.ChildRounding, 4f);
-        try
-        {
+        using var style = Styling.PushWindowStyle();
+
+        DrawHeader();
+        Styling.VSpace(5f);
+
+        var sidebarWidth = Layout.SidebarWidth * ImGuiHelpers.GlobalScale;
+        using (ImRaii.Child("##CharonSidebar", new Vector2(sidebarWidth, -1), false))
             DrawSidebar();
-            ImGui.SameLine();
+
+        ImGui.SameLine();
+
+        using (ImRaii.Child("##CharonContent", new Vector2(-1, -1), false))
             DrawContent();
-        }
-        finally
+    }
+
+    // --- Identity strip ---
+
+    /// <summary>
+    /// The header bar: gradient wash, the obol mark, the wordmark, the live status pill, the account
+    /// line and a shortcut to the status log. Mirrors Argus's identity strip.
+    /// </summary>
+    private void DrawHeader()
+    {
+        var scale = ImGuiHelpers.GlobalScale;
+        var size = new Vector2(ImGui.GetContentRegionAvail().X, Layout.HeaderHeight * scale);
+        var origin = ImGui.GetCursorScreenPos();
+        var end = origin + size;
+        var dl = ImGui.GetWindowDrawList();
+
+        var left = Vector4.Lerp(CharonTheme.CardBg, CharonTheme.Accent, 0.16f);
+        var right = Vector4.Lerp(CharonTheme.CardBg, CharonTheme.AccentBlue, 0.06f);
+        dl.AddRectFilledMultiColor(origin, end,
+            ImGui.GetColorU32(left), ImGui.GetColorU32(right), ImGui.GetColorU32(right), ImGui.GetColorU32(left));
+        dl.AddRect(origin, end, ImGui.GetColorU32(CharonTheme.WithAlpha(CharonTheme.AccentSoft, 0.30f)),
+            CharonTheme.CardRounding * scale, ImDrawFlags.None, 1.2f * scale);
+
+        DrawObol(origin + new Vector2(28f, 30f) * scale, scale, dl);
+
+        var textX = origin.X + 56f * scale;
+        ImGui.SetWindowFontScale(1.35f);
+        dl.AddText(new Vector2(textX, origin.Y + 9f * scale), ImGui.GetColorU32(CharonTheme.TextStrong), "CHARON");
+        var wordmarkWidth = ImGui.CalcTextSize("CHARON").X;
+        ImGui.SetWindowFontScale(0.70f);
+        dl.AddText(new Vector2(textX + wordmarkWidth + 10f * scale, origin.Y + 16f * scale),
+            ImGui.GetColorU32(CharonTheme.AccentSoft), "FERRYMAN OF THE FLEET");
+        dl.AddText(new Vector2(textX, origin.Y + 34f * scale),
+            ImGui.GetColorU32(CharonTheme.TextDim), _accountStatus());
+        ImGui.SetWindowFontScale(1f);
+
+        var (pill, detail, color) = HeaderStatus();
+        var pillSize = Pill.Measure(pill);
+        Pill.DrawAt(new Vector2(end.X - 15f * scale - pillSize.X, origin.Y + 8f * scale), pill, color);
+
+        var button = 22f * scale;
+        var buttonX = end.X - 15f * scale - button;
+        ImGui.SetWindowFontScale(0.78f);
+        var detailSize = ImGui.CalcTextSize(detail);
+        dl.AddText(new Vector2(buttonX - 8f * scale - detailSize.X, origin.Y + 36f * scale),
+            ImGui.GetColorU32(CharonTheme.TextDim), detail);
+        ImGui.SetWindowFontScale(1f);
+
+        ImGui.SetCursorScreenPos(new Vector2(buttonX, origin.Y + 35f * scale));
+        if (Buttons.Icon(FontAwesomeIcon.Scroll, "##charon_statuslog", button, "Status log (System → Debug)"))
+            _section = Section.Debug;
+
+        ImGui.SetCursorScreenPos(origin);
+        ImGui.Dummy(size);
+    }
+
+    /// <summary>The mark: a minted obol — the coin Charon is paid — ringed by slow-orbiting eyes.</summary>
+    private static void DrawObol(Vector2 center, float scale, ImDrawListPtr dl)
+    {
+        var phase = CharonTheme.Phase(3400.0) * MathF.PI * 2f;
+        var orbit = 15f * scale;
+        const int marks = 8;
+        for (var i = 0; i < marks; i++)
         {
-            ImGui.PopStyleVar(2);
+            var angle = phase + i * MathF.PI * 2f / marks;
+            var p = center + new Vector2(MathF.Cos(angle), MathF.Sin(angle)) * orbit;
+            var alpha = 0.35f + 0.65f * (0.5f + 0.5f * MathF.Sin(angle * 2f + phase));
+            dl.AddCircleFilled(p, 1.6f * scale, ImGui.GetColorU32(CharonTheme.WithAlpha(CharonTheme.AccentSoft, alpha)));
         }
+
+        var breath = 0.85f + 0.15f * CharonTheme.Pulse(2600.0);
+        dl.AddCircleFilled(center, 9f * scale, ImGui.GetColorU32(Vector4.Lerp(CharonTheme.CardBg, CharonTheme.Accent, 0.55f)));
+        dl.AddCircle(center, 9f * scale, ImGui.GetColorU32(CharonTheme.AccentSoft), 28, 1.4f * scale);
+        dl.AddCircleFilled(center, 3.6f * scale * breath, ImGui.GetColorU32(CharonTheme.AccentBlue));
+        dl.AddCircleFilled(center + new Vector2(-1.3f, -1.3f) * scale, 1f * scale, ImGui.GetColorU32(CharonTheme.TextStrong));
+    }
+
+    /// <summary>
+    /// What the pill says. Amber = chores waiting for this character, cyan = a long-running job is in
+    /// flight, mint = nothing to do. Every number comes from a reader Charon already trusts.
+    /// </summary>
+    private (string Label, string Detail, Vector4 Color) HeaderStatus()
+    {
+        var busy = _gilSeller.Busy ? "gil trip" : _doman.Busy ? "doman" : null;
+        var toons = _roster.GetLanPartyMembers().Count;
+        var detail = _roster.IsAvailable
+            ? $"relay up · {toons} toon{(toons == 1 ? string.Empty : "s")}"
+            : "no Daedalus relay";
+
+        if (busy != null)
+            return ($"BUSY · {busy.ToUpperInvariant()}", detail, CharonTheme.AccentCyan);
+
+        var pending = WeeklyChoresLeft();
+        return pending > 0
+            ? ($"{pending} WAITING", detail, CharonTheme.AccentAmber)
+            : ("ALL QUIET", detail, CharonTheme.AccentMint);
+    }
+
+    /// <summary>
+    /// Weekly chores left before the reset: custom deliveries not yet spent plus an unspent Doman
+    /// budget. Allied society allowances are dailies, so they stay out of the pill and live on the
+    /// board's "needs you" card.
+    /// </summary>
+    private int WeeklyChoresLeft()
+    {
+        var snapshot = _weeklies.Read(DateTime.UtcNow);
+        var count = snapshot.DeliveriesLoaded ? Math.Max(0, 6 - snapshot.DeliveriesUsed) : 0;
+        if (_doman.DonationAvailable)
+            count++;
+        return count;
+    }
+
+    /// <summary>"(watching 3 toons)" out of the Quick Kill status — 0 when the line carries no count.</summary>
+    private int QuickKillWatchCount()
+    {
+        var status = _quickKill.Status;
+        var marker = status.IndexOf("watching ", StringComparison.Ordinal);
+        if (marker < 0)
+            return 0;
+
+        var digits = status[(marker + "watching ".Length)..];
+        var space = digits.IndexOf(' ');
+        if (space > 0)
+            digits = digits[..space];
+        return int.TryParse(digits, out var count) ? count : 0;
     }
 
     // --- Sidebar ---
 
     private void DrawSidebar()
     {
-        ImGui.BeginChild("##CharonSidebar", new Vector2(SidebarWidth, 0), true);
+        Styling.VSpace(2f);
 
-        DrawCategoryHeader("FEATURES");
-        DrawNavItem("General", Section.General, _config.AutoAcceptEnabled || _config.FollowTeleportEnabled);
-        DrawNavItem("Auto Pillion", Section.AutoPillion, _config.AutoPillionEnabled);
-        DrawNavItem("Spawns", Section.Spawns,
-            _config.SpawnTrackerEnabled && _config.SpawnWatchNames.Count > 0);
-        ImGui.Spacing();
+        if (SidebarTab.Draw("Board", FontAwesomeIcon.ThLarge, _section == Section.Board))
+            _section = Section.Board;
 
-        DrawCategoryHeader("POWER LEVEL");
-        DrawNavItem("Heal Watch", Section.HealWatch, _config.HealWatchEnabled);
-        DrawNavItem("Quick Kill", Section.QuickKill, _config.QuickKillFor(_localContentId()).Enabled);
-        ImGui.Spacing();
+        DrawCategoryHeader("Features");
+        if (SidebarTab.Draw("General", FontAwesomeIcon.SlidersH, _section == Section.General))
+            _section = Section.General;
+        if (SidebarTab.Draw("Auto Pillion", FontAwesomeIcon.Users, _section == Section.AutoPillion))
+            _section = Section.AutoPillion;
+        var watchNames = _config.SpawnWatchNames.Count;
+        if (SidebarTab.Draw("Spawns", FontAwesomeIcon.Search, _section == Section.Spawns,
+                watchNames > 0 ? watchNames.ToString() : null))
+            _section = Section.Spawns;
 
-        DrawCategoryHeader("FLEET");
-        DrawNavItem("Group Mgmt", Section.GroupMgmt, null);
-        DrawNavItem("Fleet Leader", Section.FleetLeader, _config.FleetLeaderName.Length > 0);
-        DrawNavItem("Follow", Section.Follow, _followManager.Following);
-        DrawNavItem("FC Chest", Section.FcChest, null);
-        DrawNavItem("Gear", Section.Gear, _config.GearIpcExecuteEnabled);
-        DrawNavItem("Collect", Section.Collect, null);
-        DrawNavItem("Loot", Section.Loot, _config.LootRollEnabled);
-        DrawNavItem("Trusted List", Section.TrustedList, null);
-        ImGui.Spacing();
+        DrawCategoryHeader("Power level");
+        if (SidebarTab.Draw("Heal Watch", FontAwesomeIcon.Heart, _section == Section.HealWatch,
+                _healStatus().StartsWith("idle", StringComparison.OrdinalIgnoreCase) ? null : "on",
+                CharonTheme.AccentMint))
+            _section = Section.HealWatch;
+        var watching = QuickKillWatchCount();
+        if (SidebarTab.Draw("Quick Kill", FontAwesomeIcon.Crosshairs, _section == Section.QuickKill,
+                watching > 0 ? watching.ToString() : null))
+            _section = Section.QuickKill;
 
-        DrawCategoryHeader("GIL");
-        DrawNavItem("FT Gil Capping", Section.GilCapping, _gilSeller.Busy);
-        ImGui.Spacing();
+        DrawCategoryHeader("Fleet");
+        if (SidebarTab.Draw("Group Mgmt", FontAwesomeIcon.UserPlus, _section == Section.GroupMgmt))
+            _section = Section.GroupMgmt;
+        if (SidebarTab.Draw("Fleet Leader", FontAwesomeIcon.Crown, _section == Section.FleetLeader))
+            _section = Section.FleetLeader;
+        if (SidebarTab.Draw("Follow", FontAwesomeIcon.Route, _section == Section.Follow,
+                _followManager.Following ? "live" : null, CharonTheme.AccentCyan))
+            _section = Section.Follow;
+        if (SidebarTab.Draw("FC Chest", FontAwesomeIcon.BoxOpen, _section == Section.FcChest))
+            _section = Section.FcChest;
+        if (SidebarTab.Draw("Gear", FontAwesomeIcon.Tshirt, _section == Section.Gear))
+            _section = Section.Gear;
+        if (SidebarTab.Draw("Collect", FontAwesomeIcon.Gem, _section == Section.Collect))
+            _section = Section.Collect;
+        if (SidebarTab.Draw("Loot", FontAwesomeIcon.Dice, _section == Section.Loot))
+            _section = Section.Loot;
+        if (SidebarTab.Draw("Trusted List", FontAwesomeIcon.UserShield, _section == Section.TrustedList))
+            _section = Section.TrustedList;
 
-        DrawCategoryHeader("WEEKLIES");
-        // Green dot = something is still left to do before a reset — a glance says "go spend it".
-        DrawNavItem("Weeklies", Section.Weeklies, AnyWeeklyPending());
-        DrawNavItem("Doman Donate", Section.DomanDonate, _doman.Busy);
-        ImGui.Spacing();
+        DrawCategoryHeader("Gil");
+        if (SidebarTab.Draw("FT Gil Capping", FontAwesomeIcon.Coins, _section == Section.GilCapping,
+                _gilSeller.Busy ? "busy" : null))
+            _section = Section.GilCapping;
 
-        DrawCategoryHeader("TWEAKS");
-        DrawNavItem("Tweaks", Section.Tweaks,
-            _config.AutoOpenChestsEnabled || _config.AutoQteEnabled
-            || _config.AutoCommendEnabled || _config.AutoTurnInEnabled);
-        ImGui.Spacing();
+        DrawCategoryHeader("Weeklies");
+        // A count badge = something is still left to do before a reset — a glance says "go spend it".
+        var chores = WeeklyChoresLeft();
+        if (SidebarTab.Draw("Weeklies", FontAwesomeIcon.CalendarCheck, _section == Section.Weeklies,
+                chores > 0 ? chores.ToString() : null, CharonTheme.AccentMint))
+            _section = Section.Weeklies;
+        if (SidebarTab.Draw("Doman Donate", FontAwesomeIcon.Landmark, _section == Section.DomanDonate,
+                _doman.Busy ? "busy" : null))
+            _section = Section.DomanDonate;
 
-        DrawCategoryHeader("DEEP DUNGEON");
-        DrawNavItem("Deep Dungeon", Section.DeepDungeon,
-            _config.DeepDungeonMapEnabled || _config.DeepDungeonEspEnabled);
-        ImGui.Spacing();
+        DrawCategoryHeader("Tweaks");
+        if (SidebarTab.Draw("Tweaks", FontAwesomeIcon.Magic, _section == Section.Tweaks))
+            _section = Section.Tweaks;
 
-        DrawCategoryHeader("SYSTEM");
-        DrawNavItem("Debug", Section.Debug, null);
+        DrawCategoryHeader("Dungeon");
+        if (SidebarTab.Draw("Deep Dungeon", FontAwesomeIcon.Map, _section == Section.DeepDungeon))
+            _section = Section.DeepDungeon;
 
-        ImGui.EndChild();
+        DrawCategoryHeader("System");
+        if (SidebarTab.Draw("Debug", FontAwesomeIcon.Bug, _section == Section.Debug))
+            _section = Section.Debug;
     }
 
     private static void DrawCategoryHeader(string label)
-    {
-        ImGui.TextColored(CharonTheme.StatusGrey, label);
-    }
-
-    /// <summary>Nav row: gold selection wash + 2px left accent bar (Daedalus sidebar identity).</summary>
-    private void DrawNavItem(string label, Section section, bool? active)
-    {
-        var isSelected = _section == section;
-
-        if (isSelected)
-        {
-            var cursorPos = ImGui.GetCursorScreenPos();
-            var regionAvail = ImGui.GetContentRegionAvail();
-            var drawList = ImGui.GetWindowDrawList();
-            var rowMax = new Vector2(cursorPos.X + regionAvail.X, cursorPos.Y + ImGui.GetTextLineHeightWithSpacing());
-            drawList.AddRectFilled(cursorPos, rowMax, ImGui.GetColorU32(AccentWash));
-            drawList.AddRectFilled(cursorPos, new Vector2(cursorPos.X + 2f, rowMax.Y), ImGui.GetColorU32(CharonTheme.AccentGold));
-        }
-
-        ImGui.Indent(10);
-        ImGui.PushStyleColor(ImGuiCol.Text, isSelected ? CharonTheme.AccentGold : CharonTheme.TextSecondary);
-        ImGui.PushStyleColor(ImGuiCol.Header, AccentWash);
-        ImGui.PushStyleColor(ImGuiCol.HeaderHovered, AccentWash);
-        ImGui.PushStyleColor(ImGuiCol.HeaderActive, AccentWash);
-
-        if (ImGui.Selectable($"  {label}##{section}", isSelected, ImGuiSelectableFlags.None,
-                new Vector2(SidebarWidth - 25, 0)))
-            _section = section;
-
-        ImGui.PopStyleColor(4);
-        ImGui.Unindent(10);
-
-        // Feature-state dot flush right on the row (green = enabled, grey = off).
-        if (active != null)
-        {
-            ImGui.SameLine(SidebarWidth - 18);
-            ImGui.TextColored(active.Value ? CharonTheme.StatusGreen : CharonTheme.TextDisabled, "●");
-        }
-    }
+        => Styling.SectionLabel(label);
 
     // --- Content ---
 
     private void DrawContent()
     {
-        ImGui.BeginChild("##CharonContent", new Vector2(0, 0), true);
-
         switch (_section)
         {
+            case Section.Board: DrawBoardSection(); break;
             case Section.General: DrawGeneralSection(); break;
             case Section.AutoPillion: DrawAutoPillionSection(); break;
             case Section.HealWatch: DrawHealWatchSection(); break;
@@ -375,16 +492,377 @@ public sealed class MainWindow : Window
             case Section.DeepDungeon: DrawDeepDungeonSection(); break;
             case Section.Debug: DrawDebugSection(); break;
         }
-
-        ImGui.EndChild();
     }
 
-    private static void DrawPageHeader(string title)
+    /// <summary>
+    /// Page header: title, optional muted subtitle, hairline. Every section keeps calling this with a
+    /// title alone until it gets a subtitle of its own (the Argus convention).
+    /// </summary>
+    private static void DrawPageHeader(string title, string? subtitle = null)
     {
-        ImGui.TextColored(CharonTheme.AccentGold, title);
-        ImGui.Separator();
+        Styling.TextScaled(title, CharonTheme.TextStrong, 1.30f);
+        if (!string.IsNullOrEmpty(subtitle))
+            Styling.TextWrapped(subtitle, CharonTheme.TextMuted);
+        ImGui.Spacing();
+        var width = ImGui.GetContentRegionAvail().X;
+        var y = ImGui.GetCursorScreenPos().Y;
+        ImGui.GetWindowDrawList().AddLine(ImGui.GetCursorScreenPos(), new Vector2(ImGui.GetCursorScreenPos().X + width, y),
+            ImGui.GetColorU32(CharonTheme.Hairline), 1f);
         ImGui.Spacing();
     }
+
+    // --- Fleet board (landing page) ---
+
+    /// <summary>
+    /// The landing page. Stat tiles across the top, then every background feature's status line with a
+    /// state dot and its own reason for being idle, next to this character's switches, the LAN fleet as
+    /// a table and a "needs you" card. The live rows are the same strings the Debug page shows — they
+    /// are promoted to the front page because a feature whose state is invisible costs a test cycle to
+    /// diagnose.
+    /// </summary>
+    private void DrawBoardSection()
+    {
+        var scale = ImGuiHelpers.GlobalScale;
+        DrawPageHeader("Fleet board",
+            "Dot green = enabled, amber = working right now, grey = off. Each line carries its own reason for being idle.");
+
+        DrawBoardTiles();
+        Styling.VSpace(3f);
+
+        var gap = 5f * scale;
+        var available = ImGui.GetContentRegionAvail().X;
+        var rightWidth = MathF.Min(340f * scale, available * 0.42f);
+        var leftWidth = MathF.Max(240f * scale, available - rightWidth - gap);
+
+        using (ImRaii.Child("##charon_board_left", new Vector2(leftWidth, -1), false))
+        {
+            DrawFleetCard();
+            Styling.VSpace(4f);
+            DrawLiveCard();
+        }
+
+        ImGui.SameLine(0, gap);
+
+        using (ImRaii.Child("##charon_board_right", new Vector2(rightWidth, -1), false))
+        {
+            DrawSwitchesCard();
+            Styling.VSpace(6f);
+            DrawActionsCard();
+            Styling.VSpace(6f);
+            DrawNeedsYouCard();
+        }
+    }
+
+    private void DrawBoardTiles()
+    {
+        var scale = ImGuiHelpers.GlobalScale;
+        var gap = 5f * scale;
+        var width = (ImGui.GetContentRegionAvail().X - gap * 5f) / 6f;
+
+        var leader = _followManager.LeaderName.Length > 0 ? _followManager.LeaderName : "Idle";
+        StatTile.Draw("Follow", FitText(leader, width - 18f * scale), Shorten(_followStatus()),
+            CharonTheme.AccentCyan, width,
+            "Fleet follow: who this box follows, and what the nav layer is doing about it.");
+        ImGui.SameLine(0, gap);
+
+        var setting = _config.QuickKillFor(_localContentId());
+        var role = !setting.Enabled ? "Off" : setting.Mode == 1 ? "Tag" : "Kill";
+        var watching = QuickKillWatchCount();
+        StatTile.Draw("Quick kill", role, watching > 0 ? $"watching {watching}" : Shorten(_quickKill.Status),
+            CharonTheme.Accent, width,
+            "Per character. Kill aims your rotation for the carry; Tag gives each engaged mob one ranged hit.");
+        ImGui.SameLine(0, gap);
+
+        StatTile.Draw("Heal watch", _config.HealWatchEnabled ? "On" : "Off", Shorten(_healStatus()),
+            CharonTheme.AccentMint, width,
+            "Tops up fleet toons from the LAN roster's vitals, out-of-party ones included.");
+        ImGui.SameLine(0, gap);
+
+        var provider = _config.NavProvider == 1 ? "Ariadne" : "vnavmesh";
+        StatTile.Draw("Movement", provider,
+            _navStatus().Contains(": ready", StringComparison.Ordinal) ? "ready" : "not ready",
+            CharonTheme.AccentBlue, width, "Which navigation plugin drives every Charon movement.");
+        ImGui.SameLine(0, gap);
+
+        var chores = WeeklyChoresLeft();
+        StatTile.Draw("Weeklies", chores > 0 ? $"{chores} left" : "done", Shorten(_weeklies.Status),
+            CharonTheme.AccentAmber, width,
+            "Custom deliveries and the Doman donation left before the Tuesday reset.");
+        ImGui.SameLine(0, gap);
+
+        StatTile.Draw("Retainers", Shorten(_retainers.Status), Shorten(_ventureRunner.Status),
+            CharonTheme.AccentViolet, width,
+            "Read-only until the venture assist is armed at a bell.");
+    }
+
+    private void DrawLiveCard()
+    {
+        var contentId = _localContentId();
+        Styling.SectionLabel("Live");
+        using var card = Panel.Begin();
+
+        LiveRow("Follow", _followStatus(), _followManager.Following);
+        LiveRow("Fleet follow", _followFleetStatus(), _followManager.Following);
+        LiveRow("Boarding", _boardingStatus(), _config.AutoPillionEnabled);
+        LiveRow("Heal watch", _healStatus(), _config.HealWatchEnabled);
+        LiveRow("Quick kill", _quickKill.Status, _config.QuickKillFor(contentId).Enabled);
+        LiveRow("Sprint", _sprintStatus(), _config.AutoSprintEnabled);
+        LiveRow("Gear", _gearStatus(), _config.GearIpcExecuteEnabled);
+        LiveRow("Loot", _lootStatus(), _config.LootRollEnabled);
+        LiveRow("Collect", _collectStatus(), _config.AutoCollectEnabled);
+        LiveRow("Nav", _navStatus(), true);
+        LiveRow("Gil capping", _gilSeller.Status, _gilSeller.Busy, _gilSeller.Busy);
+        LiveRow("Doman", _doman.Status, _doman.DonationAvailable);
+        LiveRow("Weeklies", _weeklies.Status, WeeklyChoresLeft() > 0);
+        LiveRow("Retainers", $"{_retainers.Status} · {_ventureRunner.Status}",
+            _retainers.Loaded && VentureBoard.AnythingToDo(VentureBoard.Compose(DateTime.UtcNow, _retainers.Read(DateTime.UtcNow))));
+        LiveRow("Spawns", _spawnScanner.Status, _config.SpawnTrackerEnabled && _config.SpawnWatchNames.Count > 0);
+        LiveRow("Duty pop", _dutyPopStatus(), _config.AutoCommenceDutyEnabled);
+        LiveRow("Trade", _tradeStatus(), _config.AutoTradeEnabled);
+        LiveRow("Duty exit", _dutyExitStatus(), _config.FleetLeaderName.Length > 0);
+        LiveRow("Revival", _revivalStatus(), _config.AutoAcceptRevival);
+        LiveRow("Tweaks", _qolStatus(), _config.AutoOpenChestsEnabled || _config.AutoQteEnabled
+            || _config.AutoCommendEnabled || _config.AutoTurnInEnabled);
+        LiveRow("Leveling", _levelingStatus(), _config.LevelingIpcEnabled);
+    }
+
+    /// <summary>
+    /// One feature line: state dot, name, then the status string fitted to the remaining width with the
+    /// full text on hover. Same content as the Debug page, laid out to be scanned rather than read.
+    /// </summary>
+    private void LiveRow(string name, string status, bool on, bool busy = false)
+    {
+        var scale = ImGuiHelpers.GlobalScale;
+        var color = busy ? CharonTheme.AccentAmber : on ? CharonTheme.AccentMint : CharonTheme.TextMuted;
+
+        ImGui.TextColored(color, "●");
+        ImGui.SameLine(0, 6f * scale);
+        ImGui.TextColored(CharonTheme.TextStrong, name);
+
+        var cursorX = ImGui.GetCursorPosX();
+        var columnX = 118f * scale;
+        var room = ImGui.GetContentRegionAvail().X - (columnX - cursorX);
+        var fitted = FitText(status, MathF.Max(40f, room));
+
+        ImGui.SameLine(columnX);
+        ImGui.TextColored(CharonTheme.TextDim, fitted);
+        if (fitted.Length != status.Length && ImGui.IsItemHovered())
+            ImGui.SetTooltip(status);
+    }
+
+    private void DrawFleetCard()
+    {
+        Styling.SectionLabel("Fleet");
+        using var card = Panel.Begin();
+
+        if (!_roster.IsAvailable)
+        {
+            Styling.TextWrapped("Daedalus is not answering, so the LAN roster — and with it every other "
+                                + "box — is unknown. Manual whitelist entries still work.", CharonTheme.TextMuted);
+            return;
+        }
+
+        var members = _roster.GetLanPartyMembers();
+        if (members.Count == 0)
+        {
+            Styling.TextWrapped("The LAN roster is empty: no other toon is reporting in.", CharonTheme.TextMuted);
+            return;
+        }
+
+        using var table = ImRaii.Table("##charon_fleet_table", 4,
+            ImGuiTableFlags.RowBg | ImGuiTableFlags.SizingStretchProp);
+        if (!table.Success)
+            return;
+
+        ImGui.TableSetupColumn("Toon", ImGuiTableColumnFlags.WidthStretch, 1.5f);
+        ImGui.TableSetupColumn("Follow", ImGuiTableColumnFlags.WidthStretch, 1.4f);
+        ImGui.TableSetupColumn("Vitals", ImGuiTableColumnFlags.WidthStretch, 0.7f);
+        ImGui.TableSetupColumn("Relay", ImGuiTableColumnFlags.WidthStretch, 0.7f);
+        ImGui.TableHeadersRow();
+
+        foreach (var toon in members)
+        {
+            ImGui.TableNextRow();
+
+            ImGui.TableNextColumn();
+            Styling.Text(Display(toon.CharacterName), CharonTheme.TextStrong);
+
+            // Follow state is local to each box and broadcast on charon.follow; "—" means that box has
+            // not reported a leader (it may not be running Charon at all).
+            ImGui.TableNextColumn();
+            var reported = _reportedFollowLeader(toon.CharacterName);
+            Styling.Text(reported != null ? $"follows {Display(reported)}" : "—", CharonTheme.TextDim);
+
+            ImGui.TableNextColumn();
+            Styling.Text(toon.Hp > 0f ? $"{toon.Hp * 100f:0}%" : "—",
+                toon.Hp is > 0f and < 0.35f ? CharonTheme.AccentRose : CharonTheme.TextDim);
+
+            ImGui.TableNextColumn();
+            Styling.Text(toon.IsOnline ? "online" : "offline",
+                toon.IsOnline ? CharonTheme.AccentMint : CharonTheme.TextMuted);
+        }
+    }
+
+    private void DrawSwitchesCard()
+    {
+        Styling.SectionLabel("This character");
+        using var group = SettingsGroup.Begin(string.Empty);
+
+        // Quick Kill is per character (the config file is shared by every client on a machine), so its
+        // role is a three-way picker rather than a checkbox.
+        var setting = _config.QuickKillFor(_localContentId());
+        group.Row("Quick kill", "Kill: this toon is the carry — aim its rotation at whatever is fighting "
+                                + "the fleet, plus one ranged opener while out of combat. Tag: this toon is being "
+                                + "carried — one ranged hit per engaged mob. Stored per character.",
+            126f, () =>
+            {
+                var current = !setting.Enabled ? 0 : setting.Mode == 1 ? 2 : 1;
+                var picked = Segmented.Draw(new[] { "Off", "Kill", "Tag" }, current);
+                if (picked == current)
+                    return;
+
+                setting.Enabled = picked != 0;
+                setting.Mode = picked == 2 ? 1 : 0;
+                _save();
+            }, 20f);
+
+        var heal = _config.HealWatchEnabled;
+        if (group.Toggle("Heal watch", "Emergency heal, raise and HoT upkeep for fleet toons, from the LAN "
+                                       + "roster's vitals. Stands down while Daedalus is rotating.", ref heal))
+        {
+            _config.HealWatchEnabled = heal;
+            _save();
+        }
+
+        var sprint = _config.AutoSprintEnabled;
+        if (group.Toggle("Sprint out of combat", "Sprint when moving and not in combat. Never in combat: "
+                                                 + "the rotation owns the action queue there.", ref sprint))
+        {
+            _config.AutoSprintEnabled = sprint;
+            _save();
+        }
+
+        var collect = _config.AutoCollectEnabled;
+        if (group.Toggle("Auto-collect", "Consume bag collectibles the game says are unlearned — never "
+                                         + "fashion accessories or barding, which are worth gil unlearned.", ref collect))
+        {
+            _config.AutoCollectEnabled = collect;
+            _save();
+        }
+
+        var advance = _config.TextAdvanceEnabled;
+        if (group.Toggle("Advance dialogue", "Click the talk box for you. On a hand-played box this eats the "
+                                             + "story; Odysseus can borrow it with a timed lease instead.", ref advance))
+        {
+            _config.TextAdvanceEnabled = advance;
+            _save();
+        }
+
+        var teleport = _config.FollowTeleportEnabled;
+        if (group.Toggle("Follow teleport", "Accept a trusted leader's teleport offer, or follow them to a new "
+                                            + "zone through an attuned aetheryte.", ref teleport))
+        {
+            _config.FollowTeleportEnabled = teleport;
+            _save();
+        }
+    }
+
+    private void DrawActionsCard()
+    {
+        Styling.SectionLabel("Actions");
+        using var card = Panel.Begin();
+
+        var scale = ImGuiHelpers.GlobalScale;
+        var gap = 5f * scale;
+        var half = (ImGui.GetContentRegionAvail().X - gap) * 0.5f;
+
+        // The leader to command: whatever we are following now, else the persisted one.
+        var leader = _followManager.LeaderName.Length > 0 ? _followManager.LeaderName : _config.FollowLeaderName;
+        if (Buttons.Action(leader.Length > 0 ? $"Follow {Display(leader)}" : "Follow (no leader)", leader.Length > 0, half))
+            _followCommands.Follow(leader);
+        ImGui.SameLine(0, gap);
+        if (Buttons.Action("Stop", _followManager.Following, half))
+            _followCommands.Stop(leader);
+        Styling.VSpace(3f);
+
+        if (Buttons.Action("Follow all", true, half))
+            _followCommands.FollowAll();
+        ImGui.SameLine(0, gap);
+        if (Buttons.Action("Stop all", true, half))
+            _followCommands.StopAll();
+        Styling.VSpace(3f);
+
+        if (Buttons.Action("Leave duty (fleet)", _config.FleetLeaderName.Length > 0, half,
+                CharonTheme.AccentAmber))
+            _fleetCommands.LeaveDuty();
+        ImGui.SameLine(0, gap);
+        if (Buttons.Action("Status log", true, half, CharonTheme.AccentBlue))
+            _section = Section.Debug;
+    }
+
+    private void DrawNeedsYouCard()
+    {
+        Styling.SectionLabel("Needs you");
+        using var card = Panel.Begin();
+
+        var weekly = _weeklies.Read(DateTime.UtcNow);
+        var enclave = _doman.ReadEnclaveStateOrCache(DateTime.UtcNow);
+
+        var deliveriesLeft = weekly.DeliveriesLoaded ? Math.Max(0, 6 - weekly.DeliveriesUsed) : -1;
+        NeedsYouRow(card, "Custom deliveries",
+            deliveriesLeft < 0 ? "not loaded" : deliveriesLeft == 0 ? "done" : $"{deliveriesLeft} left",
+            deliveriesLeft > 0);
+
+        var tribesLeft = weekly.TribesLoaded ? weekly.TribeAllowanceLeft : -1;
+        NeedsYouRow(card, "Allied societies",
+            tribesLeft < 0 ? "not loaded" : tribesLeft == 0 ? "done today" : $"{tribesLeft} left today",
+            tribesLeft > 0);
+
+        var domanAvailable = _doman.DonationAvailable;
+        NeedsYouRow(card, "Doman donation",
+            !domanAvailable ? "done this week"
+                : enclave.Loaded && enclave.BudgetRemaining > 0 ? $"{enclave.BudgetRemaining:N0} gil of budget"
+                : "available",
+            domanAvailable);
+
+        NeedsYouRow(card, "Spawns watched", _config.SpawnWatchNames.Count.ToString(), false);
+    }
+
+    /// <summary>
+    /// One "needs you" line: label on the left, value hard right-aligned to the card's own right edge.
+    /// The value is fitted (with a hover tooltip for the full text) so a long figure can never push
+    /// itself under the card border.
+    /// </summary>
+    private static void NeedsYouRow(Panel panel, string label, string value, bool waiting)
+    {
+        var scale = ImGuiHelpers.GlobalScale;
+        ImGui.TextColored(waiting ? CharonTheme.TextStrong : CharonTheme.TextDim, label);
+        var rowY = ImGui.GetItemRectMin().Y;
+        var labelEnd = ImGui.GetItemRectMax().X;
+
+        var fitted = FitText(value, panel.RightEdge - labelEnd - 8f * scale);
+        ImGui.SetCursorScreenPos(new Vector2(panel.RightEdge - ImGui.CalcTextSize(fitted).X, rowY));
+        ImGui.TextColored(waiting ? CharonTheme.AccentAmber : CharonTheme.TextDim, fitted);
+        if (fitted.Length != value.Length && ImGui.IsItemHovered())
+            ImGui.SetTooltip(value);
+    }
+
+    /// <summary>First clause of a status line, for a tile subtitle: everything before " · " or " — ".</summary>
+    private static string Shorten(string status)
+    {
+        var cut = status.Length;
+        foreach (var separator in new[] { " · ", " — " })
+        {
+            var at = status.IndexOf(separator, StringComparison.Ordinal);
+            if (at >= 0 && at < cut)
+                cut = at;
+        }
+
+        return status[..cut];
+    }
+
+    /// <summary>Trim to fit a width, with an ellipsis when anything was dropped (full text goes in a tooltip).</summary>
+    private static string FitText(string text, float maxWidth) => Styling.FitText(text, maxWidth);
 
     // --- General: Auto Accept + Follow Teleport ---
 
@@ -751,9 +1229,9 @@ public sealed class MainWindow : Window
         // Mass invite — gold accent, full width; disabled at 8/8 or with nothing to invite.
         var canMass = !full && onlineCount > 0 && _roster.IsAvailable;
         if (!canMass) ImGui.BeginDisabled();
-        ImGui.PushStyleColor(ImGuiCol.Button, CharonTheme.AccentGold);
-        ImGui.PushStyleColor(ImGuiCol.ButtonHovered, CharonTheme.AccentGold);
-        ImGui.PushStyleColor(ImGuiCol.ButtonActive, CharonTheme.AccentDim);
+        ImGui.PushStyleColor(ImGuiCol.Button, CharonTheme.Accent);
+        ImGui.PushStyleColor(ImGuiCol.ButtonHovered, CharonTheme.Accent);
+        ImGui.PushStyleColor(ImGuiCol.ButtonActive, CharonTheme.AccentSoft);
         ImGui.PushStyleColor(ImGuiCol.Text, CharonTheme.BgDeep);
         if (ImGui.Button("Mass Invite All", new Vector2(-1f, 0f)) && canMass)
             _groupInvites.InviteAll(roster, localName, _partySize(), _isInParty, DateTime.UtcNow);
@@ -912,9 +1390,9 @@ public sealed class MainWindow : Window
         var canCommand = onlineCount > 0 && _roster.IsAvailable;
 
         if (!canCommand) ImGui.BeginDisabled();
-        ImGui.PushStyleColor(ImGuiCol.Button, CharonTheme.AccentGold);
-        ImGui.PushStyleColor(ImGuiCol.ButtonHovered, CharonTheme.AccentGold);
-        ImGui.PushStyleColor(ImGuiCol.ButtonActive, CharonTheme.AccentDim);
+        ImGui.PushStyleColor(ImGuiCol.Button, CharonTheme.Accent);
+        ImGui.PushStyleColor(ImGuiCol.ButtonHovered, CharonTheme.Accent);
+        ImGui.PushStyleColor(ImGuiCol.ButtonActive, CharonTheme.AccentSoft);
         ImGui.PushStyleColor(ImGuiCol.Text, CharonTheme.BgDeep);
         if (ImGui.Button("Follow Me (All)", new Vector2(-1f, 0f)) && canCommand)
             _followCommands.FollowAll();
@@ -1085,9 +1563,9 @@ public sealed class MainWindow : Window
         }
         else
         {
-            ImGui.PushStyleColor(ImGuiCol.Button, CharonTheme.AccentGold);
-            ImGui.PushStyleColor(ImGuiCol.ButtonHovered, CharonTheme.AccentGold);
-            ImGui.PushStyleColor(ImGuiCol.ButtonActive, CharonTheme.AccentDim);
+            ImGui.PushStyleColor(ImGuiCol.Button, CharonTheme.Accent);
+            ImGui.PushStyleColor(ImGuiCol.ButtonHovered, CharonTheme.Accent);
+            ImGui.PushStyleColor(ImGuiCol.ButtonActive, CharonTheme.AccentSoft);
             ImGui.PushStyleColor(ImGuiCol.Text, CharonTheme.BgDeep);
             if (ImGui.Button("Leave Duty (My Party)", new Vector2(-1f, 0f)))
                 ImGui.OpenPopup("fleetLeaveDutyConfirm");
@@ -1302,7 +1780,7 @@ public sealed class MainWindow : Window
                 if (row.ExpBonus.Length > 0)
                 {
                     ImGui.SameLine();
-                    ImGui.TextColored(CharonTheme.AccentGold, "[EXP]");
+                    ImGui.TextColored(CharonTheme.Accent, "[EXP]");
                     if (ImGui.IsItemHovered())
                         ImGui.SetTooltip($"{row.ExpBonus}\nProtected by default — untick Keep to let it go.");
                 }
@@ -1403,7 +1881,7 @@ public sealed class MainWindow : Window
                 if (row.ExpBonus.Length > 0)
                 {
                     ImGui.SameLine();
-                    ImGui.TextColored(CharonTheme.AccentGold, "[EXP]");
+                    ImGui.TextColored(CharonTheme.Accent, "[EXP]");
                     if (ImGui.IsItemHovered())
                         ImGui.SetTooltip($"{row.ExpBonus}\nProtected by default.");
                 }
@@ -1473,7 +1951,7 @@ public sealed class MainWindow : Window
             else
                 ImGui.TextUnformatted(upgrade.Replacing.Name);
             ImGui.TableNextColumn();
-            ImGui.TextColored(CharonTheme.AccentGold, upgrade.Item.Name);
+            ImGui.TextColored(CharonTheme.Accent, upgrade.Item.Name);
             ImGui.TableNextColumn();
             if (upgrade.IlvlGain > 0)
             {
@@ -1482,7 +1960,7 @@ public sealed class MainWindow : Window
             else
             {
                 // Same item level, better stats for this job — the usual case at max level.
-                ImGui.TextColored(CharonTheme.AccentGold, "stats");
+                ImGui.TextColored(CharonTheme.Accent, "stats");
                 if (ImGui.IsItemHovered())
                     ImGui.SetTooltip("Same item level, but a better stat spread for this job.");
             }
@@ -1557,7 +2035,7 @@ public sealed class MainWindow : Window
     private static Vector4 RollColour(Charon.Features.Loot.RollAction action) => action switch
     {
         Charon.Features.Loot.RollAction.Need => CharonTheme.StatusGreen,
-        Charon.Features.Loot.RollAction.Greed => CharonTheme.AccentGold,
+        Charon.Features.Loot.RollAction.Greed => CharonTheme.Accent,
         Charon.Features.Loot.RollAction.Pass => CharonTheme.TextDisabled,
         _ => CharonTheme.TextSecondary,
     };
@@ -1580,7 +2058,10 @@ public sealed class MainWindow : Window
             : $"{rows.Count} collectible(s) in the bags you haven't learned:");
         CharonTheme.HelpMarker("Mounts, minions, Triple Triad cards, orchestrion rolls, emotes and "
                                + "hairstyles you don't own yet. Duplicates never appear — the game "
-                               + "won't relearn one, so anything worth selling stays untouched.");
+                               + "won't relearn one, so anything worth selling stays untouched.\n\n"
+                               + "The exception is Bozjan field records: the game offers no way "
+                               + "to check whether one is already registered, so they are always "
+                               + "listed, marked, and never auto-collected.");
 
         var auto = _config.AutoCollectEnabled;
         if (ImGui.Checkbox("Auto-collect", ref auto))
@@ -1591,8 +2072,9 @@ public sealed class MainWindow : Window
         CharonTheme.HelpMarker("Learns these on its own — out of combat, one every 1.5s.\n"
                                + "NEVER fashion accessories or chocobo barding: an unlearned one can\n"
                                + "be worth millions and collecting consumes it, so those two kinds\n"
-                               + "always keep the manual button. Anything the game refuses is\n"
-                               + "skipped for the session (Refresh retries).");
+                               + "always keep the manual button. Bozjan field records are skipped\n"
+                               + "too — nothing can tell whether one is already registered.\n"
+                               + "Anything the game refuses is skipped for the session (Refresh retries).");
         if (auto)
         {
             ImGui.SameLine();
@@ -1613,11 +2095,23 @@ public sealed class MainWindow : Window
                 ImGui.TableNextRow();
                 ImGui.TableNextColumn();
                 ImGui.TextUnformatted(row.Name);
+                // No unlock check exists for this kind, so "unlearned" is an assumption, not a
+                // fact. Saying so beats hiding the item AND beats implying a certainty we lack.
+                var unverified = Charon.Features.Loot.CollectibleKinds.UnverifiedUnlock.Contains(row.ActionKind);
+                if (unverified)
+                {
+                    ImGui.SameLine();
+                    ImGui.TextColored(CharonTheme.TextDisabled, "(registration unknown)");
+                    if (ImGui.IsItemHovered())
+                        ImGui.SetTooltip("The game exposes no way to ask whether this record is already\n"
+                                         + "registered, so Charon can't tell a new one from a duplicate.\n"
+                                         + "Check the Field Records menu before using it.");
+                }
                 ImGui.TableNextColumn();
                 ImGui.TextColored(CharonTheme.TextSecondary, row.Category);
                 ImGui.TableNextColumn();
                 var here = _collection.CanCollectHere(row);
-                var manualOnly = !Charon.Features.Loot.CollectibleKinds.IsAutoCollectSafe(row.ActionKind);
+                var manualOnly = Charon.Features.Loot.CollectibleKinds.ManualOnly.Contains(row.ActionKind);
                 if (!here) ImGui.BeginDisabled();
                 if (ImGui.SmallButton($"Collect##collect{row.Container}_{row.Slot}") && here)
                     _collection.TryCollect(row.ItemId, row.ActionKind, highQuality: false);
@@ -1626,6 +2120,8 @@ public sealed class MainWindow : Window
                     ImGui.SetTooltip("Only usable in the Occult Crescent (South Horn or North Horn)");
                 else if (manualOnly && ImGui.IsItemHovered())
                     ImGui.SetTooltip("Manual only — this kind can be worth real gil unlearned,\nand collecting consumes it. Auto-collect never touches it.");
+                else if (unverified && ImGui.IsItemHovered())
+                    ImGui.SetTooltip("Manual only — Charon can't verify whether this one is already\nregistered, so auto-collect never touches it.");
             }
 
             ImGui.EndTable();
@@ -2069,7 +2565,7 @@ public sealed class MainWindow : Window
             ImGui.TableNextColumn();
             ImGui.TextColored(CharonTheme.TextSecondary, toon.World.Length > 0 ? toon.World : "—");
             ImGui.TableNextColumn();
-            ImGui.TextColored(CharonTheme.AccentGold, "[LAN]");
+            ImGui.TextColored(CharonTheme.Accent, "[LAN]");
             ImGui.TableNextColumn();
             ImGui.TextColored(CharonTheme.TextDisabled, _config.LanAutoWhitelist ? "auto" : "off");
         }
@@ -2371,6 +2867,10 @@ public sealed class MainWindow : Window
         // Reading the line IS the refresh — the reader is lazy and nothing else polls it here.
         _weeklies.Read(DateTime.UtcNow);
         DrawStatusLine($"Weeklies: {_weeklies.Status}");
+
+        // Read-only: this never opens a bell, so it is safe on a hand-played box.
+        _retainers.Read(DateTime.UtcNow);
+        DrawStatusLine($"Retainers: {_retainers.Status} · ventures: {_ventureRunner.Status}");
         DrawStatusLine($"Fleet duty exit: {ScrambleIn(_dutyExitStatus())}");
         if (_inviteManager.AcceptPending)
             DrawStatusLine("Invite accept pending (delay running)", CharonTheme.StatusYellow);

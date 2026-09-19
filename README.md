@@ -145,10 +145,20 @@ Charon works out Need / Greed / Pass for everything on the loot window and **sho
 Quest rewards, trust runs and AutoDuty runs hand you items directly — no loot roll involved — so an unattended toon quietly accumulates unlearned minions, mounts and orchestrion rolls for weeks.
 
 - **Lists what you're holding but haven't learned**, with a Collect button on each row. Nothing is ever consumed without a click — unless you turn on **Auto-collect**, which learns the safe kinds on its own (out of combat, not while at a vendor or in a cutscene, one every 1.5s) and still never touches the two kinds below that can be worth real gil.
-- **Only real one-time unlocks are offered.** The game reports an ordinary potion as "not unlocked" exactly like a genuinely unlearned collectible, so Charon works from a verified allowlist: minions, mounts, emotes and hairstyles, orchestrion rolls, fashion accessories, facewear, chocobo barding, master recipe books, gathering folklore tomes, Triple Triad cards, Occult Record notes, phantom job soul shards and Beastmaster pact vessels. Anything it doesn't recognise is logged rather than offered, which is how the list grows — from observed values, never guesses.
+- **Only real one-time unlocks are offered.** The game reports an ordinary potion as "not unlocked" exactly like a genuinely unlearned collectible, so Charon works from a verified allowlist: minions, mounts, emotes and hairstyles, orchestrion rolls, fashion accessories, facewear, chocobo barding, master recipe books, gathering folklore tomes, Triple Triad cards, Occult Record notes, phantom job soul shards, Beastmaster pact vessels and Bozjan field records. Anything it doesn't recognise is logged rather than offered, which is how the list grows — from observed values, never guesses.
 - **Booster packs are not cards.** The seven Triad Card packs open into random cards, so "already collected" isn't a question you can ask of one — they're excluded, while the individual cards they contain are listed.
 - **Duplicates never appear.** The game won't relearn something you own, so a spare mount stays sellable by construction. Fashion accessories and chocobo barding are the kinds where an *unlearned* item can still be worth real gil — so those two are **manual only**, always a deliberate per-item click, even with Auto-collect on.
+- **Bozjan field records say so when Charon can't be sure.** The game offers no way to ask whether a field record is already registered — unlike every other kind here, there is simply no check to call — so field notes are listed with *(registration unknown)* next to the name instead of being hidden, and Auto-collect never takes one. Check the Field Records menu before you use it.
 - **Phantom job shards are zone-aware** — listed anywhere so you can see you have one, but only collectable in the Occult Crescent where they actually work.
+
+## Retainer Ventures
+
+Venture chores without handing over your character. Open a summoning bell and a small Charon window appears beside the retainer list.
+
+- **You pick the retainer, Charon does the clicking.** Press *Handle the retainer I open*, then open any retainer: a finished venture is collected and sent straight back out on the same venture, and an idle one gets a quick exploration. Control comes back immediately.
+- **It cannot lock you out.** Charon never opens a bell, never picks a retainer for you, and never moves on to the next one by itself. There is no queue of pending work, so **Stop** takes effect on the very next frame and simply closing the retainer window ends it too. If you have eight retainers, you are never committed to eight of them.
+- **A venture board at a glance** — every retainer with *ready*, *idle*, or the time left. Timers the game has not sent yet show as *unknown* rather than guessing, so you are never walked to a bell for nothing.
+- **It gives up out loud.** A click that changes nothing four times over stops the run and says so, instead of hammering a menu that is not responding.
 
 ## Gil Tools
 

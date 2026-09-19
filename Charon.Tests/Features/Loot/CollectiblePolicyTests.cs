@@ -1,4 +1,4 @@
-using Charon.Features.Loot;
+﻿using Charon.Features.Loot;
 
 namespace Charon.Tests.Features.Loot;
 
@@ -303,6 +303,32 @@ public sealed class CollectiblePolicyTests
         Assert.True(CollectibleKinds.IsAutoCollectSafe(CollectibleKinds.Minion));
         Assert.True(CollectibleKinds.IsAutoCollectSafe(CollectibleKinds.TripleTriadCard));
         Assert.True(CollectibleKinds.IsAutoCollectSafe(CollectibleKinds.Facewear));
+    }
+
+    [Fact]
+    public void BozjaFieldNotes_AreListed_ButNeverAutoCollected()
+    {
+        // The game exposes no registration check for field records, so they are listed with
+        // their state unknown rather than hidden - and that same uncertainty is exactly why
+        // auto-collect must never take one.
+        var rows = CollectiblePolicy.Unlearned([
+            Item(1, "Field Notes on Stanik", "Miscellany", CollectibleKinds.BozjaFieldNote)]);
+
+        Assert.Equal("Field Notes on Stanik", Assert.Single(rows).Name);
+        Assert.Contains(CollectibleKinds.BozjaFieldNote, CollectibleKinds.Known);
+        Assert.Contains(CollectibleKinds.BozjaFieldNote, CollectibleKinds.UnverifiedUnlock);
+        Assert.False(CollectibleKinds.IsAutoCollectSafe(CollectibleKinds.BozjaFieldNote));
+    }
+
+    [Fact]
+    public void AutoCollect_SkipsUnverifiedKinds_AndTakesTheNextItem()
+    {
+        var next = CollectiblePolicy.NextAutoCollect([
+            Item(1, "Field Notes on Stanik", "Miscellany", CollectibleKinds.BozjaFieldNote),
+            Item(2, "Wind-up Sun", "Miscellany", CollectibleKinds.Minion),
+        ], territoryId: 478u);
+
+        Assert.Equal(2u, next?.ItemId);
     }
 
     [Fact]

@@ -1,0 +1,437 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Charon — board first, teal (selected)</title>
+<style>
+  :root{
+    --win:#0e0f13;
+    --card:rgba(25,28,34,.90);
+    --card-soft:rgba(22,25,30,.55);
+    --card-hover:rgba(30,34,41,.95);
+    --border:rgba(58,66,78,.60);
+    --border-soft:rgba(58,66,78,.42);
+    --hairline:rgba(255,255,255,.055);
+    --text-strong:#f4f4f6;
+    --text-2:#c6cbd3;
+    --text-dim:#8b929c;
+    --text-muted:#666c75;
+    --accent:#29c7bd;
+    --accent-soft:#80ebe0;
+    --amber:#ebbd57;
+    --mint:#75dba8;
+    --rose:#ed6b80;
+    --cyan:#78f0ea;
+    --blue:#66adfa;
+    --violet:#9e6bf5;
+    --mono:ui-monospace,SFMono-Regular,"Cascadia Mono",Consolas,monospace;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:"Segoe UI",Inter,-apple-system,BlinkMacSystemFont,Roboto,Arial,sans-serif;
+       -webkit-font-smoothing:antialiased;background:#1b1d22;color:var(--text-2);
+       padding:22px 22px 34px;font-size:13px;line-height:1.3}
+  .stage{width:1080px}
+  .caption{width:1080px;margin:14px 0 26px;color:#8b929c;font-size:12.5px;line-height:1.6}
+  .caption b{color:#c6cbd3;font-weight:600}
+
+  .window{width:1080px;height:680px;background:var(--win);border:1px solid rgba(120,130,150,.22);
+          border-radius:9px;padding:8px;display:flex;flex-direction:column;box-shadow:0 18px 60px rgba(0,0,0,.55)}
+
+  /* compact identity strip: 60px, not 88 */
+  .header{position:relative;height:60px;border-radius:7px;flex:none;
+    background:linear-gradient(90deg,rgba(41,199,189,.16),rgba(102,173,250,.05));
+    border:1.2px solid rgba(128,235,224,.30)}
+  .header .mark{position:absolute;left:12px;top:14px;width:32px;height:32px}
+  .header .hname{position:absolute;left:56px;top:12px;font-size:19px;font-weight:600;letter-spacing:.06em;color:var(--text-strong)}
+  .header .hsub{position:absolute;left:158px;top:17px;font-size:11px;letter-spacing:.15em;text-transform:uppercase;color:var(--accent-soft)}
+  .header .hmid{position:absolute;left:56px;top:34px;font-size:11.5px;color:var(--text-dim)}
+  .header .hpill{position:absolute;right:16px;top:9px}
+  .header .hdetail{position:absolute;right:16px;top:35px;font-size:11.5px;color:var(--text-dim)}
+
+  .body{display:flex;gap:8px;padding-top:5px;min-height:0;flex:1}
+  .sidebar{width:148px;flex:none;overflow-y:auto;overflow-x:hidden;padding:2px 3px 6px 0}
+  .sidebar::-webkit-scrollbar{width:8px}
+  .sidebar::-webkit-scrollbar-thumb{background:rgba(255,255,255,.12);border-radius:4px}
+  .content{flex:1;min-width:0;overflow-y:auto;padding:0 6px 0 0}
+  .content::-webkit-scrollbar{width:8px}
+  .content::-webkit-scrollbar-thumb{background:rgba(255,255,255,.12);border-radius:4px}
+
+  .cat{font-size:10px;letter-spacing:.13em;text-transform:uppercase;color:var(--text-muted);padding:7px 0 2px 11px}
+  .navrow{position:relative;height:30px;border-radius:5px;display:flex;align-items:center;gap:8px;padding:0 7px 0 11px;cursor:pointer;color:var(--text-2);user-select:none}
+  .navrow:hover{background:var(--card-hover)}
+  .navrow .ic{width:15px;height:15px;flex:none;opacity:.9}
+  .navrow.sel{background:linear-gradient(90deg,rgba(41,199,189,.18),rgba(41,199,189,.06));color:var(--text-strong)}
+  .navrow.sel .ic{color:var(--accent)}
+  .navrow.sel:before{content:"";position:absolute;left:0;top:0;bottom:0;width:3px;border-radius:1px;background:var(--accent)}
+  .navrow .lbl{font-size:13px;flex:1;white-space:nowrap;overflow:hidden}
+  .navrow .n{font-size:10.5px;color:var(--amber)}
+  .navrow .n.good{color:var(--mint)}
+
+  .page{display:none}
+  .page.on{display:block}
+  .phead{display:flex;align-items:baseline;gap:10px;margin:1px 0 8px}
+  .phead h1{font-size:18px;font-weight:600;color:var(--text-strong)}
+  .phead .sub{font-size:12px;color:var(--text-muted)}
+  .phead .stamp{margin-left:auto;font-size:11.5px;color:var(--text-dim);font-family:var(--mono)}
+
+  .slabel{font-size:10px;letter-spacing:.13em;text-transform:uppercase;color:var(--text-dim);margin:9px 0 4px}
+
+  /* dense tiles: 52px, six across */
+  .strip{display:flex;gap:5px;margin-bottom:5px}
+  .tile{position:relative;flex:1;height:52px;border-radius:5px;background:var(--card-soft);
+        border:1px solid var(--border-soft);padding:6px 9px;overflow:hidden}
+  .tile:before{content:"";position:absolute;left:0;top:0;bottom:0;width:3px;border-radius:2px}
+  .tile.t-gold:before{background:var(--accent)}
+  .tile.t-cyan:before{background:var(--cyan)}
+  .tile.t-amber:before{background:var(--amber)}
+  .tile.t-mint:before{background:var(--mint)}
+  .tile.t-blue:before{background:var(--blue)}
+  .tile.t-violet:before{background:var(--violet)}
+  .tile .tl{font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--text-dim);white-space:nowrap}
+  .tile .tv{position:absolute;left:9px;bottom:5px;font-size:16px;font-weight:600;color:var(--text-strong)}
+  .tile .ts{position:absolute;right:9px;bottom:6px;font-size:10.5px;color:var(--text-dim)}
+
+  .card{border-radius:6px;background:var(--card);border:1px solid var(--border-soft);padding:7px 10px;margin-bottom:5px;position:relative}
+  .card .ct{font-size:13.5px;font-weight:600;color:var(--text-strong)}
+
+  /* live board: one line per feature, state dot + name + reason */
+  .lrow{display:flex;align-items:center;gap:8px;height:23px;font-size:12.5px;border-top:1px solid var(--hairline)}
+  .lrow:first-of-type{border-top:none}
+  .lrow .d{width:7px;height:7px;border-radius:50%;flex:none;background:var(--text-muted)}
+  .lrow .d.on{background:var(--mint)}
+  .lrow .d.work{background:var(--amber)}
+  .lrow .d.off{background:rgba(255,255,255,.18)}
+  .lrow .fn{width:104px;flex:none;color:var(--text-strong)}
+  .lrow .fs{color:var(--text-dim);font-family:var(--mono);font-size:11.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .lrow .fs.warn{color:var(--amber)}
+
+  .cols{display:grid;grid-template-columns:minmax(0,1.55fr) minmax(0,1fr);gap:5px;align-items:start}
+  .cols>.col{min-width:0;overflow:hidden}
+
+  .pill{display:inline-flex;align-items:center;gap:5px;height:19px;padding:0 8px 0 7px;border-radius:10px;
+        font-size:10.5px;background:rgba(255,255,255,.05);border:1px solid var(--border)}
+  .pill i{width:5px;height:5px;border-radius:50%;background:currentColor;flex:none}
+  .pill.gold{color:var(--accent);border-color:rgba(41,199,189,.55);background:rgba(41,199,189,.14)}
+  .pill.amber{color:var(--amber);border-color:rgba(235,189,87,.55);background:rgba(235,189,87,.14)}
+  .pill.mint{color:var(--mint);border-color:rgba(117,219,168,.5);background:rgba(117,219,168,.12)}
+  .pill.cyan{color:var(--cyan);border-color:rgba(120,240,234,.5);background:rgba(120,240,234,.12)}
+  .pill.dim{color:var(--text-dim);border-color:var(--border-soft);background:rgba(255,255,255,.03)}
+
+  .grow{display:flex;align-items:center;height:27px;font-size:12.5px;color:var(--text-2);position:relative}
+  .grow+.grow:before{content:"";position:absolute;left:-10px;right:-10px;top:0;height:1px;background:var(--hairline)}
+  .grow:hover{color:var(--text-strong)}
+  .grow .ctl{margin-left:auto;display:flex;align-items:center}
+  .tog{width:32px;height:17px;border-radius:9px;background:var(--card-soft);border:1px solid var(--border);position:relative;cursor:pointer;flex:none}
+  .tog:after{content:"";position:absolute;top:2px;left:2px;width:11px;height:11px;border-radius:50%;background:var(--text-2);transition:left .13s}
+  .tog.on{background:rgba(41,199,189,.62);border-color:var(--accent)}
+  .tog.on:after{left:17px;background:var(--text-strong)}
+
+  /* segmented role picker - a Charon component, not an Argus one */
+  .seg{display:inline-flex;border:1px solid var(--border);border-radius:5px;overflow:hidden}
+  .seg span{padding:3px 9px;font-size:11.5px;color:var(--text-dim);cursor:pointer;border-left:1px solid var(--border)}
+  .seg span:first-child{border-left:none}
+  .seg span.on{background:rgba(41,199,189,.55);color:var(--text-strong)}
+  .seg span:hover{color:var(--text-strong)}
+
+  .btn{height:25px;padding:0 12px;border-radius:5px;border:none;cursor:pointer;font-size:12.5px;font-family:inherit;
+       color:var(--text-strong);background:rgba(41,199,189,.55)}
+  .btn:hover{background:rgba(41,199,189,.75)}
+  .btn:active{background:var(--accent)}
+  .btn.ghost{background:var(--card-soft);border:1px solid var(--border);color:var(--text-2)}
+  .btn.ghost:hover{background:var(--card-hover)}
+  .btn:disabled{background:var(--card-soft);color:var(--text-muted);border:1px solid var(--border-soft);cursor:not-allowed}
+  .btnrow{display:flex;gap:5px;flex-wrap:wrap;margin-top:6px}
+
+  table{width:100%;border-collapse:collapse;font-size:12.5px}
+  th{text-align:left;font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--text-muted);
+     font-weight:400;padding:2px 6px 4px 0;border-bottom:1px solid var(--hairline)}
+  td{padding:3px 6px 3px 0;border-bottom:1px solid var(--hairline);color:var(--text-2)}
+  tr:last-child td{border-bottom:none}
+  td.nm{color:var(--text-strong)}
+  td.right{text-align:right;color:var(--text-dim)}
+  td.mono{font-family:var(--mono);font-size:11.5px}
+</style>
+</head>
+<body>
+<div class="stage">
+  <div class="window">
+    <div class="header">
+      <svg class="mark" viewBox="0 0 48 48" fill="none">
+        <circle cx="24" cy="24" r="15" stroke="#80ebe0" stroke-width="1.6" opacity=".85"/>
+        <circle cx="24" cy="24" r="10.5" fill="rgba(41,199,189,.55)" stroke="#29c7bd" stroke-width="1.2"/>
+        <circle cx="24" cy="24" r="4.4" fill="#66adfa"/>
+        <g fill="#80ebe0">
+          <circle cx="24" cy="5" r="1.5"/><circle cx="38" cy="10" r="1.2"/><circle cx="43" cy="24" r="1.5"/>
+          <circle cx="38" cy="38" r="1.2"/><circle cx="24" cy="43" r="1.5"/><circle cx="10" cy="38" r="1.2"/>
+          <circle cx="5" cy="24" r="1.5"/><circle cx="10" cy="10" r="1.2"/>
+        </g>
+      </svg>
+      <div class="hname">CHARON</div>
+      <div class="hsub">Ferryman of the fleet</div>
+      <div class="hmid">Korha @ Gilgamesh · free trial · gil 3,214</div>
+      <div class="hpill"><span class="pill amber"><i></i>2 WAITING</span></div>
+      <div class="hdetail">relay up · 4 boxes · 3 channels</div>
+    </div>
+
+    <div class="body">
+      <div class="sidebar">
+        <div class="cat">Features</div>
+        <div class="navrow sel" data-p="board"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7.5" height="7.5" rx="1.5"/><rect x="13.5" y="3" width="7.5" height="7.5" rx="1.5"/><rect x="3" y="13.5" width="7.5" height="7.5" rx="1.5"/><rect x="13.5" y="13.5" width="7.5" height="7.5" rx="1.5"/></svg><span class="lbl">Board</span><span class="n">2</span></div>
+        <div class="navrow" data-p="general"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 7h16M4 12h16M4 17h16"/><circle cx="9" cy="7" r="2.2" fill="#0e0f13"/><circle cx="15" cy="12" r="2.2" fill="#0e0f13"/><circle cx="8" cy="17" r="2.2" fill="#0e0f13"/></svg><span class="lbl">General</span></div>
+        <div class="navrow" data-p="pillion"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="9" cy="8" r="3.2"/><path d="M3.5 20a5.5 5.5 0 0 1 11 0M16 5.5a3.2 3.2 0 0 1 0 5M17.5 20a5.5 5.5 0 0 0-3-4.9"/></svg><span class="lbl">Auto Pillion</span></div>
+        <div class="navrow" data-p="follow"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="6" cy="18" r="2.6"/><circle cx="18" cy="6" r="2.6"/><path d="M8.2 15.8 15.8 8.2" stroke-dasharray="3 2.4"/></svg><span class="lbl">Follow</span><span class="n">live</span></div>
+        <div class="cat">Power level</div>
+        <div class="navrow" data-p="quickkill"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="7.5"/><path d="M12 2.5v3.5M12 18v3.5M2.5 12H6M18 12h3.5"/><circle cx="12" cy="12" r="1.6" fill="currentColor"/></svg><span class="lbl">Quick Kill</span><span class="n">3</span></div>
+        <div class="navrow" data-p="healwatch"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20s-7-4.4-7-9.3A4.2 4.2 0 0 1 12 7.6a4.2 4.2 0 0 1 7 3.1C19 15.6 12 20 12 20z"/><path d="M9.5 12h2l1-2 1.5 4 1-2h1.5"/></svg><span class="lbl">Heal Watch</span></div>
+        <div class="cat">Fleet</div>
+        <div class="navrow" data-p="settings"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 3.5 5 6v5c0 4 2.6 7.4 7 9.5 4.4-2.1 7-5.5 7-9.5V6l-4-2.5z"/><path d="M9 12.2l2.2 2.2 4-4.6"/></svg><span class="lbl">Trusted</span></div>
+        <div class="navrow" data-p="settings"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3.5 8.5 12 4l8.5 4.5v9L12 22l-8.5-4.5z"/><path d="M3.5 8.5 12 13l8.5-4.5M12 13v9"/></svg><span class="lbl">FC Chest</span></div>
+        <div class="navrow" data-p="settings"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="9" r="5.5"/><path d="M9 9h6M12 6.4v5.2M5.5 20c1.6-2.4 4-3.4 6.5-3.4S16.9 17.6 18.5 20"/></svg><span class="lbl">Gil Capping</span></div>
+        <div class="navrow" data-p="settings"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3.5" y="5" width="17" height="15" rx="2"/><path d="M3.5 10h17M8 3.5v3M16 3.5v3M8.5 14.5l2 2 4-4"/></svg><span class="lbl">Weeklies</span><span class="n good">2</span></div>
+        <div class="cat">Dungeon</div>
+        <div class="navrow" data-p="settings"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3.5 6.5 9 4l6 2.5L20.5 4v13.5L15 20l-6-2.5-5.5 2.5z"/><path d="M9 4v13.5M15 6.5V20"/></svg><span class="lbl">Deep Dungeon</span></div>
+        <div class="cat">System</div>
+        <div class="navrow" data-p="log"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 5h16M4 10h16M4 15h10M4 20h7"/></svg><span class="lbl">Status log</span></div>
+        <div class="navrow" data-p="settings"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3.2"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M5 5l2 2M17 17l2 2M19 5l-2 2M7 17l-2 2"/></svg><span class="lbl">Settings</span></div>
+      </div>
+
+      <div class="content">
+        <!-- ============ BOARD (landing) ============ -->
+        <section class="page on" data-page="board">
+          <div class="phead">
+            <h1>Fleet board</h1>
+            <div class="sub">What every Charon feature is doing right now, and what needs you.</div>
+            <div class="stamp">updated 2s ago</div>
+          </div>
+
+          <div class="strip">
+            <div class="tile t-blue"><div class="tl">Follow</div><div class="tv">Korha</div><div class="ts">moving 4.2y</div></div>
+            <div class="tile t-gold"><div class="tl">Quick kill</div><div class="tv">Kill</div><div class="ts">watch 3</div></div>
+            <div class="tile t-mint"><div class="tl">Heal watch</div><div class="tv">Idle</div><div class="ts">2 out</div></div>
+            <div class="tile t-cyan"><div class="tl">Movement</div><div class="tv">vnav</div><div class="ts">ok</div></div>
+            <div class="tile t-amber"><div class="tl">Weeklies</div><div class="tv">2 left</div><div class="ts">doman</div></div>
+            <div class="tile t-violet"><div class="tl">Ventures</div><div class="tv">2 ready</div><div class="ts">bell</div></div>
+          </div>
+
+          <div class="cols">
+            <div class="col" style="flex:1.55">
+              <div class="slabel" style="margin-top:4px">Fleet</div>
+              <div class="card" style="padding:4px 10px 6px">
+                <table>
+                  <tr><th>Box</th><th>Follow</th><th>Duty</th><th>Zone</th><th class="right" style="text-align:right">Seen</th></tr>
+                  <tr><td class="nm">Korha</td><td>leads · 2 followers</td><td>open</td><td class="mono">Middle La Noscea</td><td class="right">now</td></tr>
+                  <tr><td class="nm">Saar</td><td>follows Korha</td><td>open</td><td class="mono">Middle La Noscea</td><td class="right">12s</td></tr>
+                  <tr><td class="nm">Grakur</td><td>—</td><td class="mono">Mt. Gulg</td><td class="mono">Amh Araeng</td><td class="right">5m</td></tr>
+                  <tr><td class="nm">Machen</td><td>—</td><td>open</td><td class="mono">Limsa Lominsa</td><td class="right">3s</td></tr>
+                </table>
+              </div>
+              <div class="slabel">Live</div>
+              <div class="card" style="padding:4px 10px">
+                <div class="lrow"><span class="d on"></span><span class="fn">Follow</span><span class="fs">holding in position · leader 12.4y · leash 15y [path idle]</span></div>
+                <div class="lrow"><span class="d work"></span><span class="fn">Quick kill</span><span class="fs">killing Grenade (watching 3 toons)</span></div>
+                <div class="lrow"><span class="d on"></span><span class="fn">Boarding</span><span class="fs">seat #2 invited · 6s · never re-invited</span></div>
+                <div class="lrow"><span class="d off"></span><span class="fn">Heal watch</span><span class="fs">idle · no fleet toon below 70%</span></div>
+                <div class="lrow"><span class="d on"></span><span class="fn">Sprint</span><span class="fs">out of combat · moving · cooldown clear</span></div>
+                <div class="lrow"><span class="d off"></span><span class="fn">Gear</span><span class="fs">3 upgrades found · execute on · waiting for a calm moment</span></div>
+                <div class="lrow"><span class="d off"></span><span class="fn">Loot</span><span class="fs">read-only · 0 rolls answered by design</span></div>
+                <div class="lrow"><span class="d work"></span><span class="fn">Gil capping</span><span class="fs warn">selling stacks · 37 of 999 · vendor walk ok</span></div>
+                <div class="lrow"><span class="d off"></span><span class="fn">Doman</span><span class="fs">12,400 of 20,000 left · reset Tue 08:00</span></div>
+                <div class="lrow"><span class="d off"></span><span class="fn">Retainers</span><span class="fs">2 ready · assist not armed (no bell open)</span></div>
+                <div class="lrow"><span class="d off"></span><span class="fn">Spawns</span><span class="fs">4 names watched · Croakadile in range 22y</span></div>
+                <div class="lrow"><span class="d off"></span><span class="fn">Text advance</span><span class="fs">off · no lease held</span></div>
+              </div>
+
+            </div>
+
+            <div class="col">
+              <div class="slabel" style="margin-top:4px">This character</div>
+              <div class="card" style="padding:4px 10px 8px">
+                <div class="grow">Quick kill role<span class="ctl"><span class="seg"><span class="on">Kill</span><span>Tag</span><span>Off</span></span></span></div>
+                <div class="grow">Heal watch<span class="ctl"><span class="tog on"></span></span></div>
+                <div class="grow">Follow<span class="ctl"><span class="tog on"></span></span></div>
+                <div class="grow">Sprint out of combat<span class="ctl"><span class="tog on"></span></span></div>
+                <div class="grow">Auto-collect<span class="ctl"><span class="tog"></span></span></div>
+                <div class="grow">Text advance<span class="ctl"><span class="tog"></span></span></div>
+              </div>
+
+              <div class="slabel">Actions</div>
+              <div class="card">
+                <div class="btnrow">
+                  <button class="btn">Follow Korha</button>
+                  <button class="btn ghost">Stop</button>
+                </div>
+                <div class="btnrow">
+                  <button class="btn ghost">Leave duty (fleet)</button>
+                  <button class="btn ghost">Equip upgrades</button>
+                </div>
+                <div class="btnrow">
+                  <button class="btn ghost">Run gil trip</button>
+                  <button class="btn ghost" disabled>Donate to Doman</button>
+                </div>
+              </div>
+
+              <div class="slabel">Needs you</div>
+              <div class="card" style="padding:4px 10px 6px">
+                <div class="lrow"><span class="fn" style="width:auto">Ventures to collect</span><span class="fs" style="margin-left:auto;color:var(--amber)">2</span></div>
+                <div class="lrow"><span class="fn" style="width:auto">Doman donation</span><span class="fs" style="margin-left:auto;color:var(--amber)">12.4k</span></div>
+                <div class="lrow"><span class="fn" style="width:auto">Allied societies</span><span class="fs" style="margin-left:auto">7 / 12</span></div>
+                <div class="lrow"><span class="fn" style="width:auto">Gear upgrades</span><span class="fs" style="margin-left:auto;color:var(--mint)">3</span></div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- ============ status log (Debug promoted) ============ -->
+        <section class="page" data-page="log">
+          <div class="phead"><h1>Status log</h1><div class="sub">Every feature line, in the order they were last asked. Names scrambled.</div><div class="stamp">copy all</div></div>
+          <div class="card" style="padding:6px 10px">
+            <div class="lrow"><span class="fn" style="width:96px">account</span><span class="fs">free trial · gil 3,214</span></div>
+            <div class="lrow"><span class="fn" style="width:96px">daedalus ipc</span><span class="fs">connected — roster 4, trust 6</span></div>
+            <div class="lrow"><span class="fn" style="width:96px">nav</span><span class="fs">vnavmesh connected · last path ok</span></div>
+            <div class="lrow"><span class="fn" style="width:96px">follow</span><span class="fs">holding in position · [path idle]</span></div>
+            <div class="lrow"><span class="fn" style="width:96px">fleet follow</span><span class="fs">Korha · state broadcast 4s ago</span></div>
+            <div class="lrow"><span class="fn" style="width:96px">heal watch</span><span class="fs">idle — no target below 70%</span></div>
+            <div class="lrow"><span class="fn" style="width:96px">quick kill</span><span class="fs">killing Grenade (watching 3 toons)</span></div>
+            <div class="lrow"><span class="fn" style="width:96px">revival</span><span class="fs">no prompt up</span></div>
+            <div class="lrow"><span class="fn" style="width:96px">duty pop</span><span class="fs">no popup</span></div>
+            <div class="lrow"><span class="fn" style="width:96px">trade</span><span class="fs">no window</span></div>
+            <div class="lrow"><span class="fn" style="width:96px">gear</span><span class="fs">3 upgrades · execute on</span></div>
+            <div class="lrow"><span class="fn" style="width:96px">collect</span><span class="fs">auto off · 7 listed, 2 unlearned</span></div>
+            <div class="lrow"><span class="fn" style="width:96px">loot</span><span class="fs">read-only</span></div>
+            <div class="lrow"><span class="fn" style="width:96px">leveling</span><span class="fs">not read yet</span></div>
+            <div class="lrow"><span class="fn" style="width:96px">weeklies</span><span class="fs">doman 12.4k · tribes 7/12 · deliveries 0/6</span></div>
+            <div class="lrow"><span class="fn" style="width:96px">retainers</span><span class="fs">2 ready · ventures idle at the bell</span></div>
+          </div>
+        </section>
+
+        <section class="page" data-page="quickkill">
+          <div class="phead"><h1>Quick Kill</h1><div class="sub">Role per character. Kill aims and opens for the carry; Tag hits each engaged mob once.</div><div class="stamp">4s ago</div></div>
+          <div class="card" style="padding:6px 10px">
+            <table>
+              <tr><th>Character</th><th>Job</th><th>Role</th><th>Tag / opener</th><th class="right" style="text-align:right">Last act</th></tr>
+              <tr><td class="nm">Machen</td><td>Machinist</td><td><span class="pill gold"><i></i>KILL</span></td><td class="mono">Heavy Shot 97 · 25y</td><td class="right">1s</td></tr>
+              <tr><td class="nm">Korha</td><td>Beastmaster</td><td><span class="pill cyan"><i></i>TAG</span></td><td class="mono">Capture 44880 · 10y</td><td class="right">4s</td></tr>
+              <tr><td class="nm">Saar</td><td>Beastmaster</td><td><span class="pill cyan"><i></i>TAG</span></td><td class="mono">Capture 44880 · 10y</td><td class="right">4s</td></tr>
+              <tr><td class="nm">Grakur</td><td>Dark Knight</td><td><span class="pill dim"><i></i>OFF</span></td><td class="mono">—</td><td class="right">never</td></tr>
+            </table>
+          </div>
+          <div class="card">
+            <div class="grow">Role for this character<span class="ctl"><span class="seg"><span class="on">Kill</span><span>Tag</span><span>Off</span></span></span></div>
+            <div class="grow">Tag range cap<span class="ctl"><span class="pill dim">job range, else 25y</span></span></div>
+          </div>
+          <div class="card" style="background:var(--card-soft)">
+            <div style="font-size:12px;color:var(--text-dim)">The carry's Daedalus must use Enemy Strategy = Current Target. With Lowest HP it will steal a claim from the party it is levelling in the seconds after a kill.</div>
+          </div>
+        </section>
+
+        <section class="page" data-page="follow">
+          <div class="phead"><h1>Follow</h1><div class="sub">Flex leash 15y · hands movement to BossMod in a fight · takes the leader's portal.</div><div class="stamp">2s ago</div></div>
+          <div class="strip">
+            <div class="tile t-cyan"><div class="tl">State</div><div class="tv">Moving</div><div class="ts">to Korha</div></div>
+            <div class="tile t-gold"><div class="tl">Distance</div><div class="tv">4.2y</div><div class="ts">leash 15y</div></div>
+            <div class="tile t-mint"><div class="tl">Path</div><div class="tv">Running</div><div class="ts">vnavmesh</div></div>
+            <div class="tile t-blue"><div class="tl">Boss mod</div><div class="tv">Clear</div><div class="ts">no module</div></div>
+            <div class="tile t-violet"><div class="tl">Portal hint</div><div class="tv">None</div><div class="ts">0 attempts</div></div>
+            <div class="tile t-amber"><div class="tl">Leash mode</div><div class="tv">Flex</div><div class="ts">out of combat</div></div>
+          </div>
+          <div class="card" style="padding:4px 10px 8px">
+            <div class="grow">Enabled<span class="ctl"><span class="tog on"></span></span></div>
+            <div class="grow">Stop in boss fights<span class="ctl"><span class="tog on"></span></span></div>
+            <div class="grow">Skip unreachable leaders<span class="ctl"><span class="tog on"></span></span></div>
+            <div class="grow">Take the leader's portal<span class="ctl"><span class="tog on"></span></span></div>
+            <div class="grow">Combat leash<span class="ctl"><span class="pill dim">15y</span></span></div>
+          </div>
+          <div class="btnrow"><button class="btn">Follow Korha</button><button class="btn ghost">Stop</button><button class="btn ghost">Follow all</button><button class="btn ghost">Stop all</button></div>
+        </section>
+
+        <section class="page" data-page="general">
+          <div class="phead"><h1>General</h1><div class="sub">Invites, teleport offers and the movement provider.</div><div class="stamp">saved</div></div>
+          <div class="card" style="padding:4px 10px 8px">
+            <div class="grow">Auto-accept group invites<span class="ctl"><span class="tog on"></span></span></div>
+            <div class="grow">Auto-trust LAN party members<span class="ctl"><span class="tog on"></span></span></div>
+            <div class="grow">Auto-commence duty pops<span class="ctl"><span class="tog on"></span></span></div>
+            <div class="grow">Mirror LAN toon trades<span class="ctl"><span class="tog"></span></span></div>
+            <div class="grow">Follow teleport<span class="ctl"><span class="tog on"></span></span></div>
+            <div class="grow">Movement provider<span class="ctl"><span class="seg"><span class="on">vnavmesh</span><span>Ariadne</span></span></span></div>
+          </div>
+        </section>
+
+        <section class="page" data-page="pillion">
+          <div class="phead"><h1>Auto Pillion</h1><div class="sub">One invite per seat, timed-out seats are never re-invited.</div><div class="stamp">4s ago</div></div>
+          <div class="card" style="padding:4px 10px 8px">
+            <div class="lrow"><span class="d on"></span><span class="fn">Regulus</span><span class="fs">4-seater · seat 1 Saar seated · seat 2 Grakur invited 6s · seat 3 open</span></div>
+            <div class="lrow"><span class="d off"></span><span class="fn">Riders window</span><span class="fs">opens while driving a multi-seat mount</span></div>
+          </div>
+          <div class="card" style="padding:4px 10px 8px">
+            <div class="grow">Enabled<span class="ctl"><span class="tog on"></span></span></div>
+            <div class="grow">LAN members only<span class="ctl"><span class="tog on"></span></span></div>
+            <div class="grow">Notify when the mount is full<span class="ctl"><span class="tog"></span></span></div>
+          </div>
+        </section>
+
+        <section class="page" data-page="healwatch">
+          <div class="phead"><h1>Heal Watch</h1><div class="sub">Tops up fleet toons from relay vitals, out-of-party ones included. Stands down while Daedalus rotates.</div><div class="stamp">1s ago</div></div>
+          <div class="card" style="padding:4px 10px 8px">
+            <div class="grow">Enabled<span class="ctl"><span class="tog on"></span></span></div>
+            <div class="grow">Out-of-party only<span class="ctl"><span class="tog on"></span></span></div>
+            <div class="grow">Maintain HoT / shield<span class="ctl"><span class="tog on"></span></span></div>
+            <div class="grow">Raise dead toons<span class="ctl"><span class="tog on"></span></span></div>
+            <div class="grow">Accept revival when raised<span class="ctl"><span class="tog on"></span></span></div>
+          </div>
+          <div class="card" style="padding:4px 10px 6px">
+            <table>
+              <tr><th>Target</th><th>HP</th><th>Last action</th><th class="right" style="text-align:right">When</th></tr>
+              <tr><td class="nm">Saar</td><td>92%</td><td>Regen</td><td class="right">31s</td></tr>
+              <tr><td class="nm">Grakur</td><td>64%</td><td>Adloquium</td><td class="right">4s</td></tr>
+            </table>
+          </div>
+        </section>
+
+        <section class="page" data-page="settings">
+          <div class="phead"><h1>Settings</h1><div class="sub">Everything else lives on its own page; these are the fleet-wide switches.</div><div class="stamp">saved</div></div>
+          <div class="card" style="padding:4px 10px 8px">
+            <div class="grow">Scramble names in status lines<span class="ctl"><span class="tog on"></span></span></div>
+            <div class="grow">Fleet leader<span class="ctl"><span class="pill gold">Korha</span></span></div>
+            <div class="grow">Obey the fleet leader's Leave Duty<span class="ctl"><span class="tog on"></span></span></div>
+            <div class="grow">Give party lead back to the fleet leader<span class="ctl"><span class="tog on"></span></span></div>
+            <div class="grow">Charon window on login<span class="ctl"><span class="tog"></span></span></div>
+          </div>
+        </section>
+      </div>
+    </div>
+  </div>
+
+  <div class="caption">
+    <b>Selected design — variant 003 (board first) in Argus teal.</b> This is the agreed target for the C# port:
+    compact 60px identity strip · 148px icon sidebar with category labels and numeric badges · landing page is the fleet
+    board (stat tiles, the fleet table, then every feature's status line with a state dot and its reason for being idle, fleet table,
+    this character's switches and actions in a right-hand column) · dense rows (30px sidebar, 52px tiles, 23px lines).
+    Teal replaces gold as the accent; mint stays "good", amber "waiting for you", rose "problem". The real build keeps
+    <i>all</i> of Charon's sections in the sidebar, not the merged sample shown here.
+    Click the sidebar, flip the switches.
+  </div>
+</div>
+
+<script>
+  document.querySelectorAll('.navrow').forEach(function (r) {
+    r.addEventListener('click', function () {
+      document.querySelectorAll('.navrow').forEach(function (x) { x.classList.remove('sel'); });
+      r.classList.add('sel');
+      var p = r.dataset.p;
+      document.querySelectorAll('.page').forEach(function (s) { s.classList.toggle('on', s.dataset.page === p); });
+    });
+  });
+  document.querySelectorAll('.tog').forEach(function (t) {
+    t.addEventListener('click', function () { t.classList.toggle('on'); });
+  });
+  document.querySelectorAll('.seg').forEach(function (g) {
+    g.querySelectorAll('span').forEach(function (s) {
+      s.addEventListener('click', function () {
+        g.querySelectorAll('span').forEach(function (x) { x.classList.remove('on'); });
+        s.classList.add('on');
+      });
+    });
+  });
+</script>
+</body>
+</html>

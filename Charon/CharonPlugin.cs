@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using Dalamud.Game.Addon.Lifecycle;
@@ -25,7 +25,7 @@ namespace Charon;
 
 public sealed class CharonPlugin : IDalamudPlugin
 {
-    public const string PluginVersion = "0.1.38";
+    public const string PluginVersion = "0.1.39";
     private const string CommandName = "/charon";
 
     /// <summary>
@@ -91,6 +91,9 @@ public sealed class CharonPlugin : IDalamudPlugin
     private readonly EspOverlayWindow _ddEsp;
     private readonly LevelingIpc _levelingIpc;
     private readonly WeekliesReader _weeklies;
+    private readonly RetainerReader _retainers;
+    private readonly VentureRunner _ventureRunner;
+    private bool _ventureWasArmed;
     private readonly TextAdvancer _textAdvance;
     private readonly TextAdvanceIpc _textAdvanceIpc;
     private readonly FollowManager _followManager;
@@ -195,6 +198,8 @@ public sealed class CharonPlugin : IDalamudPlugin
     private readonly FcChestWindow _fcChestWindow;
     private readonly IAddonLifecycle _addonLifecycle;
     private const string FcChestAddonName = "FreeCompanyChest";
+    private readonly VentureOverlay _ventureOverlay;
+    private const string RetainerListAddonName = "RetainerList";
 
     /// <summary>Previous per-seat occupant entity ids (index 0 = seat 1) — diffed each frame.</summary>
     private uint[] _previousOccupants = Array.Empty<uint>();
@@ -361,6 +366,8 @@ public sealed class CharonPlugin : IDalamudPlugin
             () => _config.AutoTurnInEnabled, () => _config.AutoTurnInConfirm, log);
         _ddReader = new DeepDungeonReader(log);
         _weeklies = new WeekliesReader(log);
+        _retainers = new RetainerReader(log);
+        _ventureRunner = new VentureRunner(gameGui, dataManager, log);
         _spawnScanner = new SpawnScanner(_objectTable, _clientState,
             () => _config.SpawnTrackerEnabled, () => _config.SpawnWatchNames, log);
         _quickKill = new QuickKillExecutor(_objectTable, _partyList, _targetManager,
@@ -431,6 +438,8 @@ public sealed class CharonPlugin : IDalamudPlugin
             _gilSeller,
             _doman,
             _weeklies,
+            _retainers,
+            _ventureRunner,
             () => _condition[ConditionFlag.OnFreeTrial],
             _lootWatcher,
             _collection,
@@ -445,6 +454,9 @@ public sealed class CharonPlugin : IDalamudPlugin
 
         _fcChestWindow = new FcChestWindow(_config, SaveConfig, _fcChest);
         _windowSystem.AddWindow(_fcChestWindow);
+
+        _ventureOverlay = new VentureOverlay(_retainers, _ventureRunner);
+        _windowSystem.AddWindow(_ventureOverlay);
 
         _saddlebagOverlay = new SaddlebagOverlay(gameGui, _saddlebag);
         _windowSystem.AddWindow(_saddlebagOverlay);
@@ -488,6 +500,8 @@ public sealed class CharonPlugin : IDalamudPlugin
         _addonLifecycle = addonLifecycle;
         _addonLifecycle.RegisterListener(AddonEvent.PostSetup, FcChestAddonName, OnFcChestOpen);
         _addonLifecycle.RegisterListener(AddonEvent.PreFinalize, FcChestAddonName, OnFcChestClose);
+        _addonLifecycle.RegisterListener(AddonEvent.PostSetup, RetainerListAddonName, OnRetainerListOpen);
+        _addonLifecycle.RegisterListener(AddonEvent.PreFinalize, RetainerListAddonName, OnRetainerListClose);
 
         _pluginInterface.UiBuilder.Draw += _windowSystem.Draw;
         _pluginInterface.UiBuilder.OpenMainUi += OpenMainWindow;
@@ -506,6 +520,8 @@ public sealed class CharonPlugin : IDalamudPlugin
 
         _addonLifecycle.UnregisterListener(AddonEvent.PostSetup, FcChestAddonName, OnFcChestOpen);
         _addonLifecycle.UnregisterListener(AddonEvent.PreFinalize, FcChestAddonName, OnFcChestClose);
+        _addonLifecycle.UnregisterListener(AddonEvent.PostSetup, RetainerListAddonName, OnRetainerListOpen);
+        _addonLifecycle.UnregisterListener(AddonEvent.PreFinalize, RetainerListAddonName, OnRetainerListClose);
 
         _commandManager.RemoveHandler(CommandName);
         _commandManager.RemoveHandler(CommandAlias);
@@ -573,6 +589,24 @@ public sealed class CharonPlugin : IDalamudPlugin
         _fcChestWindow.IsOpen = false;
     }
 
+    /// <summary>At a bell — show the venture tools. Nothing runs until the button is pressed.</summary>
+    private void OnRetainerListOpen(AddonEvent type, AddonArgs args)
+    {
+        _ventureOverlay.IsOpen = true;
+    }
+
+    /// <summary>
+    /// The retainer list closed. This does NOT end the session: SELECTING a retainer closes the
+    /// list too, and treating that as the end disarmed the assist the moment anyone was picked
+    /// (found in testing). The runner decides when the session is really over; all this does is
+    /// put the window away when there is nothing running, so Stop stays reachable while there is.
+    /// </summary>
+    private void OnRetainerListClose(AddonEvent type, AddonArgs args)
+    {
+        if (!_ventureRunner.Armed)
+            _ventureOverlay.IsOpen = false;
+    }
+
     private void SaveConfig() => _pluginInterface.SavePluginConfig(_config);
 
     private void OnFrameworkUpdate(IFramework framework)
@@ -620,6 +654,14 @@ public sealed class CharonPlugin : IDalamudPlugin
         _textAdvance.Update(now);
         _quickKill.Update(now);
         _spawnScanner.Update(now);
+        _ventureRunner.Update(now);
+
+        // Edge-triggered, never forced every frame - driving IsOpen from state each tick is what
+        // made the spawn window impossible to close. Only the moment the assist stops, with the
+        // bell gone, puts the overlay away.
+        if (_ventureWasArmed && !_ventureRunner.Armed && !_ventureRunner.RetainerListOpen)
+            _ventureOverlay.IsOpen = false;
+        _ventureWasArmed = _ventureRunner.Armed;
         // A sighting pops the log open (opt-in); the window writes the flag back when closed.
         if (_spawnScanner.SightedThisTick && _config.SpawnWindowAutoOpen && !_config.SpawnWindowVisible)
         {

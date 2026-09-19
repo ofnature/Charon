@@ -1,4 +1,4 @@
-using System.Collections.Generic;
+﻿using System.Collections.Generic;
 using System.Linq;
 
 namespace Charon.Features.Loot;
@@ -32,6 +32,10 @@ public sealed record CollectibleItem(
 /// Duplicates never appear, because the game refuses to relearn something already unlocked — which
 /// is also why no "don't consume something sellable" guard is needed: an item that would be worth
 /// selling is one you already own, and it is filtered out by <see cref="CollectibleItem.Unlocked"/>.
+///
+/// The ONE exception is a kind the game tracks no unlock for at all (Bozjan field records):
+/// those arrive here with Unlocked false because nothing can say otherwise, so a registered
+/// one keeps appearing. See <see cref="CollectibleKinds.UnverifiedUnlock"/>.
 /// </summary>
 public static class CollectiblePolicy
 {
@@ -51,7 +55,8 @@ public static class CollectiblePolicy
 
     /// <summary>
     /// The next item the auto-collect toggle should consume, or null. Only kinds that are safe
-    /// to learn unprompted (see <see cref="CollectibleKinds.ManualOnly"/>) and usable HERE —
+    /// to learn unprompted (see <see cref="CollectibleKinds.ManualOnly"/> and
+    /// <see cref="CollectibleKinds.UnverifiedUnlock"/>) and usable HERE —
     /// a shard outside the Occult Crescent is skipped, not blocked on. Deterministic order (the
     /// display order), so the same bags always yield the same next pick.
     /// </summary>

@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using Dalamud.Game.ClientState.Conditions;
@@ -46,6 +46,9 @@ public sealed unsafe class CollectionScanner
     /// value→meaning mapping comes from observation: assuming it was a bool is what broke this.
     /// </summary>
     private readonly Dictionary<long, string> _unlockStatesSeen = new();
+
+    /// <summary>Kinds dropped because the game tracks no unlock for them — logged once each.</summary>
+    private readonly HashSet<uint> _untrackedKindsSeen = new();
 
     public CollectionScanner(IDataManager dataManager, IClientState clientState, ICondition condition, IPluginLog log)
     {
@@ -171,9 +174,18 @@ public sealed unsafe class CollectionScanner
             GetUnlearned().Where(i => !_autoRefused.Contains(i.ItemId)), _clientState.TerritoryType);
         if (next == null)
         {
-            var manualLeft = GetUnlearned().Count(i => !CollectibleKinds.IsAutoCollectSafe(i.ActionKind));
+            // Two different reasons an item sits here, and saying the wrong one makes a correct
+            // refusal look like a bug: a fashion accessory is held back because it is worth gil,
+            // a field record because nothing can tell us whether it is already registered.
+            var unlearned = GetUnlearned();
+            var sellable = unlearned.Count(i => CollectibleKinds.ManualOnly.Contains(i.ActionKind));
+            var unverified = unlearned.Count(i => CollectibleKinds.UnverifiedUnlock.Contains(i.ActionKind));
+            var manualLeft = sellable + unverified;
+            var why = sellable > 0 && unverified > 0
+                ? "sellable + registration unknown"
+                : sellable > 0 ? "sellable kinds" : "registration unknown";
             AutoStatus = manualLeft > 0
-                ? $"idle — {manualLeft} left for manual Collect (sellable kinds)"
+                ? $"idle — {manualLeft} left for manual Collect ({why})"
                 : "idle — nothing safe to collect";
             return;
         }
@@ -303,21 +315,36 @@ public sealed unsafe class CollectionScanner
                     if (action.RowId == 0)
                         continue; // not an unlockable item at all
 
-                    // Anything the game doesn't track an unlock for (potions, materia, gear) is not a
-                    // collectible and must never be offered for consumption.
-                    var state = ReadUnlockState(slot->ItemId);
-                    if (state == UnlockNotTracked || state < 0)
-                        continue;
-
+                    var kind = action.Value.Action.RowId;
                     var name = row.Name.ExtractText();
-                    _unlockStatesSeen.TryAdd(state, name);
+                    var category = row.ItemUICategory.ValueNullable?.Name.ExtractText() ?? "—";
+
+                    // Anything the game doesn't track an unlock for (potions, materia, gear) is not a
+                    // collectible and must never be offered for consumption. A few VERIFIED
+                    // collectibles land here too — Bozjan field records have no unlock check to ask,
+                    // anywhere in PlayerState or UIState — so those kinds are kept and listed with
+                    // their registration unknown. Everything else is dropped, and the drop is LOGGED
+                    // once per kind: it used to be silent, which is why a bag full of field notes
+                    // produced neither a list entry nor a line saying why.
+                    var state = ReadUnlockState(slot->ItemId);
+                    var tracked = state != UnlockNotTracked && state >= 0;
+                    if (!tracked && !CollectibleKinds.UnverifiedUnlock.Contains(kind))
+                    {
+                        if (_untrackedKindsSeen.Add(kind))
+                            _log.Info("No unlock tracked for ItemAction kind {0} · '{1}' [{2}] — not listed",
+                                kind, name, category);
+                        continue;
+                    }
+
+                    if (tracked)
+                        _unlockStatesSeen.TryAdd(state, name);
 
                     items.Add(new CollectibleItem(
                         slot->ItemId,
                         name,
-                        row.ItemUICategory.ValueNullable?.Name.ExtractText() ?? "—",
-                        action.Value.Action.RowId,
-                        state == UnlockOwned,
+                        category,
+                        kind,
+                        tracked && state == UnlockOwned,
                         (int)bag,
                         (short)i));
                 }

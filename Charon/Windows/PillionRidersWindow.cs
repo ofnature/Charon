@@ -47,7 +47,7 @@ public sealed class PillionRidersWindow : Window
                 filled++;
         }
 
-        ImGui.TextColored(filled == rows.Count ? CharonTheme.StatusGreen : CharonTheme.AccentGold,
+        ImGui.TextColored(filled == rows.Count ? CharonTheme.StatusGreen : CharonTheme.Accent,
             $"Riders {filled} / {rows.Count}");
         ImGui.Spacing();
 
