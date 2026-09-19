@@ -10,3 +10,6 @@ ROADMAP.md
 
 # Internal planning docs live under docs/ — keep local (README.md is the only tracked .md)
 docs/
+
+# UI design sketches — local scratch, same rule as docs/ (README.md is the only tracked .md)
+sketches/
