@@ -25,7 +25,7 @@ namespace Charon;
 
 public sealed class CharonPlugin : IDalamudPlugin
 {
-    public const string PluginVersion = "0.1.39";
+    public const string PluginVersion = "0.1.40";
     private const string CommandName = "/charon";
 
     /// <summary>
@@ -97,7 +97,7 @@ public sealed class CharonPlugin : IDalamudPlugin
     private readonly TextAdvancer _textAdvance;
     private readonly TextAdvanceIpc _textAdvanceIpc;
     private readonly FollowManager _followManager;
-    private readonly BossModClient _bossMod;
+    private readonly BossAiClient _bossAi;
     private readonly InteractHelper _interact;
 
     // Who each fleet toon is following, as reported by that toon's own box. Follow state is local to
@@ -320,7 +320,7 @@ public sealed class CharonPlugin : IDalamudPlugin
             log);
         _gearIpc = new GearEquipperIpc(pluginInterface, _gear,
             () => _config.GearIpcEnabled, () => _config.GearIpcExecuteEnabled, log);
-        _bossMod = new BossModClient(pluginInterface);
+        _bossAi = new BossAiClient(pluginInterface);
         _interact = new InteractHelper(log);
         _followManager = new FollowManager(FollowConfig.From(_config));
         if (_config.FollowLeaderName.Length > 0)
@@ -409,7 +409,7 @@ public sealed class CharonPlugin : IDalamudPlugin
 
         _mainWindow = new MainWindow(_config, SaveConfig, _whitelist, _daedalusIpc, _pillionManager, _inviteManager,
             _healWatch, _groupInvites, _fcChest, _gear, _followManager, ReadRawSeatOccupancy, () => _boardingStatus,
-            () => $"{_followStatus} · offer: {_teleportOffer.Status}",
+            () => $"{_followStatus} · offer: {_teleportOffer.Status} · boss AI: {_bossAi.Status}",
             () => _revivalPrompt.Status,
             () => _healStatus,
             () => _followFleetStatus,
@@ -654,6 +654,7 @@ public sealed class CharonPlugin : IDalamudPlugin
         _textAdvance.Update(now);
         _quickKill.Update(now);
         _spawnScanner.Update(now);
+        _bossAi.Update(now);
         _ventureRunner.Update(now);
 
         // Edge-triggered, never forced every frame - driving IsOpen from state each tick is what
@@ -915,7 +916,7 @@ public sealed class CharonPlugin : IDalamudPlugin
 
         var decision = _followManager.Evaluate(
             leaderPos, local.Position,
-            _condition[ConditionFlag.InCombat], _bossMod.HasActiveModule, localBusy, _leaderReachable);
+            _condition[ConditionFlag.InCombat], _bossAi.MovementHandedOver, localBusy, _leaderReachable);
         _followFleetStatus = decision.Status;
 
         // Leader ported somewhere we can't walk (raid arena transition): take the same portal

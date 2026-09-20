@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Numerics;
 
 namespace Charon.Features.Follow;
@@ -151,7 +151,8 @@ public sealed class FollowManager
     /// <param name="leaderPos">Leader's world position, or null when not resolvable (out of zone/range).</param>
     /// <param name="selfPos">Local player's world position.</param>
     /// <param name="inCombat">Local player is in combat.</param>
-    /// <param name="hasActiveModule">A BMR boss module is active (its StateMachine has an active state).</param>
+    /// <param name="hasActiveModule">A boss AI owns movement: a module is active, or a mechanic
+    /// is punishing movement outright (Minerva's MustNotMove). The caller names the provider.</param>
     /// <param name="localBusy">Local player can't be driven right now (dead, cutscene, zoning, being carried, pillion-boarding).</param>
     /// <param name="leaderReachable">Navmesh says we can actually walk there (false = portal/disconnected island).</param>
     public FollowDecision Evaluate(Vector3? leaderPos, Vector3 selfPos, bool inCombat, bool hasActiveModule,
@@ -163,9 +164,9 @@ public sealed class FollowManager
         if (localBusy)
             return new FollowDecision(FollowAction.Hold, default, "paused");
 
-        // The one hard gate: in an actual boss fight, hand movement to BMR.
+        // The one hard gate: in an actual boss fight, hand movement to the boss AI.
         if (_config.StopInBossFight && inCombat && hasActiveModule)
-            return new FollowDecision(FollowAction.Hold, default, "holding — boss fight (BMR has movement)");
+            return new FollowDecision(FollowAction.Hold, default, "holding — boss fight (boss AI has movement)");
 
         if (leaderPos == null)
             return new FollowDecision(FollowAction.Hold, default, $"waiting — {LeaderName} not in zone");
