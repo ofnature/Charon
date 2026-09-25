@@ -9,10 +9,11 @@ namespace Charon.Services.Game;
 
 /// <summary>Point-in-time view of the local player's mount: id, capacity, and per-seat occupants.</summary>
 /// <param name="MountId">Mount sheet row id.</param>
+/// <param name="MountName">Mount sheet name (Singular) — what the riders window labels the drawing with.</param>
 /// <param name="PassengerSeats">Invitable passenger seats (Lumina ExtraSeats): 7 on an 8-person
 /// mount, 3 on a 4-person mount. The owner rides the implicit last spot.</param>
 /// <param name="SeatOccupantEntityIds">Entity id per passenger seat, index 0 = seat 1; 0 = empty.</param>
-public sealed record MountSnapshot(uint MountId, int PassengerSeats, uint[] SeatOccupantEntityIds);
+public sealed record MountSnapshot(uint MountId, string MountName, int PassengerSeats, uint[] SeatOccupantEntityIds);
 
 /// <summary>
 /// Reads the local player's mount state from ClientStructs + Lumina. Best-effort and fail-open:
@@ -63,9 +64,9 @@ public sealed unsafe class MountStateReader
             if (mountId == 0)
                 return null;
 
-            var passengerSeats = GetPassengerSeats(mountId);
+            var (passengerSeats, mountName) = ReadMountRow(mountId);
             var occupants = ReadSeatOccupants(player.Position, player.EntityId, passengerSeats);
-            return new MountSnapshot(mountId, passengerSeats, occupants);
+            return new MountSnapshot(mountId, mountName, passengerSeats, occupants);
         }
         catch
         {
@@ -122,18 +123,25 @@ public sealed unsafe class MountStateReader
     }
 
     /// <summary>Passenger-seat count from the Lumina Mount sheet (ExtraSeats; 0 = solo mount).</summary>
-    public int GetPassengerSeats(uint mountId)
+    public int GetPassengerSeats(uint mountId) => ReadMountRow(mountId).Seats;
+
+    /// <summary>
+    /// Capacity and name in ONE sheet lookup (the riders window labels its drawing with the name, and
+    /// both come from the same row). Fail-open: an unreadable row is a zero-seat mount with no name.
+    /// </summary>
+    private (int Seats, string Name) ReadMountRow(uint mountId)
     {
         try
         {
             var sheet = _dataManager.GetExcelSheet<Mount>();
             if (sheet == null || !sheet.TryGetRow(mountId, out var row))
-                return 0;
-            return row.ExtraSeats;
+                return (0, string.Empty);
+
+            return (row.ExtraSeats, row.Singular.ToString());
         }
         catch
         {
-            return 0;
+            return (0, string.Empty);
         }
     }
 

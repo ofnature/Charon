@@ -20,7 +20,7 @@ Existing auto-pillion tools default everyone to seat 2 and spam it when taken. C
 - **Owner-commanded seats over the LAN** — with the Daedalus LAN relay running, the mount owner broadcasts authoritative seat assignments (cross-machine included); observation-based self-boarding remains the always-working fallback.
 - **Walks to the mount first** via [vnavmesh](https://github.com/awgil/ffxiv_navmesh) when out of range (optional — works without it if the toons already stand nearby).
 - **Tells you when it's full** — a notification pops on the driver's screen once every passenger seat is taken, so you can ride off without counting riders.
-- **Riders window** — a small window appears while you drive a multi-seat mount showing every seat and who is in it (empty seats show the invite state), and closes itself on dismount.
+- **Riders window** — a small window appears while you drive a multi-seat mount, drawing the vehicle itself from above: your seat and the wheel at the nose, passenger seats laid out on the floorpan — a four-person mount is drawn as a car, an eight-person one as a three-row van, a two-person one as a tandem. Every seat is named and colour-coded (mint riding, amber invited, rose timed out, a dashed outline for an open seat), and it closes itself on dismount.
 - Party-gated (a game rule), configurable invite delay and seat timeout, live rider list in the window.
 
 ## Group Management

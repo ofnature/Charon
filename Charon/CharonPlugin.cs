@@ -464,7 +464,11 @@ public sealed class CharonPlugin : IDalamudPlugin
         _ddMapWindow = new DeepDungeonMapWindow(_ddReader, _objectTable);
         _windowSystem.AddWindow(_ddMapWindow);
 
-        _pillionRidersWindow = new PillionRidersWindow(ReadRawSeatOccupancy, _pillionManager);
+        _pillionRidersWindow = new PillionRidersWindow(
+            ReadRawSeatOccupancy,
+            () => _objectTable.LocalPlayer?.Name.TextValue ?? string.Empty,
+            () => _cachedLocalMount?.MountName ?? string.Empty,
+            _pillionManager);
         _windowSystem.AddWindow(_pillionRidersWindow);
 
         _spawnWindow = new SpawnTrackerWindow(_spawnScanner)
