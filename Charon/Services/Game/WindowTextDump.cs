@@ -340,6 +340,25 @@ public sealed unsafe class WindowTextDump
                 if (text.Length > 0)
                     lines.Add((lines.Count, node->ScreenX, node->ScreenY, text));
             }
+            else if (node->Type == NodeType.Component)
+            {
+                // A component's CONTENT is not in the addon's node list: a TreeList/List component renders its
+                // rows inside itself, in its own UldManager. That is why the Timers window reported three text
+                // nodes while showing eleven rows — the rows are one component deep, and this is the descent.
+                var componentNode = node->GetAsAtkComponentNode();
+                if (componentNode != null && componentNode->Component != null)
+                {
+                    var compUld = &componentNode->Component->UldManager;
+                    var compCount = Math.Min((int)compUld->NodeListCount, MaxNodesPerAddon);
+
+                    for (var i = 1; i < compCount; i++)
+                    {
+                        var child = compUld->NodeList[i];
+                        if (child != null)
+                            Walk(child, lines, seen, types, depth + 1);
+                    }
+                }
+            }
 
             if (node->ChildNode != null)
                 Walk(node->ChildNode, lines, seen, types, depth + 1);
