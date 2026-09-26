@@ -81,6 +81,9 @@ public sealed class MainWindow : Window
     /// <summary>Opens the standalone board — the working surface, from where the decisions are made.</summary>
     private readonly Action _openRetainerBoard;
 
+    /// <summary>The retainer contents store: what each retainer holds, and the two passes that use it.</summary>
+    private readonly RetainerContentsReader _retainerContents;
+
     /// <summary>Live state for the TWEAKS toggle: the timer it saw and whether a nudge landed.</summary>
     private readonly AfkGuard _afkGuard;
 
@@ -192,6 +195,7 @@ public sealed class MainWindow : Window
         VentureRunner ventureRunner,
         RetainerPlanner retainerPlanner,
         Action openRetainerBoard,
+        RetainerContentsReader retainerContents,
         AfkGuard afkGuard,
         Func<bool> isFreeTrial,
         LootWatcher lootWatcher,
@@ -242,6 +246,7 @@ public sealed class MainWindow : Window
         _ventureRunner = ventureRunner;
         _retainerPlanner = retainerPlanner;
         _openRetainerBoard = openRetainerBoard;
+        _retainerContents = retainerContents;
         _afkGuard = afkGuard;
         _isFreeTrial = isFreeTrial;
         _lootWatcher = lootWatcher;
@@ -2826,6 +2831,27 @@ public sealed class MainWindow : Window
             }
 
             group.Note("A blocked venture never appears here: a pick that cannot run is a plan that quietly does nothing.");
+        }
+
+        using (var group = SettingsGroup.Begin("Retainer contents"))
+        {
+            group.Note("What each retainer holds, as last SEEN. The client only has a retainer's bags once its "
+                       + "window has been opened at a bell, so this store fills as you visit them — and an "
+                       + "unopened retainer is unknown, never empty. Other plugins read it over IPC.");
+            group.Row("Refresh every retainer", "A pass that captures each retainer as you open it at a bell: "
+                                                + "the status line names the next one. Nothing is selected for "
+                                                + "you — Charon does not click retainers.", 200f, () =>
+            {
+                if (_retainerContents.Busy)
+                {
+                    if (Buttons.Action("Stop", true, 92f, CharonTheme.AccentRose))
+                        _retainerContents.Stop("stopped");
+                }
+                else if (Buttons.Action("Refresh all", true, 200f))
+                {
+                    _retainerContents.ArmRefresh();
+                }
+            });
         }
 
         using (var group = SettingsGroup.Begin("Farm list"))

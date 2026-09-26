@@ -369,6 +369,13 @@ public sealed class CharonConfig : IPluginConfiguration
     public Dictionary<string, RetainerSnapshot> RetainerContents { get; set; } = new();
 
     /// <summary>
+    /// Whether other plugins may ask Charon to MOVE items (fetch from a retainer, run a refresh). Off until
+    /// switched on, like the gear IPC's execute gate: reading the store is free and always answers, but
+    /// nothing moves an item on the fleet until it has been watched doing it once.
+    /// </summary>
+    public bool RetainerIpcExecuteEnabled { get; set; } = false;
+
+    /// <summary>
     /// When each character (by content id) last donated at the Doman Enclave — or was OBSERVED
     /// with an empty weekly budget, which counts the same. Checked against the Tuesday 08:00 UTC
     /// reset so a used-up toon skips the trip entirely.

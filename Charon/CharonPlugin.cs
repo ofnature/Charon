@@ -208,6 +208,11 @@ public sealed class CharonPlugin : IDalamudPlugin
     /// <summary>Shared by the retainer board and the bell overlay, so a plan means one thing.</summary>
     private readonly RetainerPlanner _retainerPlanner;
 
+    /// <summary>What each retainer holds, as last seen — the store Hephaestus asks for over IPC.</summary>
+    private readonly RetainerContentsReader _retainerContents;
+
+    private readonly RetainerContentsIpc _retainerContentsIpc;
+
     private readonly RetainersWindow _retainersWindow;
     private readonly RetainerBellOverlay _retainerBell;
 
@@ -388,6 +393,15 @@ public sealed class CharonPlugin : IDalamudPlugin
         _weeklies = new WeekliesReader(log);
         _retainers = new RetainerReader(log);
         _ventureRunner = new VentureRunner(gameGui, dataManager, log);
+        _retainerContents = new RetainerContentsReader(
+            gameGui,
+            _objectTable,
+            _condition,
+            _retainers,
+            _config,
+            SaveConfig,
+            () => _jobLevels.LocalContentId,
+            log);
         _spawnScanner = new SpawnScanner(_objectTable, _clientState,
             () => _config.SpawnTrackerEnabled, () => _config.SpawnWatchNames, log);
         _quickKill = new QuickKillExecutor(_objectTable, _partyList, _targetManager,
@@ -397,6 +411,12 @@ public sealed class CharonPlugin : IDalamudPlugin
             () => _daedalusIpc.GetLanPartyMembers().Select(t => t.EntityId).ToList(), log);
         _textAdvance = new TextAdvancer(gameGui, () => _config.TextAdvanceEnabled, log);
         _textAdvanceIpc = new TextAdvanceIpc(pluginInterface, _textAdvance);
+
+        _retainerContentsIpc = new RetainerContentsIpc(
+            pluginInterface,
+            _retainerContents,
+            () => _config.RetainerIpcExecuteEnabled,
+            log);
         _teleportOffer = new TeleportOfferInterop(
             addonLifecycle,
             gameGui,
@@ -437,6 +457,7 @@ public sealed class CharonPlugin : IDalamudPlugin
             clientState,
             log);
 
+
         _mainWindow = new MainWindow(_config, SaveConfig, _whitelist, _daedalusIpc, _pillionManager, _inviteManager,
             _healWatch, _groupInvites, _fcChest, _gear, _followManager, ReadRawSeatOccupancy, () => _boardingStatus,
             () => $"{_followStatus} · offer: {_teleportOffer.Status} · boss AI: {_bossAi.Status}",
@@ -472,6 +493,7 @@ public sealed class CharonPlugin : IDalamudPlugin
             _ventureRunner,
             _retainerPlanner,
             OpenRetainerBoard,
+            _retainerContents,
             _afkGuard,
             () => _condition[ConditionFlag.OnFreeTrial],
             _lootWatcher,
@@ -593,6 +615,7 @@ public sealed class CharonPlugin : IDalamudPlugin
         _textAdvanceIpc.Dispose();
         _levelingIpc.Dispose();
         _gearIpc.Dispose();
+        _retainerContentsIpc.Dispose();
         _dutyPop.Dispose();
         _revivalPrompt.Dispose();
         _teleportOffer.Dispose();
@@ -755,6 +778,7 @@ public sealed class CharonPlugin : IDalamudPlugin
         _chests.Update(now);
         _qte.Update(now);
         _afkGuard.Update(now);
+        _retainerContents.Update(now);
         _saddlebag.Update(now);
         _saddlebagOverlay.IsOpen = _saddlebag.IsSaddlebagOpen();
         _commend.Update();
