@@ -50,10 +50,14 @@ public sealed unsafe class RetainerBellOverlay : Window
         _openBoard = openBoard;
         _log = log;
 
-        Flags = ImGuiWindowFlags.NoDecoration | ImGuiWindowFlags.NoBackground
+        // A card, not a ghost: this is the panel the player asked for, and a transparent strip over the game world
+        // reads as nothing at all. (NoBackground was the original design; a self-reporting log line settled that
+        // it was drawing where it was told and simply could not be seen.)
+        Flags = ImGuiWindowFlags.NoDecoration
                 | ImGuiWindowFlags.AlwaysAutoResize | ImGuiWindowFlags.NoSavedSettings
                 | ImGuiWindowFlags.NoFocusOnAppearing | ImGuiWindowFlags.NoNav
                 | ImGuiWindowFlags.NoMove;
+        BgAlpha = 0.95f;
         RespectCloseHotkey = false;
         IsOpen = false;
 
@@ -63,8 +67,12 @@ public sealed unsafe class RetainerBellOverlay : Window
         IsTopMost = true;
     }
 
+    public override void PostDraw() => ImGui.PopStyleVar();
+
     public override void PreDraw()
     {
+        ImGui.PushStyleVar(ImGuiStyleVar.WindowPadding, new System.Numerics.Vector2(10f, 8f));
+
         var addon = _gameGui.GetAddonByName(BellAddon);
         if (addon.IsNull)
             return;
@@ -74,16 +82,23 @@ public sealed unsafe class RetainerBellOverlay : Window
         if (node == null)
             return;
 
-        // Just inside the bell list's right edge, so the retainer names under it stay readable — and CLAMPED into
-        // the viewport, because a position derived from the game window can land outside it (a list dragged to the
-        // edge, a scaled HUD) and a window parked off-screen looks exactly like a window that never opened.
+        // UNDER the bell list, aligned with its left edge.
+        //
+        // It used to sit at the list's right edge, which is where a decision aid for a game window naturally
+        // belongs — and is also dead centre of the busiest corner of the screen: an Allagan Market window covers
+        // exactly that spot, so the panel drew behind it and read as "no popup at all". Below the list is game
+        // world, and a log line with coordinates proved where it was going before this moved.
+        //
+        // CLAMPED into the viewport, because a position derived from the game window can land outside it (a list
+        // dragged to the bottom edge, a scaled HUD), and a window parked off-screen looks exactly like a window
+        // that never opened.
         var scale = unit->Scale;
         var viewport = ImGui.GetMainViewport();
-        const float assumedWidth = 420f;
+        const float assumedWidth = 500f;
         const float assumedHeight = 150f;
 
-        var x = node->ScreenX + (node->Width * scale) + 8f;
-        var y = node->ScreenY;
+        var x = node->ScreenX;
+        var y = node->ScreenY + (node->Height * scale) + 8f;
 
         var maxX = viewport.WorkPos.X + viewport.WorkSize.X - assumedWidth;
         var maxY = viewport.WorkPos.Y + viewport.WorkSize.Y - assumedHeight;
