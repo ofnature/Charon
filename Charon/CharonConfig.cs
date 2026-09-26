@@ -375,6 +375,27 @@ public sealed class CharonConfig : IPluginConfiguration
     /// </summary>
     public Dictionary<string, GcRequestSnapshot> GcRequests { get; set; } = new();
 
+    /// <summary>One page of the free company chest as last seen.</summary>
+    public sealed class ChestPageState
+    {
+        public int Page { get; set; }
+        public List<RetainerStack> Stacks { get; set; } = new();
+    }
+
+    /// <summary>
+    /// The free company chest as last SEEN, with the timestamp that makes the staleness visible. The client fills
+    /// these pages only once the chest has been opened on this machine, so an absent entry means "never looked" —
+    /// NOT "empty". Other plugins read it over IPC, so that distinction is part of the contract.
+    /// </summary>
+    public sealed class ChestState
+    {
+        public DateTime CapturedUtc { get; set; }
+        public List<ChestPageState> Pages { get; set; } = new();
+    }
+
+    /// <inheritdoc cref="ChestState"/>
+    public Dictionary<string, ChestState> ChestContents { get; set; } = new();
+
     /// <summary>
     /// Whether other plugins may ask Charon to MOVE items (fetch from a retainer, run a refresh). Off until
     /// switched on, like the gear IPC's execute gate: reading the store is free and always answers, but

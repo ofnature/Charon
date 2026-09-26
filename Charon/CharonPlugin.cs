@@ -10,6 +10,7 @@ using Dalamud.Interface.Windowing;
 using Dalamud.Plugin;
 using Dalamud.Plugin.Services;
 using Charon.Features.AutoAccept;
+using Charon.Features.Containers;
 using Charon.Features.Dailies;
 using Charon.Features.AutoPillion;
 using Charon.Features.GrandCompany;
@@ -227,6 +228,8 @@ public sealed class CharonPlugin : IDalamudPlugin
 
     private readonly RetainerContentsIpc _retainerContentsIpc;
     private readonly GcRequestsIpc _gcRequestsIpc;
+    private readonly ChestContentsReader _chestContents;
+    private readonly ChestContentsIpc _chestIpc;
     private readonly HephaestusClient _hephaestus;
 
     private readonly RetainersWindow _retainersWindow;
@@ -430,6 +433,16 @@ public sealed class CharonPlugin : IDalamudPlugin
             () => _daedalusIpc.GetLanPartyMembers().Select(t => t.EntityId).ToList(), log);
         _textAdvance = new TextAdvancer(gameGui, () => _config.TextAdvanceEnabled, log);
         _textAdvanceIpc = new TextAdvanceIpc(pluginInterface, _textAdvance);
+
+        // The other store: the free company chest, same snapshot honesty, so a crafter can ask where an item is
+        // without either window being open.
+        _chestContents = new ChestContentsReader(gameGui, _config, () => _jobLevels.LocalContentId, SaveConfig, log);
+
+        _chestIpc = new ChestContentsIpc(
+            pluginInterface,
+            () => _chestContents.Local,
+            () => _retainerContents.Bags(),
+            log);
 
         _retainerContentsIpc = new RetainerContentsIpc(
             pluginInterface,
@@ -658,6 +671,7 @@ public sealed class CharonPlugin : IDalamudPlugin
         _gearIpc.Dispose();
         _retainerContentsIpc.Dispose();
         _gcRequestsIpc.Dispose();
+        _chestIpc.Dispose();
         _hephaestus.Dispose();
         _dutyPop.Dispose();
         _revivalPrompt.Dispose();
@@ -743,6 +757,32 @@ public sealed class CharonPlugin : IDalamudPlugin
         if (trimmed.Equals("unfollow", StringComparison.OrdinalIgnoreCase))
         {
             StopLocalFollow();
+            return;
+        }
+
+        // "/charon chest" — the free company chest store: what was captured, how old, and the exact payload a
+        // caller reads. "chest capture" forces a read, which only works with the chest open.
+        if (trimmed.StartsWith("chest", StringComparison.OrdinalIgnoreCase))
+        {
+            var mode = trimmed.Length > 5 ? trimmed[5..].Trim() : string.Empty;
+
+            if (mode.Equals("capture", StringComparison.OrdinalIgnoreCase))
+            {
+                var ok = _chestContents.Capture(DateTime.UtcNow);
+                _chat.Print($"[Charon] chest capture {(ok ? "done" : "did nothing")}: {_chestContents.Status}");
+                return;
+            }
+
+            var snapshot = _chestContents.Local;
+
+            _chat.Print($"[Charon] chest: {(snapshot == null ? ChestContents.Describe(null, DateTime.UtcNow)
+                : ChestContents.Describe(snapshot, DateTime.UtcNow))}");
+            _chat.Print($"  chest open now = {_chestContents.ChestOpen} · store: {_chestContents.Status}");
+
+            foreach (var page in (snapshot?.Pages ?? []).OrderBy(p => p.Page))
+                _chat.Print($"  page {page.Page}: {page.Slots} stack(s), {page.Units} item(s)");
+
+            _chat.Print($"  payload: {ChestContents.ToJson(snapshot, DateTime.UtcNow)}");
             return;
         }
 
@@ -1131,6 +1171,7 @@ public sealed class CharonPlugin : IDalamudPlugin
         _qte.Update(now);
         _afkGuard.Update(now);
         _retainerContents.Update(now);
+        _chestContents.Update(now);
         _allowances.Update(now);
         _windowText.UpdateWatch(now, message => _chat.Print(message));
         _saddlebag.Update(now);
