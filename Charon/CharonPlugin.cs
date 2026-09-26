@@ -201,6 +201,21 @@ public sealed class CharonPlugin : IDalamudPlugin
     private readonly IAddonLifecycle _addonLifecycle;
     private const string FcChestAddonName = "FreeCompanyChest";
     private readonly VentureOverlay _ventureOverlay;
+
+    /// <summary>The retainer catalog: the item-location database is the game's own sheets, read once.</summary>
+    private readonly VentureSheetReader _ventureSheet;
+
+    /// <summary>Shared by the retainer board and the bell overlay, so a plan means one thing.</summary>
+    private readonly RetainerPlanner _retainerPlanner;
+
+    private readonly RetainersWindow _retainersWindow;
+    private readonly RetainerBellOverlay _retainerBell;
+
+    /// <summary>
+    /// Market value per item id, for the venture ranking. Not wired to a feed yet: 0 means "unknown", and
+    /// the catalog then orders by experience per hour instead of by gil — a real answer, not a broken one.
+    /// </summary>
+    private static long MarketPrice(uint itemId) => 0;
     private const string RetainerListAddonName = "RetainerList";
 
     /// <summary>Previous per-seat occupant entity ids (index 0 = seat 1) — diffed each frame.</summary>
@@ -460,6 +475,27 @@ public sealed class CharonPlugin : IDalamudPlugin
         _ventureOverlay = new VentureOverlay(_retainers, _ventureRunner);
         _windowSystem.AddWindow(_ventureOverlay);
 
+        // The retainer board is the AutoRetainer-parity surface; the overlay is the same plans at the bell.
+        _ventureSheet = new VentureSheetReader(dataManager, log);
+        _retainerPlanner = new RetainerPlanner(_config, _ventureSheet, MarketPrice, SaveConfig);
+
+        _retainersWindow = new RetainersWindow(
+            _retainers,
+            _retainerPlanner,
+            _ventureRunner,
+            () => _objectTable.LocalPlayer?.Name.TextValue ?? string.Empty,
+            () => _jobLevels.LocalContentId);
+        _windowSystem.AddWindow(_retainersWindow);
+
+        _retainerBell = new RetainerBellOverlay(
+            gameGui,
+            _retainers,
+            _retainerPlanner,
+            _ventureRunner,
+            () => _jobLevels.LocalContentId,
+            () => _retainersWindow.IsOpen = true);
+        _windowSystem.AddWindow(_retainerBell);
+
         _saddlebagOverlay = new SaddlebagOverlay(gameGui, _saddlebag);
         _windowSystem.AddWindow(_saddlebagOverlay);
 
@@ -634,10 +670,16 @@ public sealed class CharonPlugin : IDalamudPlugin
         _domanWindow.IsOpen = true;
     }
 
-    /// <summary>At a bell — show the venture tools. Nothing runs until the button is pressed.</summary>
+    /// <summary>
+    /// At a bell — show the venture tools. Nothing runs until the button is pressed.
+    ///
+    /// The new bell overlay carries the same bell surface (plans, Send/Collect, Stop), so the older
+    /// assist panel only opens when that overlay is switched off: two panels at one bell is a collision,
+    /// not a feature, and turning the overlay off restores this one rather than losing anything.
+    /// </summary>
     private void OnRetainerListOpen(AddonEvent type, AddonArgs args)
     {
-        _ventureOverlay.IsOpen = true;
+        _ventureOverlay.IsOpen = !_config.RetainerOverlayEnabled;
     }
 
     /// <summary>
@@ -737,6 +779,24 @@ public sealed class CharonPlugin : IDalamudPlugin
         // dismount (the occupancy read is the tick-cached snapshot — no rescan).
         _pillionRidersWindow.IsOpen = _config.PillionRidersWindowEnabled && ReadRawSeatOccupancy().Count > 0;
         UpdateDomanWindow();
+
+        // The overlay lives exactly as long as the bell's list is up - it is a decision aid for the window
+        // that is open, never a panel that lingers over the world.
+        _retainerBell.IsOpen = _config.RetainerOverlayEnabled && _ventureRunner.RetainerListOpen;
+
+        // Two-way and edge-triggered, like the spawn window: forcing IsOpen from the config every tick is
+        // what makes a window impossible to close.
+        if (_config.RetainerWindowVisible != _retainersWindow.IsOpen)
+        {
+            _retainersWindow.IsOpen = _config.RetainerWindowVisible;
+        }
+        else if (_retainersWindow.IsOpen != _config.RetainerWindowVisible)
+        {
+            _config.RetainerWindowVisible = _retainersWindow.IsOpen;
+            SaveConfig();
+        }
+
+
         // Search bar rides the FC chest window; the filter also runs while it closes (restores alpha).
         _fcSearchOverlay.IsOpen = _config.FcChestSearchEnabled && _fcChest.IsChestOpen();
         _chestSearch.Update(_fcSearchOverlay.IsOpen ? _fcSearchOverlay.Query : string.Empty);

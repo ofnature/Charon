@@ -307,6 +307,31 @@ public sealed class CharonConfig : IPluginConfiguration
     /// <summary>Pop the standalone Doman donation window up with the game's donation basket.</summary>
     public bool DomanWindowEnabled { get; set; } = true;
 
+    // Retainers section
+    /// <summary>The retainer board (standalone window), opened by its own button in the bell overlay.</summary>
+    public bool RetainerWindowVisible { get; set; } = false;
+
+    /// <summary>
+    /// The at-the-bell overlay. Contextual and therefore on by default: it exists only while the game's
+    /// retainer list is open, so it cannot appear uninvited.
+    /// </summary>
+    public bool RetainerOverlayEnabled { get; set; } = true;
+
+    /// <summary>
+    /// What a retainer with no mode of its own does. Off by default: nothing is sent anywhere until the
+    /// player says so, per retainer or here.
+    /// </summary>
+    public int RetainerDefaultAssignment { get; set; } = 0;
+
+    /// <summary>Items to farm, as typed ("Manganese Ore x500"). Decides WHAT a send chooses.</summary>
+    public List<string> RetainerFarmList { get; set; } = new();
+
+    /// <summary>Per-retainer assignment mode, keyed "contentId:retainerName" — names repeat across a fleet.</summary>
+    public Dictionary<string, int> RetainerAssignment { get; set; } = new();
+
+    /// <summary>Per-retainer chosen venture (RetainerTask row id), same key.</summary>
+    public Dictionary<string, uint> RetainerPickedVenture { get; set; } = new();
+
     /// <summary>
     /// When each character (by content id) last donated at the Doman Enclave — or was OBSERVED
     /// with an empty weekly budget, which counts the same. Checked against the Tuesday 08:00 UTC
