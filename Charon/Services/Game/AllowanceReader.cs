@@ -9,11 +9,12 @@ namespace Charon.Services.Game;
 /// <summary>
 /// The game's own allowance lines, read out of its Timers window.
 ///
-/// Which window that is was the first question: the game calls the window "Timers" but its internal addon is
-/// named something else — `/charon text` (the recorder in <see cref="WindowTextDump"/>) lists what the client
-/// has loaded, so this tries the plausible names in order and remembers which one answered, instead of
-/// asserting one. The VALUES are found by label inside whatever window it is, so the read survives the window
-/// being restructured.
+/// The window is TITLED "Timers" and its addon is named **ContentsInfo** — settled by an external node dump of
+/// that addon, whose only static text nodes are three placeholders while the eleven rows the player reads live
+/// in a TreeList component one level down. Two wrong candidates came before it: the game's addon names do not
+/// match its window titles, and `_ToDoList` (an underscore-prefixed HUD element) is the quest list down the
+/// right-hand side of the screen, not this. The VALUES are still found by label rather than by node index, so a
+/// window restructured by a patch keeps reading correctly — the name only decides which window to open.
 ///
 /// The window has to be OPEN: the client only keeps its contents while it is up, so this holds the last thing
 /// it read with the time it read it — the same snapshot honesty as the retainer contents store, because
@@ -21,12 +22,16 @@ namespace Charon.Services.Game;
 /// </summary>
 public sealed class AllowanceReader
 {
+    /// <summary>The game's Timers window. Titled "Timers" on screen; this is what the client calls it.</summary>
+    private const string KnownAddon = "ContentsInfo";
+
     /// <summary>
-    /// Candidate addon names are only a HINT list now. The reader identifies the window by finding the label
-    /// inside it, because names are exactly what this fooled itself with once: "_ToDoList" looked right and is
-    /// a HUD widget (every underscore-prefixed addon is a HUD element, not a window).
+    /// Fallback names, tried only if <see cref="KnownAddon"/> is not loaded. The window is still identified by
+    /// finding the labels INSIDE it, so a renamed or restructured window reads correctly rather than
+    /// confidently reporting nothing — but the known name is tried first because reading one window beats
+    /// scanning every loaded one.
     /// </summary>
-    private static readonly string[] Candidates = ["Timers", "Timer", "AddonTimers", "_ToDoList", "ToDoList"];
+    private static readonly string[] Candidates = [KnownAddon, "Timers", "AddonTimers", "_ToDoList"];
 
     private static readonly TimeSpan ScanEvery = TimeSpan.FromSeconds(2);
 
@@ -108,6 +113,16 @@ public sealed class AllowanceReader
         _lastScanUtc = nowUtc;
         _scans++;
 
+        // The known name first: one window read against a hundred and eighteen, and the answer is the same.
+        if (ReadFrom(KnownAddon, nowUtc))
+        {
+            _addon = KnownAddon;
+            Addon = KnownAddon;
+            _log.Information("[Allowances] reading the allowance lines from '{0}' (the Timers window).",
+                KnownAddon);
+            return;
+        }
+
         var open = _windows.LoadedAddons(visibleOnly: false);
         LastScanCount = open.Count;
 
@@ -121,8 +136,8 @@ public sealed class AllowanceReader
                 .ToList();
         _scanOffset = (_scanOffset + PerPass) % Math.Max(1, open.Count);
 
-        // The hint list first (cheap), then the slice. A window that holds the labels is the Timers window
-        // whatever it is called.
+        // Then the hint list (cheap), then the slice. A window that holds the labels is the Timers window
+        // whatever it is called — which is the property worth keeping, since the name is what fooled this.
         foreach (var name in Candidates.Concat(slice).Distinct(StringComparer.OrdinalIgnoreCase))
         {
             if (ReadFrom(name, nowUtc))
