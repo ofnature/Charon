@@ -686,6 +686,38 @@ public sealed class CharonPlugin : IDalamudPlugin
                 return;
             }
 
+            // "/charon text find <phrase>" — asks which window is showing that text, which is the question
+            // when the window's name is unknown. This is how the Timers window gets named for good.
+            if (query.StartsWith("find ", StringComparison.OrdinalIgnoreCase))
+            {
+                var term = query[5..].Trim();
+                if (term.Length == 0)
+                {
+                    _chat.Print("[Charon] /charon text find <phrase> — e.g. /charon text find allowance");
+                    return;
+                }
+
+                var hits = _windowText.Find(term);
+                if (hits.Count == 0)
+                {
+                    var counts = _windowText.TextCounts().Where(c => c.TextNodes > 0).ToList();
+                    _chat.Print($"[Charon] no loaded window shows \"{term}\". "
+                                + $"{counts.Count} window(s) have text right now:");
+                    foreach (var chunk in counts.Take(18).Chunk(3))
+                        _chat.Print("  " + string.Join(" · ", chunk.Select(c => $"{c.Addon} ({c.TextNodes})")));
+                    return;
+                }
+
+                _chat.Print($"[Charon] \"{term}\" appears in {hits.Count} node(s) across "
+                            + $"{hits.Select(h => h.Addon).Distinct().Count()} window(s):");
+                foreach (var hit in hits.Take(10))
+                    _chat.Print($"  {hit.Addon} #{hit.Index} y={(int)hit.Y} \"{hit.Text}\"");
+
+                _log.Information("[TextDump] find \"{0}\": {1}", term,
+                    string.Join(" | ", hits.Select(h => $"{h.Addon}#{h.Index} ({h.X:0},{h.Y:0}) \"{h.Text}\"")));
+                return;
+            }
+
             var resolved = _windowText.Resolve(query);
             if (resolved == null)
             {

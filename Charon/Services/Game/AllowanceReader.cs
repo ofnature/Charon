@@ -99,7 +99,7 @@ public sealed class AllowanceReader
 
         _lastScanUtc = nowUtc;
 
-        var open = _windows.LoadedAddons(visibleOnly: true);
+        var open = _windows.LoadedAddons(visibleOnly: false);
         LastScanCount = open.Count;
 
         // The hint list first (cheap), then everything else that is open. A window that holds the labels is

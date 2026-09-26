@@ -91,15 +91,19 @@ public sealed unsafe class WindowTextDump
         return loaded.FirstOrDefault(n => n.Contains(nameOrFragment, StringComparison.OrdinalIgnoreCase));
     }
 
-    /// <summary>Every text node in the addon, in tree order, with its screen position.</summary>
-    public IReadOnlyList<(int Index, float X, float Y, string Text)> Read(string addonName)
+    /// <summary>
+    /// Every text node in the addon, in tree order, with its screen position. <paramref name="requireVisible"/>
+    /// is the default because most reads are about what the player can see — but a search for a phrase wants
+    /// every loaded window, including one mid-open whose visibility flag has not caught up.
+    /// </summary>
+    public IReadOnlyList<(int Index, float X, float Y, string Text)> Read(string addonName, bool requireVisible = true)
     {
         var lines = new List<(int, float, float, string)>();
 
         try
         {
             var unit = (AtkUnitBase*)_gameGui.GetAddonByName(addonName).Address;
-            if (unit == null || !unit->IsVisible)
+            if (unit == null || (requireVisible && !unit->IsVisible))
                 return lines;
 
             // Walk the node TREE rather than UldManager.NodeList: an addon whose rows live in a list component
@@ -147,6 +151,41 @@ public sealed unsafe class WindowTextDump
 
             node = node->NextSiblingNode;
         }
+    }
+
+    /// <summary>
+    /// Find a phrase in ANY loaded window and say which one holds it.
+    ///
+    /// This is what to reach for when the window's name is unknown: instead of guessing a name and hoping, ask
+    /// who is showing the text. Visible or not is deliberately ignored — a window mid-open is still the window.
+    /// </summary>
+    public IReadOnlyList<(string Addon, int Index, float X, float Y, string Text)> Find(string term)
+    {
+        var hits = new List<(string, int, float, float, string)>();
+
+        foreach (var addon in LoadedAddons(visibleOnly: false))
+        {
+            foreach (var line in Read(addon, requireVisible: false))
+            {
+                if (line.Text.Contains(term, StringComparison.OrdinalIgnoreCase))
+                    hits.Add((addon, line.Index, line.X, line.Y, line.Text));
+            }
+        }
+
+        return hits;
+    }
+
+    /// <summary>Per-window text counts for everything loaded — the shape of the evidence when a search misses.</summary>
+    public IReadOnlyList<(string Addon, int TextNodes)> TextCounts()
+    {
+        var counts = new List<(string, int)>();
+
+        foreach (var addon in LoadedAddons(visibleOnly: false))
+        {
+            counts.Add((addon, Read(addon, requireVisible: false).Count));
+        }
+
+        return counts;
     }
 
     /// <summary>Record a window's text: full detail to the log, and the lines kept for a chat preview.</summary>
