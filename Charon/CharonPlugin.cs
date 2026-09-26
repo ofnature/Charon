@@ -686,6 +686,25 @@ public sealed class CharonPlugin : IDalamudPlugin
                 return;
             }
 
+            // "/charon text watch [seconds]" — reports window names as they APPEAR, so opening the window you
+            // care about tells us its name instead of us racing a command against your hands.
+            if (query.StartsWith("watch", StringComparison.OrdinalIgnoreCase))
+            {
+                var arg = query[5..].Trim();
+                if (arg.Equals("stop", StringComparison.OrdinalIgnoreCase))
+                {
+                    _windowText.StopWatch();
+                    _chat.Print("[Charon] watch stopped.");
+                    return;
+                }
+
+                var seconds = int.TryParse(arg, out var parsed) && parsed > 0 ? parsed : 120;
+                _windowText.StartWatch(seconds, DateTime.UtcNow);
+                _chat.Print($"[Charon] watching for {seconds}s — open the window you want identified now; "
+                            + "its name will appear here with its text count.");
+                return;
+            }
+
             // "/charon text find <phrase>" — asks which window is showing that text, which is the question
             // when the window's name is unknown. This is how the Timers window gets named for good.
             if (query.StartsWith("find ", StringComparison.OrdinalIgnoreCase))
@@ -897,6 +916,7 @@ public sealed class CharonPlugin : IDalamudPlugin
         _afkGuard.Update(now);
         _retainerContents.Update(now);
         _allowances.Update(now);
+        _windowText.UpdateWatch(now, message => _chat.Print(message));
         _saddlebag.Update(now);
         _saddlebagOverlay.IsOpen = _saddlebag.IsSaddlebagOpen();
         _commend.Update();

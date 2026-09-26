@@ -45,6 +45,82 @@ public sealed unsafe class WindowTextDump
     /// <summary>What the last read actually saw — counts, and whether the root node was there at all.</summary>
     public string LastDiagnostics { get; private set; } = string.Empty;
 
+    private readonly HashSet<string> _watchKnown = new(StringComparer.OrdinalIgnoreCase);
+    private DateTime _watchUntilUtc = DateTime.MinValue;
+    private DateTime _watchNextPollUtc = DateTime.MinValue;
+    private bool _watchSeeded;
+
+    public bool WatchActive => _watchUntilUtc != DateTime.MinValue;
+
+    /// <summary>
+    /// Watch the addon list for names that APPEAR, for the next <paramref name="seconds"/>.
+    ///
+    /// This is how a window's name gets settled without racing a command against opening it: start the watch,
+    /// then open the window, and its name arrives in chat with how much text it holds. The list the client
+    /// keeps is of what is loaded *now* — the Timers window is not in it while it is closed, which is exactly
+    /// why an earlier run reported 118 names and none of them it.
+    /// </summary>
+    public void StartWatch(int seconds, DateTime nowUtc)
+    {
+        _watchUntilUtc = nowUtc.AddSeconds(Math.Clamp(seconds, 5, 600));
+        _watchNextPollUtc = DateTime.MinValue;
+        _watchSeeded = false;
+        _watchKnown.Clear();
+    }
+
+    public void StopWatch()
+    {
+        _watchUntilUtc = DateTime.MinValue;
+        _watchSeeded = false;
+        _watchKnown.Clear();
+    }
+
+    /// <summary>Called every tick; reports additions (with their text count) and removals.</summary>
+    public void UpdateWatch(DateTime nowUtc, Action<string> report)
+    {
+        if (!WatchActive)
+            return;
+
+        if (nowUtc > _watchUntilUtc)
+        {
+            report($"[Charon] watch finished after {_watchKnown.Count} window(s) seen.");
+            StopWatch();
+            return;
+        }
+
+        if (nowUtc < _watchNextPollUtc)
+            return;
+
+        _watchNextPollUtc = nowUtc.AddMilliseconds(400);
+
+        var current = LoadedAddons(visibleOnly: false);
+
+        // The first poll is only a baseline, so every report after it is about what actually CHANGED.
+        if (!_watchSeeded)
+        {
+            _watchSeeded = true;
+            foreach (var name in current)
+                _watchKnown.Add(name);
+
+            report($"[Charon] watching… {current.Count} window(s) already loaded. Open the Timers window now.");
+            return;
+        }
+
+        foreach (var name in current.Where(n => !_watchKnown.Contains(n)))
+        {
+            _watchKnown.Add(name);
+            var text = Read(name, requireVisible: false).Count;
+            report($"[Charon] + {name}  ({text} text node(s))");
+            _log.Information("[TextDump] appeared: {0} ({1} text nodes)", name, text);
+        }
+
+        foreach (var name in _watchKnown.Where(n => !current.Contains(n, StringComparer.OrdinalIgnoreCase)).ToList())
+        {
+            _watchKnown.Remove(name);
+            report($"[Charon] - {name}");
+        }
+    }
+
     /// <summary>Every window the client currently has loaded, optionally only the visible ones.</summary>
     public IReadOnlyList<string> LoadedAddons(bool visibleOnly)
     {
