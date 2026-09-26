@@ -307,6 +307,18 @@ public sealed class CharonConfig : IPluginConfiguration
     /// <summary>Pop the standalone Doman donation window up with the game's donation basket.</summary>
     public bool DomanWindowEnabled { get; set; } = true;
 
+    /// <summary>
+    /// Keep this client from being logged out for inactivity: read the client's own idle timer and send
+    /// it a keystroke before it gives up on us. On by default — it is the one feature here whose entire
+    /// purpose is to work while nobody is watching, and a false "you are idle" costs the session. It only
+    /// ever acts when the CLIENT says it has been idle, and it reports the number it saw.
+    /// </summary>
+    public bool AfkGuardEnabled { get; set; } = true;
+
+    /// <summary>How idle, in seconds, before the nudge. The client logs out around 30 minutes; 10 is early
+    /// enough to be safe with a wide margin and late enough to be rare.</summary>
+    public int AfkGuardThresholdSeconds { get; set; } = 600;
+
     // Retainers section
     /// <summary>The retainer board (standalone window), opened by its own button in the bell overlay.</summary>
     public bool RetainerWindowVisible { get; set; } = false;

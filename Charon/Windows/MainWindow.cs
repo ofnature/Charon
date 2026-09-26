@@ -81,6 +81,9 @@ public sealed class MainWindow : Window
     /// <summary>Opens the standalone board — the working surface, from where the decisions are made.</summary>
     private readonly Action _openRetainerBoard;
 
+    /// <summary>Live state for the TWEAKS toggle: the timer it saw and whether a nudge landed.</summary>
+    private readonly AfkGuard _afkGuard;
+
     private string _retainerFarmInput = string.Empty;
     private readonly WhitelistService _whitelist;
     private readonly IDaedalusRosterProvider _roster;
@@ -189,6 +192,7 @@ public sealed class MainWindow : Window
         VentureRunner ventureRunner,
         RetainerPlanner retainerPlanner,
         Action openRetainerBoard,
+        AfkGuard afkGuard,
         Func<bool> isFreeTrial,
         LootWatcher lootWatcher,
         CollectionScanner collection,
@@ -238,6 +242,7 @@ public sealed class MainWindow : Window
         _ventureRunner = ventureRunner;
         _retainerPlanner = retainerPlanner;
         _openRetainerBoard = openRetainerBoard;
+        _afkGuard = afkGuard;
         _isFreeTrial = isFreeTrial;
         _lootWatcher = lootWatcher;
         _collection = collection;
@@ -2989,6 +2994,9 @@ public sealed class MainWindow : Window
                                + "default — on a box a human is playing this eats the story. Odysseus\n"
                                + "can also switch it on over IPC with a self-expiring lease while it\n"
                                + "runs quests, regardless of this toggle.");
+
+        ImGui.Spacing();
+        DrawAfkGuardBlock();
     }
 
     /// <summary>Deep-dungeon specific tools: the floor map and the ESP overlay.</summary>
@@ -3055,6 +3063,47 @@ public sealed class MainWindow : Window
                                    + "the first you know of a landmine is the chat line.");
             ImGui.Unindent();
         }
+    }
+
+    /// <summary>
+    /// Stay-logged-in: the toggle, the threshold, and — the part worth having on screen — the client's
+    /// own idle timer, so "am I safe" is a number rather than a feeling.
+    /// </summary>
+    private void DrawAfkGuardBlock()
+    {
+        var guard = _config.AfkGuardEnabled;
+        if (ImGui.Checkbox("Stay logged in when idle##afk", ref guard))
+        {
+            _config.AfkGuardEnabled = guard;
+            _save();
+            _afkGuard.Reset();
+        }
+
+        CharonTheme.HelpMarker("Watch the client's own idle timer and send it a keystroke before it\n"
+                               + "logs us out. Only ever acts when the CLIENT says it is idle, and only\n"
+                               + "ever in the background — a bare left Ctrl, which has no action of its own.\n"
+                               + "A toon kept moving by a plugin is still idle to the client: movement is\n"
+                               + "not input, which is what makes this worth having on a box that follows.");
+
+        if (guard)
+        {
+            ImGui.Indent();
+            var threshold = _config.AfkGuardThresholdSeconds;
+            ImGui.SetNextItemWidth(200f);
+            if (ImGui.SliderInt("Nudge after (seconds idle)##afk", ref threshold, 60, 1800))
+            {
+                _config.AfkGuardThresholdSeconds = threshold;
+                _save();
+            }
+
+            CharonTheme.HelpMarker("The client logs out around the 30-minute mark; 10 minutes is early\n"
+                                   + "enough to be safe and late enough that the nudge is rare.");
+            ImGui.Unindent();
+        }
+
+        DrawStatusLine(_afkGuard.Status
+                       + (_afkGuard.Nudges > 0 ? $" · {_afkGuard.Nudges} nudges this session" : string.Empty),
+            _afkGuard.StuckNudges > 0 ? CharonTheme.StatusYellow : CharonTheme.TextDim);
     }
 
     private void DrawDebugSection()

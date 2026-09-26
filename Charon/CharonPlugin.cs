@@ -211,6 +211,9 @@ public sealed class CharonPlugin : IDalamudPlugin
     private readonly RetainersWindow _retainersWindow;
     private readonly RetainerBellOverlay _retainerBell;
 
+    /// <summary>Keeps an unattended client logged in — see the class for why a busy box is still idle.</summary>
+    private readonly AfkGuard _afkGuard;
+
     /// <summary>
     /// Market value per item id, for the venture ranking. Not wired to a feed yet: 0 means "unknown", and
     /// the catalog then orders by experience per hour instead of by gil — a real answer, not a broken one.
@@ -424,9 +427,15 @@ public sealed class CharonPlugin : IDalamudPlugin
         _dutyPop = new DutyPopInterop(addonLifecycle, gameGui, ShouldAutoCommenceDuty, log);
         _trade = new TradeInterop(gameGui, () => _config.AutoTradeEnabled, IsTrustedToon, log);
 
-        // Built before the main window: its Retainers settings section shows the plans the board uses.
+        // Built before the main window: its Retainers settings section shows the plans the board uses,
+        // and its Tweaks section shows the idle timer the guard is working from.
         _ventureSheet = new VentureSheetReader(dataManager, log);
         _retainerPlanner = new RetainerPlanner(_config, _ventureSheet, MarketPrice, SaveConfig);
+        _afkGuard = new AfkGuard(
+            () => _config.AfkGuardEnabled,
+            () => _config.AfkGuardThresholdSeconds,
+            clientState,
+            log);
 
         _mainWindow = new MainWindow(_config, SaveConfig, _whitelist, _daedalusIpc, _pillionManager, _inviteManager,
             _healWatch, _groupInvites, _fcChest, _gear, _followManager, ReadRawSeatOccupancy, () => _boardingStatus,
@@ -463,6 +472,7 @@ public sealed class CharonPlugin : IDalamudPlugin
             _ventureRunner,
             _retainerPlanner,
             OpenRetainerBoard,
+            _afkGuard,
             () => _condition[ConditionFlag.OnFreeTrial],
             _lootWatcher,
             _collection,
@@ -744,6 +754,7 @@ public sealed class CharonPlugin : IDalamudPlugin
         _collection.UpdateAutoCollect(now, _config.AutoCollectEnabled);
         _chests.Update(now);
         _qte.Update(now);
+        _afkGuard.Update(now);
         _saddlebag.Update(now);
         _saddlebagOverlay.IsOpen = _saddlebag.IsSaddlebagOpen();
         _commend.Update();
