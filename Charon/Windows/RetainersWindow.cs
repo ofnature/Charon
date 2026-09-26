@@ -144,6 +144,8 @@ public sealed class RetainersWindow : Window
         ImGui.TableSetupColumn("Actions", ImGuiTableColumnFlags.WidthFixed, 214f);
         ImGui.TableHeadersRow();
 
+        RetainerVenture? expanded = null;
+
         foreach (var row in filtered)
         {
             var key = Key(row.Name);
@@ -177,10 +179,24 @@ public sealed class RetainersWindow : Window
             DrawRowActions(key, row, option);
 
             if (open)
-                DrawPicker(row, ventures, key, mode, option);
+                expanded = row;
         }
 
         ImGui.EndTable();
+
+        // The picker is drawn OUTSIDE the table, at full width. It used to be drawn inside the row it belongs to,
+        // in that row's first column — 104px wide — so a six-column table with ~500px of fixed widths was squeezed
+        // into one cell and every column collapsed: the headers rendered as "Ven…", cells as single characters,
+        // and the whole thing was unreadable. A table belongs somewhere it fits.
+        if (expanded is { } pickedRow)
+        {
+            var pickedKey = Key(pickedRow.Name);
+            ImGui.Spacing();
+            ImGui.Separator();
+            DrawPicker(pickedRow, ventures, pickedKey, _planner.Mode(pickedKey),
+                _planner.Resolve(pickedRow, pickedKey));
+        }
+
         ImGui.Spacing();
         ImGui.TextColored(CharonTheme.TextDisabled, _runner.Status);
     }
@@ -261,10 +277,8 @@ public sealed class RetainersWindow : Window
         VentureAssignment mode,
         VentureOption? planned)
     {
-        ImGui.TableNextRow();
-        ImGui.TableNextColumn();
-
-        ImGui.Indent(8f * ImGuiHelpers.GlobalScale);
+        ImGui.TextColored(CharonTheme.TextSecondary, row.Name);
+        ImGui.SameLine();
         ImGui.TextColored(CharonTheme.TextDim, "ASSIGNMENT");
 
         foreach (var (value, label) in Modes)
