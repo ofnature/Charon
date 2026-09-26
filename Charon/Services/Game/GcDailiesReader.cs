@@ -23,7 +23,9 @@ public sealed record GcBoard(
     string AllowanceText = "",
     DateTime? AllowanceSeenUtc = null,
     bool? DailiesOpen = null,
-    string AllowanceStatus = "");
+    string AllowanceStatus = "",
+    bool DeliveriesClosed = false,
+    string Notice = "");
 
 /// <summary>
 /// Reads the Grand Company delivery board — Supply, Provisioning and Expert Delivery — from the game's own
@@ -44,9 +46,13 @@ public sealed unsafe class GcDailiesReader
 {
     private static readonly TimeSpan CacheFor = TimeSpan.FromSeconds(2);
 
+    /// <summary>The addon that states the day's hand-in state in words, not just in rows.</summary>
+    private const string BoardAddon = "GrandCompanySupplyList";
+
     private readonly RetainerContentsReader _contents;
     private readonly VentureSheetReader _sheet;
     private readonly AllowanceReader _allowances;
+    private readonly WindowTextDump _windows;
     private readonly IPluginLog _log;
 
     private GcBoard? _cached;
@@ -57,12 +63,26 @@ public sealed unsafe class GcDailiesReader
         RetainerContentsReader contents,
         VentureSheetReader sheet,
         AllowanceReader allowances,
+        WindowTextDump windows,
         IPluginLog log)
     {
         _contents = contents;
         _sheet = sheet;
         _allowances = allowances;
+        _windows = windows;
         _log = log;
+    }
+
+    /// <summary>
+    /// Everything the delivery window is saying: its text nodes AND its value strings, because the day's state
+    /// arrives as a value pair ("You possess no applicable items." / "No more deliveries are being accepted
+    /// today.") rather than as a text node.
+    /// </summary>
+    private IReadOnlyList<string> BoardLines()
+    {
+        var lines = _windows.Read(BoardAddon, requireVisible: false).Select(t => t.Text).ToList();
+        lines.AddRange(_windows.ValueTexts.Where(v => v.IsText).Select(v => v.Text));
+        return lines;
     }
 
     /// <summary>The last read's status line, for the Debug page.</summary>
@@ -154,6 +174,13 @@ public sealed unsafe class GcDailiesReader
 
             var counts = GcDailies.Counts(missions);
             var allowance = _allowances.MissionAllowance;
+
+            // The window's own words, when it is open: the game stating the day's state beats this reader
+            // inferring it from a countdown, which is the mistake the verdict line made once already.
+            var windowLines = open ? BoardLines() : [];
+            var closed = GcDailies.DeliveriesClosed(windowLines);
+            var notice = GcDailies.Notice(windowLines) ?? string.Empty;
+
             return new GcBoard(missions, seals, maxSeals, company, rank, agent->SelectedTab, open,
                 $"{counts.Supply} supply · {counts.Provisioning} provisioning · {counts.Expert} expert"
                 + $" (agent reports {reported})"
@@ -161,7 +188,9 @@ public sealed unsafe class GcDailiesReader
                 allowance?.Value ?? string.Empty,
                 _allowances.SeenUtc == DateTime.MinValue ? null : _allowances.SeenUtc,
                 _allowances.DailiesOpen,
-                _allowances.Status);
+                _allowances.Status,
+                closed,
+                notice);
         }
         catch (Exception ex)
         {

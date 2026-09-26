@@ -3150,8 +3150,20 @@ public sealed class MainWindow : Window
             DrawStatusLine($"Next mission allowance: {board.AllowanceStatus}", CharonTheme.TextMuted);
         }
 
-        // What is actually left, from the request list itself: rows are the work, no rows is the answer.
-        DrawStatusLine(GcDailies.RequestSummary(plans, board.Open), CharonTheme.TextSecondary);
+        // What is actually left. When the window is open it says so itself — "No more deliveries are being
+        // accepted today." — and the game's own sentence is the answer, not a count inferred from rows.
+        if (board.DeliveriesClosed)
+        {
+            DrawStatusLine("today's hand-ins are done — the game says no more deliveries are being accepted today",
+                CharonTheme.TextSecondary);
+        }
+        else
+        {
+            DrawStatusLine(GcDailies.RequestSummary(plans, board.Open), CharonTheme.TextSecondary);
+        }
+
+        if (board.Notice.Length > 0 && !board.DeliveriesClosed)
+            DrawStatusLine($"the delivery window says: \"{board.Notice}\"", CharonTheme.TextMuted);
 
         DrawStatusLine(GcDailies.Summarise(plans), CharonTheme.TextSecondary);
         DrawStatusLine(board.Status, CharonTheme.TextDisabled);

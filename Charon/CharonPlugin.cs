@@ -476,7 +476,7 @@ public sealed class CharonPlugin : IDalamudPlugin
 
         _windowText = new WindowTextDump(gameGui, log);
         _allowances = new AllowanceReader(_windowText, log);
-        _gcDailies = new GcDailiesReader(_retainerContents, _ventureSheet, _allowances, log);
+        _gcDailies = new GcDailiesReader(_retainerContents, _ventureSheet, _allowances, _windowText, log);
         _chat = chatGui;
 
         _mainWindow = new MainWindow(_config, SaveConfig, _whitelist, _daedalusIpc, _pillionManager, _inviteManager,

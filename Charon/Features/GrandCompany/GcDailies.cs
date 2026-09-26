@@ -186,6 +186,52 @@ public static class GcDailies
             .OrderBy(p => p.Mission.Position)
             .ToList();
 
+    /// <summary>The game's own sentence for "no more hand-ins today", verbatim from the delivery window.</summary>
+    public const string DeliveriesClosedMarker = "no more deliveries are being accepted";
+
+    /// <summary>
+    /// Does the delivery window SAY no more deliveries are being accepted today?
+    ///
+    /// This is the game stating the fact, rather than this reader inferring it: the window prints the sentence,
+    /// and it is the same statement the player reads off it. Reading a countdown as "done" was the inference
+    /// that got this wrong once already.
+    /// </summary>
+    public static bool DeliveriesClosed(IEnumerable<string> lines) =>
+        lines.Any(l => l.Contains(DeliveriesClosedMarker, StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>
+    /// The sentence the delivery window is saying about today's hand-ins, if it is saying one.
+    ///
+    /// Only plain sentences are considered — the window's item names arrive with icon payload glyphs baked in
+    /// (they are read from the item sheet by id instead), so requiring printable ASCII drops those rather than
+    /// printing garbage. Keywords keep it to the hand-in notices instead of any other sentence the window shows.
+    /// </summary>
+    public static string? Notice(IEnumerable<string> lines)
+    {
+        string[] keywords = ["deliver", "possess", "request", "hand in"];
+
+        foreach (var line in lines)
+        {
+            var text = line.Trim();
+            if (text.Length < 12 || text[^1] != '.')
+                continue;
+
+            if (text.Count(c => c == ' ') < 2)
+                continue;
+
+            if (!text.All(IsPrintable))
+                continue;
+
+            if (keywords.Any(k => text.Contains(k, StringComparison.OrdinalIgnoreCase)))
+                return text;
+        }
+
+        return null;
+    }
+
+    private static bool IsPrintable(char c) =>
+        c is >= ' ' and <= '~' || c == '\u2026';
+
     /// <summary>
     /// What is still being REQUESTED — the answer to "is today done?", and the only place that answer lives.
     ///

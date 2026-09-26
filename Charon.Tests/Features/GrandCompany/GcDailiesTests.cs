@@ -236,4 +236,42 @@ public class GcDailiesTests
         Assert.Contains("unknown", summary);
         Assert.DoesNotContain("nothing left", summary);
     }
+
+    /// <summary>
+    /// The delivery window states the day's state in words, and those words are the answer. Both strings below
+    /// are verbatim from a live dump of GrandCompanySupplyList (they arrive as a value pair, not text nodes).
+    /// </summary>
+    [Fact]
+    public void TheDeliveryWindowsOwnSentenceSaysTodayIsDone()
+    {
+        string[] window =
+        [
+            "Grand Company Delivery Missions",
+            "Next Mission Allowance in 13 hours and 52 minutes at 3:00 p.m. on 9/26 (Earth time).",
+            "You possess no applicable items.",
+            "No more deliveries are being accepted today.",
+            "Qty.",
+            "Seals",
+        ];
+
+        Assert.True(GcDailies.DeliveriesClosed(window));
+        Assert.Equal("You possess no applicable items.", GcDailies.Notice(window));
+    }
+
+    /// <summary>
+    /// Item names arrive from the window with icon payload glyphs baked in, so they must not be mistaken for a
+    /// sentence — the names this repo uses come from the item sheet by id.
+    /// </summary>
+    [Fact]
+    public void GlyphLadenItemNamesAreNotNotices()
+    {
+        string[] window =
+        [
+            "\uFFFDH\uFFFD\uFFFD%\uFFFD I\uFFFD\uFFFD&Claro Walnut Sandals of Crafting.",
+            "Nothing to report here at all.",
+        ];
+
+        Assert.Null(GcDailies.Notice(window));
+        Assert.False(GcDailies.DeliveriesClosed(window));
+    }
 }
