@@ -424,6 +424,10 @@ public sealed class CharonPlugin : IDalamudPlugin
         _dutyPop = new DutyPopInterop(addonLifecycle, gameGui, ShouldAutoCommenceDuty, log);
         _trade = new TradeInterop(gameGui, () => _config.AutoTradeEnabled, IsTrustedToon, log);
 
+        // Built before the main window: its Retainers settings section shows the plans the board uses.
+        _ventureSheet = new VentureSheetReader(dataManager, log);
+        _retainerPlanner = new RetainerPlanner(_config, _ventureSheet, MarketPrice, SaveConfig);
+
         _mainWindow = new MainWindow(_config, SaveConfig, _whitelist, _daedalusIpc, _pillionManager, _inviteManager,
             _healWatch, _groupInvites, _fcChest, _gear, _followManager, ReadRawSeatOccupancy, () => _boardingStatus,
             () => $"{_followStatus} · offer: {_teleportOffer.Status} · boss AI: {_bossAi.Status}",
@@ -457,6 +461,8 @@ public sealed class CharonPlugin : IDalamudPlugin
             _weeklies,
             _retainers,
             _ventureRunner,
+            _retainerPlanner,
+            OpenRetainerBoard,
             () => _condition[ConditionFlag.OnFreeTrial],
             _lootWatcher,
             _collection,
@@ -476,9 +482,6 @@ public sealed class CharonPlugin : IDalamudPlugin
         _windowSystem.AddWindow(_ventureOverlay);
 
         // The retainer board is the AutoRetainer-parity surface; the overlay is the same plans at the bell.
-        _ventureSheet = new VentureSheetReader(dataManager, log);
-        _retainerPlanner = new RetainerPlanner(_config, _ventureSheet, MarketPrice, SaveConfig);
-
         _retainersWindow = new RetainersWindow(
             _retainers,
             _retainerPlanner,
@@ -620,6 +623,13 @@ public sealed class CharonPlugin : IDalamudPlugin
     }
 
     private void OpenMainWindow() => _mainWindow.IsOpen = true;
+
+    /// <summary>
+    /// The board, opened from the main window's Retainers section or the bell overlay's Board button.
+    /// A method rather than a lambda at the construction site: the window is built after the main window,
+    /// and the closer the action is to the thing it touches, the less there is to get out of order.
+    /// </summary>
+    private void OpenRetainerBoard() => _retainersWindow.IsOpen = true;
 
     /// <summary>FC chest opened — pop the standalone window (unless auto-open is disabled).</summary>
     private void OnFcChestOpen(AddonEvent type, AddonArgs args)

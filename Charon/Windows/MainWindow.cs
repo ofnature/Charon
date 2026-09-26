@@ -49,6 +49,7 @@ public sealed class MainWindow : Window
         Loot,
         TrustedList,
         GilCapping,
+        Retainers,
         Weeklies,
         DomanDonate,
         Tweaks,
@@ -73,6 +74,14 @@ public sealed class MainWindow : Window
 
     private readonly CharonConfig _config;
     private readonly Action _save;
+
+    /// <summary>The retainer plans and the item catalog, shared with the board and the bell overlay.</summary>
+    private readonly RetainerPlanner _retainerPlanner;
+
+    /// <summary>Opens the standalone board — the working surface, from where the decisions are made.</summary>
+    private readonly Action _openRetainerBoard;
+
+    private string _retainerFarmInput = string.Empty;
     private readonly WhitelistService _whitelist;
     private readonly IDaedalusRosterProvider _roster;
     private readonly PillionManager _pillion;
@@ -178,6 +187,8 @@ public sealed class MainWindow : Window
         WeekliesReader weeklies,
         RetainerReader retainers,
         VentureRunner ventureRunner,
+        RetainerPlanner retainerPlanner,
+        Action openRetainerBoard,
         Func<bool> isFreeTrial,
         LootWatcher lootWatcher,
         CollectionScanner collection,
@@ -225,6 +236,8 @@ public sealed class MainWindow : Window
         _weeklies = weeklies;
         _retainers = retainers;
         _ventureRunner = ventureRunner;
+        _retainerPlanner = retainerPlanner;
+        _openRetainerBoard = openRetainerBoard;
         _isFreeTrial = isFreeTrial;
         _lootWatcher = lootWatcher;
         _collection = collection;
@@ -438,6 +451,11 @@ public sealed class MainWindow : Window
         if (SidebarTab.Draw("FT Gil Capping", FontAwesomeIcon.Coins, _section == Section.GilCapping,
                 _gilSeller.Busy ? "busy" : null))
             _section = Section.GilCapping;
+        // The badge is retainers sitting READY at the bell: the one number worth seeing from here.
+        var readyRetainers = ReadyRetainerCount();
+        if (SidebarTab.Draw("Retainers", FontAwesomeIcon.Bell, _section == Section.Retainers,
+                readyRetainers > 0 ? readyRetainers.ToString() : null, CharonTheme.AccentMint))
+            _section = Section.Retainers;
 
         DrawCategoryHeader("Weeklies");
         // A count badge = something is still left to do before a reset — a glance says "go spend it".
@@ -486,6 +504,7 @@ public sealed class MainWindow : Window
             case Section.Loot: DrawLootSection(); break;
             case Section.TrustedList: DrawTrustedSection(); break;
             case Section.GilCapping: DrawGilCappingSection(); break;
+            case Section.Retainers: DrawRetainersSection(); break;
             case Section.Weeklies: DrawWeekliesSection(); break;
             case Section.DomanDonate: DrawDomanSection(); break;
             case Section.Tweaks: DrawTweaksSection(); break;
@@ -2615,6 +2634,253 @@ public sealed class MainWindow : Window
     }
 
     /// <summary>Game-wide augmentations — the Pandora-port QoL toggles.</summary>
+
+    /// <summary>
+    /// The retainer settings manager: every plan in one place, so a retainer can be set up without being at
+    /// a bell. The board is the working surface (actions, the ranked venture list); this is where the
+    /// decisions behind those actions are made — and where a retainer can be set up long before it is out.
+    /// </summary>
+    private void DrawRetainersSection()
+    {
+        DrawPageHeader("Retainers", "who runs what — modes, the farm list, and the two surfaces");
+
+        var rows = _retainers.Read(DateTime.UtcNow);
+        var ventures = _retainerPlanner.Ventures;
+        var targets = _retainerPlanner.FarmTargets();
+        var prices = _retainerPlanner.Prices();
+
+        DrawStatusLine($"{rows.Count} retainers · {rows.Count(RetainerReady)} ready · {ventures.Count} ventures known"
+                       + $" · {prices.Count(p => p.Value > 0)} item prices known");
+        DrawStatusLine($"reader: {_retainers.Status} · catalog: {_retainerPlanner.Status}", CharonTheme.TextDisabled);
+        ImGui.Spacing();
+
+        using (var group = SettingsGroup.Begin("Surfaces"))
+        {
+            var board = _config.RetainerWindowVisible;
+            if (group.Toggle("Retainer board", "The standalone window: a row per retainer with its actions, and the "
+                                               + "full venture list ranked by what each venture pays per hour.",
+                    ref board))
+            {
+                _config.RetainerWindowVisible = board;
+                _save();
+            }
+
+            var overlay = _config.RetainerOverlayEnabled;
+            if (group.Toggle("At the bell", "A panel beside the game's retainer list: what each retainer is doing, "
+                                            + "what it will be sent on, and Send/Collect on the spot. It exists only "
+                                            + "while the list is open, so it cannot appear uninvited.",
+                    ref overlay))
+            {
+                _config.RetainerOverlayEnabled = overlay;
+                _save();
+            }
+
+            group.Row("Open the board", "Same window, opened from here instead of the bell.", 92f, () =>
+            {
+                if (Buttons.Action("Open", true, 92f))
+                    _openRetainerBoard();
+            });
+        }
+
+        using (var group = SettingsGroup.Begin("Auto assign"))
+        {
+            group.Row("Default mode", "What a retainer with no mode of its own does. Off by default: nothing is sent "
+                                      + "anywhere until you say so — per retainer, or here.", 268f, () =>
+            {
+                var current = DefaultModeIndex(_retainerPlanner.DefaultMode);
+                var picked = Segmented.Draw(["best it can do", "farm list only", "off"], current,
+                    "best it can do: the highest gil/hour this retainer qualifies for today.\n"
+                    + "farm list only: whatever the farm list asks for, and nothing else.");
+                if (picked != current)
+                {
+                    _retainerPlanner.SetDefaultMode(picked switch
+                    {
+                        0 => VentureAssignment.BestValue,
+                        1 => VentureAssignment.FromFarm,
+                        _ => VentureAssignment.Off,
+                    });
+                }
+            });
+
+            group.Note("A mode decides WHAT gets chosen when a send happens — it never sends anyone out. "
+                       + "Every send is a button: one retainer at a time, one click per tick, Stop always reachable.");
+        }
+
+        Styling.SectionLabel("Per retainer");
+        Styling.VSpace(2f);
+
+        if (rows.Count == 0)
+        {
+            Styling.Text(_retainers.Loaded ? "No retainers on this character." : _retainers.Status,
+                CharonTheme.TextDisabled);
+            ImGui.Spacing();
+            return;
+        }
+
+        if (ImGui.BeginTable("retainerSettings", 5,
+                ImGuiTableFlags.BordersInnerV | ImGuiTableFlags.RowBg | ImGuiTableFlags.SizingFixedFit))
+        {
+            ImGui.TableSetupColumn("Retainer", ImGuiTableColumnFlags.WidthFixed, 112f);
+            ImGui.TableSetupColumn("Job", ImGuiTableColumnFlags.WidthFixed, 64f);
+            ImGui.TableSetupColumn("Mode", ImGuiTableColumnFlags.WidthFixed, 196f);
+            ImGui.TableSetupColumn("Runs next", ImGuiTableColumnFlags.WidthStretch);
+            ImGui.TableSetupColumn("##best", ImGuiTableColumnFlags.WidthFixed, 62f);
+            ImGui.TableHeadersRow();
+
+            foreach (var row in rows)
+            {
+                var key = _retainerPlanner.Key(_localContentId(), row.Name);
+                var mode = _retainerPlanner.Mode(key);
+                var option = _retainerPlanner.Resolve(row, key);
+                var profile = _retainerPlanner.Profile(row);
+
+                ImGui.TableNextRow();
+
+                ImGui.TableNextColumn();
+                Styling.Text(row.Name, CharonTheme.TextSecondary);
+
+                ImGui.TableNextColumn();
+                Styling.Text(profile.Job.Length > 0 ? $"{profile.Job} {row.Level}" : row.Level.ToString(),
+                    CharonTheme.TextDim);
+
+                ImGui.TableNextColumn();
+                var index = ModeIndex(mode);
+                var picked = Segmented.Draw(["best", "pick", "farm", "off"], index,
+                    "best — the highest gil/hour this retainer qualifies for.\n"
+                    + "pick — one venture, chosen in the card below.\n"
+                    + "farm — only what the farm list asks for.\n"
+                    + "off — nothing is ever chosen for it.");
+                if (picked != index)
+                {
+                    _retainerPlanner.SetMode(key, picked switch
+                    {
+                        0 => VentureAssignment.BestValue,
+                        1 => VentureAssignment.Picked,
+                        2 => VentureAssignment.FromFarm,
+                        _ => VentureAssignment.Off,
+                    });
+                }
+
+                ImGui.TableNextColumn();
+                Styling.Text(
+                    option != null
+                        ? $"{option.Venture.Name} · x{option.QuantityPerRun}{(option.TierKnown ? string.Empty : "?")}"
+                        : mode == VentureAssignment.Off ? "— off" : "nothing qualifies",
+                    option != null ? CharonTheme.TextDim : CharonTheme.TextMuted);
+
+                ImGui.TableNextColumn();
+                if (Buttons.Action("Best", true, 56f))
+                    _retainerPlanner.SetMode(key, VentureAssignment.BestValue);
+
+                if (ImGui.IsItemHovered())
+                    ImGui.SetTooltip("Send this one on the best it can do");
+            }
+
+            ImGui.EndTable();
+        }
+
+        ImGui.Spacing();
+
+        var picking = rows
+            .Where(r => _retainerPlanner.Mode(_retainerPlanner.Key(_localContentId(), r.Name)) == VentureAssignment.Picked)
+            .ToList();
+
+        if (picking.Count > 0)
+        {
+            using var group = SettingsGroup.Begin("Picked ventures");
+            foreach (var row in picking)
+            {
+                var key = _retainerPlanner.Key(_localContentId(), row.Name);
+                var currentId = _retainerPlanner.Picked(key);
+                var options = VentureCatalog.Rank(_retainerPlanner.Profile(row), ventures, prices)
+                    .Where(o => o.Runnable)
+                    .Take(24)
+                    .ToList();
+
+                group.Row(row.Name, "Only ventures this retainer can actually run, best value first.", 250f, () =>
+                {
+                    var preview = options.FirstOrDefault(o => o.Venture.TaskId == currentId)?.Venture.Name
+                                  ?? (currentId == 0 ? "choose a venture…" : $"venture {currentId}");
+
+                    ImGui.SetNextItemWidth(250f * ImGuiHelpers.GlobalScale);
+                    if (ImGui.BeginCombo($"##pick{key}", preview))
+                    {
+                        foreach (var option in options)
+                        {
+                            if (ImGui.Selectable(
+                                    $"{option.Venture.Name} · x{option.QuantityPerRun}##{option.Venture.TaskId}",
+                                    option.Venture.TaskId == currentId))
+                            {
+                                _retainerPlanner.SetPicked(key, option.Venture.TaskId);
+                            }
+                        }
+
+                        ImGui.EndCombo();
+                    }
+                });
+            }
+
+            group.Note("A blocked venture never appears here: a pick that cannot run is a plan that quietly does nothing.");
+        }
+
+        using (var group = SettingsGroup.Begin("Farm list"))
+        {
+            group.Row("Add an item", "A name or an item id, with an optional wanted count — \"Manganese Ore x500\". "
+                                     + "The board's Farm tab shows who brings what back and how many runs it takes.",
+                250f, () =>
+                {
+                    ImGui.SetNextItemWidth(186f * ImGuiHelpers.GlobalScale);
+                    ImGui.InputTextWithHint("##farmAddMain", "item or id…", ref _retainerFarmInput, 96);
+                    ImGui.SameLine();
+                    if (Buttons.Action("Add", _retainerFarmInput.Trim().Length > 0, 56f))
+                    {
+                        _retainerPlanner.AddFarmTarget(_retainerFarmInput);
+                        _retainerFarmInput = string.Empty;
+                    }
+                });
+
+            foreach (var target in targets)
+            {
+                var label = target.Name.Length > 0 ? target.Name : $"item {target.ItemId}";
+                group.Row(label, target.Wanted is { } wanted ? $"{wanted:N0} wanted" : null, 28f, () =>
+                {
+                    if (ImGui.SmallButton($"✕##rmMain{target.ItemId}"))
+                        _retainerPlanner.RemoveFarmTarget(target);
+                });
+            }
+
+            group.Note(targets.Count == 0
+                ? "Nothing on the farm list — that is the whole item-location database question answered by the "
+                  + "game's own sheets, which is why an item only has to be named here."
+                : $"{targets.Count} item(s). Nobody is sent anywhere by this list: it decides what a send chooses.");
+        }
+
+        ImGui.Spacing();
+        DrawStatusLine($"Retainers: {_retainerPlanner.Status} · {_ventureRunner.Status}", CharonTheme.TextDisabled);
+    }
+
+    /// <summary>The side-of-the-sidebar index for a mode, in the order the segmented control shows them.</summary>
+    private static int ModeIndex(VentureAssignment mode) => mode switch
+    {
+        VentureAssignment.BestValue => 0,
+        VentureAssignment.Picked => 1,
+        VentureAssignment.FromFarm => 2,
+        _ => 3,
+    };
+
+    /// <summary>Picked has nothing to pick as a global default, so it reads as off here.</summary>
+    private static int DefaultModeIndex(VentureAssignment mode) => mode switch
+    {
+        VentureAssignment.BestValue => 0,
+        VentureAssignment.FromFarm => 1,
+        _ => 2,
+    };
+
+    private static bool RetainerReady(RetainerVenture row) =>
+        row.CompleteUtc is { } done && done <= DateTime.UtcNow;
+
+    private int ReadyRetainerCount() => _retainers.Read(DateTime.UtcNow).Count(RetainerReady);
+
     private void DrawTweaksSection()
     {
         DrawPageHeader("Tweaks");
