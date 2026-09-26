@@ -35,6 +35,7 @@ public sealed class AllowanceReader
 
     private string? _addon;
     private bool _loggedMiss;
+    private int _scans;
     private DateTime _lastScanUtc = DateTime.MinValue;
 
     public AllowanceReader(WindowTextDump windows, IPluginLog log)
@@ -94,10 +95,14 @@ public sealed class AllowanceReader
             return;
         }
 
-        if (nowUtc - _lastScanUtc < ScanEvery)
+        // Walking every loaded window is not free, so a search that keeps failing slows down rather than
+        // paying that cost twice a second forever.
+        var every = _scans > 30 ? TimeSpan.FromSeconds(15) : _scans > 10 ? TimeSpan.FromSeconds(6) : ScanEvery;
+        if (nowUtc - _lastScanUtc < every)
             return;
 
         _lastScanUtc = nowUtc;
+        _scans++;
 
         var open = _windows.LoadedAddons(visibleOnly: false);
         LastScanCount = open.Count;

@@ -700,11 +700,12 @@ public sealed class CharonPlugin : IDalamudPlugin
                 var hits = _windowText.Find(term);
                 if (hits.Count == 0)
                 {
-                    var counts = _windowText.TextCounts().Where(c => c.TextNodes > 0).ToList();
-                    _chat.Print($"[Charon] no loaded window shows \"{term}\". "
-                                + $"{counts.Count} window(s) have text right now:");
-                    foreach (var chunk in counts.Take(18).Chunk(3))
-                        _chat.Print("  " + string.Join(" · ", chunk.Select(c => $"{c.Addon} ({c.TextNodes})")));
+                    // Names every loaded window (not just the readable ones) — this is the list that says what
+                    // the window you are looking at is CALLED, which is the other half of the question.
+                    var loaded = _windowText.LoadedAddons(visibleOnly: false);
+                    _chat.Print($"[Charon] no loaded window shows \"{term}\". {loaded.Count} loaded:");
+                    foreach (var chunk in loaded.Chunk(6))
+                        _chat.Print("  " + string.Join(", ", chunk));
                     return;
                 }
 

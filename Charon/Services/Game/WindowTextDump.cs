@@ -106,21 +106,43 @@ public sealed unsafe class WindowTextDump
             if (unit == null || (requireVisible && !unit->IsVisible))
                 return lines;
 
-            // Walk the node TREE rather than UldManager.NodeList: an addon whose rows live in a list component
-            // keeps them as children of that component, and a flat NodeList can come back empty for exactly
-            // those windows (which is what "_ToDoList has 0 text node(s)" was).
+            // Two sources, because a window's text can be on either: the node TREE (components keep their rows
+            // as children) and the flat ULD list (which is 1-based — NodeList[0] is not a node). The typed
+            // accessor does the cast the SDK's own authors intended, instead of a hand comparison against a
+            // type byte, which is what matched almost nothing before.
             var seen = new HashSet<nint>();
-            Walk(unit->RootNode, lines, seen);
+            var types = new Dictionary<byte, int>();
 
-            if (lines.Count == 0)
+            Walk(unit->RootNode, lines, seen, types);
+
+            var list = unit->UldManager.NodeList;
+            var count = unit->UldManager.NodeListCount;
+            for (var i = 1; i <= count; i++)
             {
-                LastDiagnostics = $"{addonName}: root={(unit->RootNode == null ? "null" : "ok")}, "
-                                   + $"nodeList={unit->UldManager.NodeListCount} entries, 0 text nodes in the tree";
+                var node = list[i];
+                if (node == null || !seen.Add((nint)node))
+                    continue;
+
+                var t = (byte)node->Type;
+                types[t] = types.TryGetValue(t, out var seenCount) ? seenCount + 1 : 1;
+
+                var textNode = node->GetAsAtkTextNode();
+                if (textNode == null)
+                    continue;
+
+                var text = ReadText(textNode);
+                if (text.Length > 0)
+                    lines.Add((lines.Count, node->ScreenX, node->ScreenY, text));
             }
-            else
-            {
-                LastDiagnostics = $"{addonName}: {lines.Count} text node(s)";
-            }
+
+            var histogram = string.Join(", ", types.OrderByDescending(kv => kv.Value)
+                .Take(6)
+                .Select(kv => $"{kv.Key}x{kv.Value}"));
+
+            LastDiagnostics = lines.Count == 0
+                ? $"{addonName}: root={(unit->RootNode == null ? "null" : "ok")}, "
+                  + $"uldList={count}, treeNodes={seen.Count}, types [{histogram}], 0 text nodes read"
+                : $"{addonName}: {lines.Count} text node(s) from {seen.Count} node(s), types [{histogram}]";
         }
         catch (Exception ex)
         {
@@ -132,22 +154,33 @@ public sealed unsafe class WindowTextDump
     }
 
     /// <summary>Depth-first over ChildNode / NextSiblingNode — the same shape the client itself walks.</summary>
-    private static void Walk(AtkResNode* node, List<(int, float, float, string)> lines, HashSet<nint> seen)
+    private static void Walk(
+        AtkResNode* node,
+        List<(int, float, float, string)> lines,
+        HashSet<nint> seen,
+        Dictionary<byte, int> types)
     {
         while (node != null)
         {
             if (!seen.Add((nint)node))
                 return; // a cycle here would spin forever, and this must never do that
 
-            if (node->Type == NodeType.Text)
+            var t = (byte)node->Type;
+            types[t] = types.TryGetValue(t, out var count) ? count + 1 : 1;
+
+            // The typed accessor, not a hand comparison against the type byte: "== Text" matched only two
+            // windows in the whole client (LoadingTips and _TextError), and the histogram in the diagnostics
+            // reports what those bytes actually are rather than assuming.
+            var textNode = node->GetAsAtkTextNode();
+            if (textNode != null)
             {
-                var text = ReadText((AtkTextNode*)node);
+                var text = ReadText(textNode);
                 if (text.Length > 0)
                     lines.Add((lines.Count, node->ScreenX, node->ScreenY, text));
             }
 
             if (node->ChildNode != null)
-                Walk(node->ChildNode, lines, seen);
+                Walk(node->ChildNode, lines, seen, types);
 
             node = node->NextSiblingNode;
         }
