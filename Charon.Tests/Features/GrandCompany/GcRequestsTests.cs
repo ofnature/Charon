@@ -27,9 +27,9 @@ public class GcRequestsTests
         ]);
 
         Assert.Equal(3, snapshot.Entries.Count);
-        Assert.Equal(6, snapshot.Total);
-        Assert.Single(snapshot.Supply);
-        Assert.Equal(2, snapshot.Provisioning.Count);
+        Assert.Equal(6, snapshot.TotalUnits());
+        Assert.Single(snapshot.SupplyRows());
+        Assert.Equal(2, snapshot.ProvisioningRows().Count);
     }
 
     /// <summary>
@@ -52,6 +52,21 @@ public class GcRequestsTests
 
         Assert.Single(snapshot.Entries);
         Assert.Equal(2u, snapshot.Entries[0].ItemId);
+    }
+
+    /// <summary>
+    /// A number the company could not have asked for is a bad read of the agent's rows (they are only valid once
+    /// the window has finished setting up), so it is dropped instead of persisted as demand — which is also what
+    /// overflowed a Total during a config save.
+    /// </summary>
+    [Fact]
+    public void AnImpossibleRequestIsNotDemand()
+    {
+        var snapshot = GcRequests.Build("123", Now, null, [Entry(1, 1), Entry(2, int.MaxValue), Entry(3, -5)]);
+
+        Assert.Single(snapshot.Entries);
+        Assert.Equal(1u, snapshot.Entries[0].ItemId);
+        Assert.Equal(1, snapshot.TotalUnits());
     }
 
     /// <summary>What still has to be made or gathered — the number the crafter side actually needs.</summary>
@@ -114,18 +129,28 @@ public class GcRequestsTests
     }
 
     /// <summary>
-    /// A snapshot is persisted in the plugin config, so it has to survive being written and read back — a shape
-    /// the serializer cannot round-trip would drop the day's list on the next reload, and look like it was never
-    /// taken rather than like a failure.
+    /// A snapshot is persisted in the plugin config, so it has to survive being written and read back — and by
+    /// NEWTONSOFT, which is what Dalamud's config save uses (System.Text.Json is only for the IPC payload).
+    /// Testing the wrong serializer is how a throwing computed property reached a live config save.
     /// </summary>
     [Fact]
-    public void ASnapshotSurvivesAConfigRoundTrip()
+    public void ASnapshotSurvivesTheSerializersTheConfigActuallyUses()
     {
         var before = GcRequests.Build("123", Now, Now.AddHours(3),
         [
             Entry(36165, 20, GcMissionKind.Provisioning, "BTN"),
             Entry(5825, 1),
         ]);
+
+        // Newtonsoft: the config path. It serializes public GETTERS, so any derived property on this type gets
+        // evaluated mid-save — which is why there are none.
+        var fromConfig = Newtonsoft.Json.JsonConvert.DeserializeObject<GcRequestSnapshot>(
+            Newtonsoft.Json.JsonConvert.SerializeObject(before));
+
+        Assert.NotNull(fromConfig);
+        Assert.Equal(before.Entries.Count, fromConfig!.Entries.Count);
+        Assert.Equal(before.Entries[0].ItemId, fromConfig.Entries[0].ItemId);
+        Assert.Equal(before.TotalUnits(), fromConfig.TotalUnits());
 
         var after = GcRequests.FromJson(System.Text.Json.JsonSerializer.Serialize(before));
 

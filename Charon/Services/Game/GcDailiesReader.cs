@@ -171,6 +171,17 @@ public sealed unsafe class GcDailiesReader
                 // The name comes from the item sheet, not from the row's own string: this struct holds its
                 // name as UI text (payload-coded), which renders as boxes, and the sheet is also what the
                 // rest of Charon shows for an item id.
+                // The agent's rows are only meaningful once its window has finished setting up: a request count
+                // the company could never make means this row was read too early (which is what produced numbers
+                // that overflowed a total during a config save). Skip it and say so, rather than carry it into the
+                // page where it would read as a real request.
+                if (row.NumRequested is < 0 or > GcRequests.MaxRequested)
+                {
+                    _log.Debug("[GC] row read before the board was ready, skipped: pos={0} id={1} requested={2}",
+                        row.Position, row.ItemId, row.NumRequested);
+                    continue;
+                }
+
                 var name = _sheet.ItemName(row.ItemId);
 
                 missions.Add(new GcDailyMission(

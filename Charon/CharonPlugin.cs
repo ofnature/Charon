@@ -679,7 +679,18 @@ public sealed class CharonPlugin : IDalamudPlugin
             return null;
 
         _config.GcRequests[snapshot.Character] = snapshot;
-        SaveConfig();
+
+        try
+        {
+            SaveConfig();
+        }
+        catch (Exception ex)
+        {
+            // The snapshot is still usable in memory; a config write that fails must not kill the frame that
+            // asked for it (which is exactly how a serialization bug surfaced last time).
+            _log.Error(ex, "[GC] the request list could not be saved");
+        }
+
         return snapshot;
     }
 

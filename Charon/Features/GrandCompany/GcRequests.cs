@@ -25,15 +25,20 @@ public sealed record GcRequestSnapshot(
     DateTime? RolloverUtc,
     List<GcRequestEntry> Entries)
 {
+    // NOTHING DERIVED IS A PROPERTY on this type. Dalamud persists config with Newtonsoft, which serializes
+    // every public getter — including read-only ones — and it does NOT honour System.Text.Json's [JsonIgnore].
+    // A computed `Total` therefore got evaluated during a save, and an int Sum threw on overflow, taking the
+    // whole draw frame down with it. Methods cannot be serialized by mistake, and a long sum cannot overflow on
+    // numbers that came from a 32-bit field. Both mistakes were mine, twice over.
+
     /// <summary>Total units the company asked for across every row.</summary>
-    public int Total => Entries.Sum(e => e.Requested);
+    public long TotalUnits() => Entries.Sum(e => (long)e.Requested);
 
     /// <summary>Crafts to make (Supply) and things to gather (Provisioning) — the split a crafter cares about.</summary>
-    [JsonIgnore]
-    public IReadOnlyList<GcRequestEntry> Supply => Entries.Where(e => e.Kind == GcMissionKind.Supply).ToList();
+    public IReadOnlyList<GcRequestEntry> SupplyRows() =>
+        Entries.Where(e => e.Kind == GcMissionKind.Supply).ToList();
 
-    [JsonIgnore]
-    public IReadOnlyList<GcRequestEntry> Provisioning =>
+    public IReadOnlyList<GcRequestEntry> ProvisioningRows() =>
         Entries.Where(e => e.Kind == GcMissionKind.Provisioning).ToList();
 }
 
@@ -45,6 +50,13 @@ public static class GcRequests
 {
     /// <summary>With no rollover time to go on, a snapshot older than this is treated as from a previous day.</summary>
     public static readonly TimeSpan AssumeStaleAfter = TimeSpan.FromHours(22);
+
+    /// <summary>
+    /// The largest request the company makes in one go. The board asks for single items up to a couple of dozen;
+    /// a bigger number is a bad READ of the agent (its rows are only valid once the window has finished setting
+    /// up), not demand — so it is dropped rather than persisted as if the company wanted it.
+    /// </summary>
+    public const int MaxRequested = 9999;
 
     /// <summary>
     /// A snapshot from the rows the board was showing. Rows with no item or nothing requested are dropped, and a
@@ -68,7 +80,7 @@ public static class GcRequests
             capturedUtc,
             rolloverUtc,
             entries
-                .Where(e => e.ItemId != 0 && e.Requested > 0)
+                .Where(e => e.ItemId != 0 && e.Requested is > 0 and <= MaxRequested)
                 .GroupBy(e => e.ItemId)
                 .Select(g => g.OrderByDescending(e => e.Requested).First())
                 .OrderBy(e => e.Kind)
@@ -121,7 +133,7 @@ public static class GcRequests
                 ? $" — rolls over {rollover:ddd HH:mm}"
                 : string.Empty;
 
-        return $"{snapshot.Entries.Count} item(s), {snapshot.Total} unit(s), captured {when}{state}";
+        return $"{snapshot.Entries.Count} item(s), {snapshot.TotalUnits()} unit(s), captured {when}{state}";
     }
 
     /// <summary>
@@ -148,7 +160,7 @@ public static class GcRequests
             capturedUtc = snapshot.CapturedUtc.ToString("O"),
             rolloverUtc = snapshot.RolloverUtc?.ToString("O"),
             stale = IsStale(snapshot, nowUtc),
-            total = snapshot.Total,
+            total = snapshot.TotalUnits(),
             items = Demand(snapshot, held).Select(d => new
             {
                 itemId = d.Entry.ItemId,
