@@ -217,6 +217,9 @@ public sealed class CharonPlugin : IDalamudPlugin
     /// <summary>Reads an open window's text so a layout can be RECORDED instead of guessed.</summary>
     private readonly WindowTextDump _windowText;
 
+    /// <summary>In-game feedback for the commands (the log alone is not an answer anyone sees).</summary>
+    private readonly IChatGui _chat;
+
     private readonly RetainerContentsIpc _retainerContentsIpc;
 
     private readonly RetainersWindow _retainersWindow;
@@ -469,6 +472,7 @@ public sealed class CharonPlugin : IDalamudPlugin
 
         _gcDailies = new GcDailiesReader(_retainerContents, _ventureSheet, log);
         _windowText = new WindowTextDump(gameGui, log);
+        _chat = chatGui;
 
         _mainWindow = new MainWindow(_config, SaveConfig, _whitelist, _daedalusIpc, _pillionManager, _inviteManager,
             _healWatch, _groupInvites, _fcChest, _gear, _followManager, ReadRawSeatOccupancy, () => _boardingStatus,
@@ -666,20 +670,41 @@ public sealed class CharonPlugin : IDalamudPlugin
             return;
         }
 
-        // "/charon text <addon>" dumps an open window's text nodes with their positions to the log. This is
-        // how a window layout gets RECORDED: guessing one shipped two wrong reads in a single day (a name
-        // read from the wrong place, a flag nobody had explained), and the game is the only authority.
+        // "/charon text [window]" RECORDS a window instead of guessing its layout: the full dump goes to the
+        // log, the first lines are echoed in chat, and with no argument it lists what windows are open — which
+        // answers "what is this window called?" from the client rather than from a guess.
         if (trimmed.StartsWith("text", StringComparison.OrdinalIgnoreCase))
         {
-            var addon = trimmed[4..].Trim();
-            if (addon.Length == 0)
+            var query = trimmed[4..].Trim();
+            if (query.Length == 0)
             {
-                _log.Information("/charon text <addon name> — dumps that window's text nodes to the log. "
-                                 + "The addon name is usually the window's own title (e.g. Timers, RetainerList).");
+                PrintAddons();
                 return;
             }
 
-            _windowText.Dump(addon);
+            var resolved = _windowText.Resolve(query);
+            if (resolved == null)
+            {
+                _chat.Print($"[Charon] nothing loaded matches \"{query}\". Run /charon text to list the "
+                            + "windows that are open.");
+                return;
+            }
+
+            if (!_windowText.Dump(resolved))
+            {
+                _chat.Print($"[Charon] '{resolved}' is loaded but not visible — open it and run the command again.");
+                return;
+            }
+
+            var dump = _windowText.LastDump;
+            _chat.Print($"[Charon] '{resolved}': {dump.Count} text node(s) — full dump in /xllog");
+
+            // A preview, so the answer is visible without opening a log at all.
+            foreach (var line in dump.Take(8))
+                _chat.Print($"  #{line.Index} y={(int)line.Y} \"{line.Text}\"");
+
+            if (dump.Count > 8)
+                _chat.Print($"  … {dump.Count - 8} more in the log");
             return;
         }
 
@@ -689,6 +714,20 @@ public sealed class CharonPlugin : IDalamudPlugin
     }
 
     private void OpenMainWindow() => _mainWindow.IsOpen = true;
+
+    /// <summary>What the client has loaded right now, so a window's addon name never has to be guessed.</summary>
+    private void PrintAddons()
+    {
+        var visible = _windowText.LoadedAddons(visibleOnly: true);
+
+        _chat.Print($"[Charon] {visible.Count} window(s) open. /charon text <name> dumps one — a fragment "
+                    + "of the name is enough.");
+
+        foreach (var chunk in visible.Chunk(6))
+            _chat.Print("  " + string.Join(", ", chunk));
+
+        _log.Information("[TextDump] visible addons: {0}", string.Join(", ", visible));
+    }
 
     /// <summary>
     /// The board, opened from the main window's Retainers section or the bell overlay's Board button.

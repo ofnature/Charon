@@ -4,21 +4,22 @@ using System.Linq;
 using System.Text;
 using Dalamud.Plugin.Services;
 using Dalamud.Utility;
+using FFXIVClientStructs.FFXIV.Client.UI;
 using FFXIVClientStructs.FFXIV.Component.GUI;
 
 namespace Charon.Services.Game;
 
 /// <summary>
-/// Dumps an open window's text, with positions, to the log.
+/// Dumps an open window's text, with positions, and lists which windows are loaded at all.
 ///
 /// This exists because of a rule this repo already learned the hard way: a window's layout is RECORDED from a
 /// real look, never guessed. Reading a window's rows means knowing which node holds what, and guessing that
-/// produces exactly the class of bug that is invisible in source and obvious in game — a garbled name, a
-/// column read from the wrong field, a flag whose meaning was assumed. Two of those were shipped in one day;
-/// this is the alternative.
+/// produces exactly the class of bug that is invisible in source and obvious in game — a garbled name, a flag
+/// whose meaning was assumed. Two of those shipped in one day; this is the alternative.
 ///
-/// Read-only, and useful for any future window read: open the window, run <c>/charon text &lt;addon&gt;</c>, and
-/// the log has every text node with its coordinates, so the row structure can be seen rather than assumed.
+/// The addon NAME is the other unknown, so it is answered the same way: <see cref="LoadedAddons"/> asks the
+/// client which windows exist right now, so nobody has to guess that the game's Timers window is called
+/// "Timers". Read-only throughout.
 /// </summary>
 public sealed unsafe class WindowTextDump
 {
@@ -29,6 +30,62 @@ public sealed unsafe class WindowTextDump
     {
         _gameGui = gameGui;
         _log = log;
+    }
+
+    /// <summary>The last dump, so a caller can echo a preview into chat instead of only into the log.</summary>
+    public IReadOnlyList<(int Index, float X, float Y, string Text)> LastDump { get; private set; } = [];
+
+    public string LastDumpAddon { get; private set; } = string.Empty;
+
+    /// <summary>Every window the client currently has loaded, optionally only the visible ones.</summary>
+    public IReadOnlyList<string> LoadedAddons(bool visibleOnly)
+    {
+        var names = new List<string>();
+
+        try
+        {
+            var stage = AtkStage.Instance();
+            if (stage == null)
+                return names;
+
+            var list = stage->RaptureAtkUnitManager->AtkUnitManager.AllLoadedUnitsList;
+            for (var i = 0; i < list.Count; i++)
+            {
+                var unit = list.Entries[i].Value;
+                if (unit == null)
+                    continue;
+
+                if (visibleOnly && !unit->IsVisible)
+                    continue;
+
+                var name = unit->NameString.ToString();
+                if (name.Length > 0)
+                    names.Add(name);
+            }
+        }
+        catch (Exception ex)
+        {
+            _log.Debug("[TextDump] the addon list could not be read: {0}", ex.Message);
+        }
+
+        return names.Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(n => n, StringComparer.OrdinalIgnoreCase).ToList();
+    }
+
+    /// <summary>
+    /// Turn what a person would type into the client's own addon name: exact match first, then the first
+    /// loaded window containing the text. Typing "timer" should find "Timers" without anyone having to know.
+    /// </summary>
+    public string? Resolve(string nameOrFragment)
+    {
+        var loaded = LoadedAddons(visibleOnly: false);
+        if (loaded.Count == 0)
+            return null;
+
+        var exact = loaded.FirstOrDefault(n => n.Equals(nameOrFragment, StringComparison.OrdinalIgnoreCase));
+        if (exact != null)
+            return exact;
+
+        return loaded.FirstOrDefault(n => n.Contains(nameOrFragment, StringComparison.OrdinalIgnoreCase));
     }
 
     /// <summary>Every text node in the addon, in node order, with its screen position.</summary>
@@ -66,22 +123,33 @@ public sealed unsafe class WindowTextDump
         return lines;
     }
 
-    /// <summary>Log a window's text so it can be read back from /xllog — the recording half of the rule.</summary>
+    /// <summary>Record a window's text: full detail to the log, and the lines kept for a chat preview.</summary>
     public bool Dump(string addonName)
     {
         var unit = (AtkUnitBase*)_gameGui.GetAddonByName(addonName).Address;
         if (unit == null || !unit->IsVisible)
         {
+            LastDump = [];
+            LastDumpAddon = addonName;
             _log.Information("[TextDump] '{0}' is not open — open it and run the command again.", addonName);
             return false;
         }
 
-        var lines = Read(addonName);
-        var report = new StringBuilder();
-        report.Append("[TextDump] '").Append(addonName).Append("' has ").Append(lines.Count).Append(" text node(s):");
+        // Ordered by row then column, so the table structure is visible in the log as rows rather than as
+        // whatever order the node tree happens to be in.
+        var ordered = Read(addonName)
+            .OrderBy(l => Math.Round(l.Y / 4f))
+            .ThenBy(l => l.X)
+            .ToList();
 
-        // One line per node, ordered by row then column so the table structure is visible in the log.
-        foreach (var line in lines.OrderBy(l => Math.Round(l.Y / 4f)).ThenBy(l => l.X))
+        LastDump = ordered;
+        LastDumpAddon = addonName;
+
+        var report = new StringBuilder();
+        report.Append("[TextDump] '").Append(addonName).Append("' has ").Append(ordered.Count)
+            .Append(" text node(s):");
+
+        foreach (var line in ordered)
         {
             report.Append('\n').Append("  #").Append(line.Index)
                 .Append("  x=").Append((int)line.X)
@@ -92,16 +160,6 @@ public sealed unsafe class WindowTextDump
         _log.Information("{0}", report.ToString());
         return true;
     }
-
-    /// <summary>The names of every visible addon that currently has text — for when the addon name is the unknown.</summary>
-    public IReadOnlyList<string> VisibleAddonNames(IEnumerable<string> candidates) =>
-        candidates
-            .Where(name =>
-            {
-                var unit = (AtkUnitBase*)_gameGui.GetAddonByName(name).Address;
-                return unit != null && unit->IsVisible;
-            })
-            .ToList();
 
     private static string ReadText(AtkTextNode* node)
     {
