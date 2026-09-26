@@ -344,6 +344,30 @@ public sealed class CharonConfig : IPluginConfiguration
     /// <summary>Per-retainer chosen venture (RetainerTask row id), same key.</summary>
     public Dictionary<string, uint> RetainerPickedVenture { get; set; } = new();
 
+    /// <summary>One stack as last seen in a retainer's bags. High quality is its own stack, never folded in.</summary>
+    public sealed class RetainerStack
+    {
+        public uint ItemId { get; set; }
+        public int Qty { get; set; }
+        public bool Hq { get; set; }
+    }
+
+    /// <summary>
+    /// A retainer's bags as last SEEN, with the timestamp that makes the staleness visible. The client has
+    /// no retainer inventory until that retainer's window has been opened at a bell, so this is a snapshot
+    /// by nature: it fills as retainers are opened, and an absent entry means "never looked" —
+    /// NOT "empty". Other plugins read it over IPC, so that distinction is part of the contract.
+    /// </summary>
+    public sealed class RetainerSnapshot
+    {
+        public DateTime CapturedUtc { get; set; }
+        public int Gil { get; set; }
+        public List<RetainerStack> Stacks { get; set; } = new();
+    }
+
+    /// <inheritdoc cref="RetainerSnapshot"/>
+    public Dictionary<string, RetainerSnapshot> RetainerContents { get; set; } = new();
+
     /// <summary>
     /// When each character (by content id) last donated at the Doman Enclave — or was OBSERVED
     /// with an empty weekly budget, which counts the same. Checked against the Tuesday 08:00 UTC
