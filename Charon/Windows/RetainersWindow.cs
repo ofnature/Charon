@@ -204,7 +204,7 @@ public sealed class RetainersWindow : Window
         }
 
         ImGui.Spacing();
-        ImGui.TextColored(CharonTheme.TextDisabled, _runner.Status);
+        ImGui.TextColored(CharonTheme.TextDisabled, $"runner: {_runner.Status}");
     }
 
     private void DrawToolbar(IReadOnlyList<RetainerVenture> rows)

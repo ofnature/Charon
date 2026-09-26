@@ -180,8 +180,10 @@ public sealed unsafe class RetainerBellOverlay : Window
             ImGui.SameLine(330f);
             if (Buttons.Action(ready ? "Collect" : "Collect##bellidle", ready, 68f))
             {
-                _runner.Plan(0);
-                _runner.Arm();
+                // THAT retainer: the same targeted cycle the board's row button runs — open it by its own index,
+                // collect, send it back out on the plan, then close it. At the bell this is the whole point of
+                // pressing Collect on a row rather than the button at the top.
+                _runner.ArmFor(row.Index, _planner.PlanTaskId(row, key));
             }
 
             ImGui.SameLine();
@@ -193,7 +195,7 @@ public sealed unsafe class RetainerBellOverlay : Window
         }
 
         ImGui.Spacing();
-        ImGui.TextColored(CharonTheme.TextDisabled, _runner.Status);
+        ImGui.TextColored(CharonTheme.TextDisabled, $"runner: {_runner.Status}");
     }
 
     private static string Describe(RetainerVenture row)
