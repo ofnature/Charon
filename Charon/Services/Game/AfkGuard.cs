@@ -32,7 +32,11 @@ public sealed unsafe class AfkGuard
     private const uint WmKeyUp = 0x0101;
     private const int VkLeftControl = 162;
 
-    [DllImport("user32.dll", CharSet = CharSet.Auto, ExactSpelling = true)]
+    // PostMessageW by name: user32 exports only the W and A forms, and with ExactSpelling nothing looks for
+    // them -- the old declaration threw EntryPointNotFoundException on every call. 2026-09-26: once the guard
+    // started nudging it threw every frame, 46,000 times per client, and filled dalamud.log's 100 MB in about
+    // thirteen minutes, after which Dalamud logged nothing at all.
+    [DllImport("user32.dll", EntryPoint = "PostMessageW")]
     private static extern bool PostMessage(nint hWnd, uint msg, nint wParam, nint lParam);
 
     private readonly Func<bool> _enabled;
@@ -114,11 +118,25 @@ public sealed unsafe class AfkGuard
         if (_lastNudgeUtc != null && IdleSeconds >= _timerAtLastNudge)
             _stuckNudges++;
 
-        PostMessage(window, WmKeyDown, VkLeftControl, 0);
-        PostMessage(window, WmKeyUp, VkLeftControl, 0);
-
+        // Stamp the attempt before making it, so a nudge that fails still starts the policy's wait instead of
+        // being retried on the very next frame.
         _lastNudgeUtc = nowUtc;
         _timerAtLastNudge = IdleSeconds;
+
+        try
+        {
+            PostMessage(window, WmKeyDown, VkLeftControl, 0);
+            PostMessage(window, WmKeyUp, VkLeftControl, 0);
+        }
+        catch (Exception ex)
+        {
+            // Give up for the session and say why, once -- never an exception per frame.
+            Status = $"cannot send the keystroke ({ex.GetType().Name}) — cannot stay logged in";
+            _stuckNudges = AfkGuardPolicy.NudgesBeforeGivingUp;
+            _log.Warning(ex, "[AfkGuard] nudge failed; giving up for this session");
+            return;
+        }
+
         Nudges++;
 
         _log.Debug("[AfkGuard] nudge {0} at {1:0}s idle", Nudges, IdleSeconds);
