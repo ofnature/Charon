@@ -219,6 +219,9 @@ public sealed class CharonPlugin : IDalamudPlugin
     /// <summary>Keeps an unattended client logged in — see the class for why a busy box is still idle.</summary>
     private readonly AfkGuard _afkGuard;
 
+    /// <summary>The board's last pushed visibility: a user close is a change to RECORD, not to undo.</summary>
+    private bool _retainerWindowShown;
+
     /// <summary>
     /// Market value per item id, for the venture ranking. Not wired to a feed yet: 0 means "unknown", and
     /// the catalog then orders by experience per hour instead of by gil — a real answer, not a broken one.
@@ -517,9 +520,12 @@ public sealed class CharonPlugin : IDalamudPlugin
         _retainersWindow = new RetainersWindow(
             _retainers,
             _retainerPlanner,
+            _retainerContents,
             _ventureRunner,
             () => _objectTable.LocalPlayer?.Name.TextValue ?? string.Empty,
             () => _jobLevels.LocalContentId);
+        _retainersWindow.IsOpen = _config.RetainerWindowVisible; // Dalamud windows default to OPEN
+        _retainerWindowShown = _config.RetainerWindowVisible;
         _windowSystem.AddWindow(_retainersWindow);
 
         _retainerBell = new RetainerBellOverlay(
@@ -829,14 +835,17 @@ public sealed class CharonPlugin : IDalamudPlugin
         // that is open, never a panel that lingers over the world.
         _retainerBell.IsOpen = _config.RetainerOverlayEnabled && _ventureRunner.RetainerListOpen;
 
-        // Two-way and edge-triggered, like the spawn window: forcing IsOpen from the config every tick is
-        // what makes a window impossible to close.
-        if (_config.RetainerWindowVisible != _retainersWindow.IsOpen)
+        // Two-way and EDGE-triggered, the spawn-window pattern exactly: the first branch compares the
+        // config against the state WE last pushed, not against IsOpen. Comparing against IsOpen makes the
+        // user's close look like a state change to push back, and the window reopens the instant it is shut.
+        if (_config.RetainerWindowVisible != _retainerWindowShown)
         {
             _retainersWindow.IsOpen = _config.RetainerWindowVisible;
+            _retainerWindowShown = _config.RetainerWindowVisible;
         }
-        else if (_retainersWindow.IsOpen != _config.RetainerWindowVisible)
+        else if (_retainersWindow.IsOpen != _retainerWindowShown)
         {
+            _retainerWindowShown = _retainersWindow.IsOpen;
             _config.RetainerWindowVisible = _retainersWindow.IsOpen;
             SaveConfig();
         }

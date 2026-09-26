@@ -28,6 +28,7 @@ public sealed class RetainersWindow : Window
 {
     private readonly RetainerReader _retainers;
     private readonly RetainerPlanner _planner;
+    private readonly RetainerContentsReader _contents;
     private readonly VentureRunner _runner;
     private readonly Func<string> _characterName;
     private readonly Func<ulong> _contentId;
@@ -35,11 +36,13 @@ public sealed class RetainersWindow : Window
     private int _tab;
     private string _search = string.Empty;
     private string _farmInput = string.Empty;
+    private string _contentsFilter = string.Empty;
     private string _expanded = string.Empty;
 
     public RetainersWindow(
         RetainerReader retainers,
         RetainerPlanner planner,
+        RetainerContentsReader contents,
         VentureRunner runner,
         Func<string> characterName,
         Func<ulong> contentId)
@@ -47,6 +50,7 @@ public sealed class RetainersWindow : Window
     {
         _retainers = retainers;
         _planner = planner;
+        _contents = contents;
         _runner = runner;
         _characterName = characterName;
         _contentId = contentId;
@@ -68,10 +72,12 @@ public sealed class RetainersWindow : Window
         DrawHeader(rows);
         DrawTabs();
 
-        if (_tab == 0)
-            DrawBoard(rows, ventures);
-        else
-            DrawFarm(rows, ventures);
+        switch (_tab)
+        {
+            case 0: DrawBoard(rows, ventures); break;
+            case 1: DrawFarm(rows, ventures); break;
+            default: DrawContents(rows); break;
+        }
     }
 
     private void DrawHeader(IReadOnlyList<RetainerVenture> rows)
@@ -98,6 +104,10 @@ public sealed class RetainersWindow : Window
         ImGui.SameLine();
         if (ImGui.Button(_tab == 1 ? "[ Farm ]" : "Farm##tab"))
             _tab = 1;
+
+        ImGui.SameLine();
+        if (ImGui.Button(_tab == 2 ? "[ Contents ]" : "Contents##tab"))
+            _tab = 2;
 
         ImGui.SameLine();
         ImGui.TextColored(CharonTheme.TextMuted, _planner.Status);
@@ -333,6 +343,136 @@ public sealed class RetainersWindow : Window
             + $"{_planner.Prices().Count(p => p.Value > 0)} of {_planner.Prices().Count} item prices known.");
         ImGui.Unindent(8f * ImGuiHelpers.GlobalScale);
     }
+
+
+    // ---------------------------------------------------------------- contents ---
+
+    /// <summary>
+    /// What each retainer holds, as last seen — the store other plugins read over IPC, shown so it can be
+    /// judged: every line carries how old it is, and a retainer nobody has opened is listed as UNKNOWN
+    /// rather than drawn as empty, because that is the difference that matters when you are hunting materials.
+    /// </summary>
+    private void DrawContents(IReadOnlyList<RetainerVenture> rows)
+    {
+        if (_contents.Busy)
+        {
+            if (Buttons.Action("Stop", true, 90f, CharonTheme.AccentRose))
+                _contents.Stop("stopped");
+
+            ImGui.SameLine();
+            ImGui.TextColored(CharonTheme.TextDim, _contents.Status);
+        }
+        else
+        {
+            if (Buttons.Action("Refresh all", true, 110f))
+                _contents.ArmRefresh();
+
+            ImGui.SameLine();
+            ImGui.TextColored(CharonTheme.TextMuted, "open each retainer at a bell — Charon never picks one for you");
+        }
+
+        ImGui.SameLine();
+        ImGui.SetNextItemWidth(150f);
+        ImGui.InputTextWithHint("##contentsSearch", "filter items…", ref _contentsFilter, 64);
+        ImGui.Spacing();
+
+        var bags = _contents.Bags();
+        var now = DateTime.UtcNow;
+
+        if (bags.Count == 0 && rows.Count == 0)
+        {
+            ImGui.TextColored(CharonTheme.TextDisabled, _retainers.Status);
+            return;
+        }
+
+        if (bags.Count == 0)
+            ImGui.TextColored(CharonTheme.TextMuted,
+                "Nothing recorded yet: open a retainer at a bell and its bags appear here.");
+
+        foreach (var row in rows)
+        {
+            var bag = bags.FirstOrDefault(b => b.Name.Equals(row.Name, StringComparison.OrdinalIgnoreCase));
+            var key = Key(row.Name);
+
+            if (bag == null)
+            {
+                ImGui.TextColored(CharonTheme.TextMuted, $"{row.Name} — unknown (never opened this session)");
+                ImGui.SameLine();
+                ImGui.TextColored(CharonTheme.TextDisabled, _planner.Mode(key) == VentureAssignment.Off
+                    ? string.Empty
+                    : string.Empty);
+                continue;
+            }
+
+            var age = now - bag.CapturedUtc;
+            var opens = ImGui.TreeNodeEx($"{row.Name}##contents{key}",
+                ImGuiTreeNodeFlags.SpanAvailWidth,
+                $"{row.Name} — {bag.Stacks.Count} stack(s), seen {Describe(age)} ago");
+
+            ImGui.SameLine();
+            ImGui.TextColored(CharonTheme.TextDisabled,
+                $"{bag.Stacks.Where(s => !s.Hq).Sum(s => s.Qty)} normal · {bag.Stacks.Where(s => s.Hq).Sum(s => s.Qty)} HQ");
+
+            if (!opens)
+                continue;
+
+            var stacks = bag.Stacks
+                .Where(s => _contentsFilter.Length == 0
+                            || _planner.ItemName(s.ItemId).Contains(_contentsFilter, StringComparison.OrdinalIgnoreCase))
+                .OrderByDescending(s => s.Hq)
+                .ThenByDescending(s => s.Qty)
+                .ToList();
+
+            if (stacks.Count == 0)
+            {
+                ImGui.TextColored(CharonTheme.TextDisabled,
+                    _contentsFilter.Length == 0 ? "  (empty)" : "  nothing matching the filter");
+            }
+            else if (ImGui.BeginTable($"contentsTable{key}", 3,
+                         ImGuiTableFlags.BordersInnerV | ImGuiTableFlags.RowBg | ImGuiTableFlags.SizingFixedFit))
+            {
+                ImGui.TableSetupColumn("Item", ImGuiTableColumnFlags.WidthStretch);
+                ImGui.TableSetupColumn("Qty", ImGuiTableColumnFlags.WidthFixed, 60f);
+                ImGui.TableSetupColumn("Quality", ImGuiTableColumnFlags.WidthFixed, 60f);
+                ImGui.TableHeadersRow();
+
+                foreach (var stack in stacks)
+                {
+                    ImGui.TableNextRow();
+                    ImGui.TableNextColumn();
+                    Styling.Text(_planner.ItemName(stack.ItemId), CharonTheme.TextSecondary);
+
+                    ImGui.TableNextColumn();
+                    Styling.Text(stack.Qty.ToString("N0"), CharonTheme.TextDim);
+
+                    ImGui.TableNextColumn();
+                    Styling.Text(stack.Hq ? "HQ" : "normal", stack.Hq ? CharonTheme.AccentAmber : CharonTheme.TextMuted);
+                }
+
+                ImGui.EndTable();
+            }
+
+            ImGui.TreePop();
+        }
+
+        ImGui.Spacing();
+        DrawStatus(_contents);
+    }
+
+    private static void DrawStatus(RetainerContentsReader contents)
+    {
+        ImGui.TextColored(CharonTheme.TextDisabled, contents.Status);
+        ImGui.SameLine();
+        ImGui.TextColored(CharonTheme.TextDisabled, $"· last: {contents.LastResult}");
+    }
+
+    private static string Describe(TimeSpan age) => age.TotalMinutes switch
+    {
+        < 2 => "just now",
+        < 90 => $"{age.TotalMinutes:0} min",
+        < 60 * 36 => $"{age.TotalHours:0} h",
+        _ => $"{age.TotalDays:0} days",
+    };
 
     // ------------------------------------------------------------------- farm ---
 

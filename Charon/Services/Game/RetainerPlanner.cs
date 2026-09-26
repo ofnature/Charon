@@ -35,6 +35,9 @@ public sealed class RetainerPlanner
     /// <summary>The sheet reader's status line, for the Debug page: it says whether the catalog is real.</summary>
     public string Status => _sheet.Status;
 
+    /// <summary>An item's display name, for anywhere an item id has to be shown to a person.</summary>
+    public string ItemName(uint itemId) => _sheet.ItemName(itemId);
+
     /// <summary>
     /// Prices per item, rebuilt at most once a minute. A draw asks several times (one per row, plus the open
     /// picker, plus the farm tab) and a market lookup per call would be silly.
