@@ -203,6 +203,22 @@ public sealed class AllowanceReader
                 lines.Add(line);
         }
 
+        // Any label the node walk could not see comes out of the window's value array: the client passes its
+        // rows as values (label, a small int, the value), which is the only place the Timers window's rows are.
+        var pairs = Allowances.Pairs(_windows.ValueTexts);
+        foreach (var label in Allowances.KnownLabels)
+        {
+            if (lines.Any(l => Allowances.IsLabel(l.Label, label)))
+                continue;
+
+            var pair = pairs.FirstOrDefault(p => Allowances.IsLabel(p.Label, label));
+            if (pair.Label is null)
+                continue;
+
+            lines.Add(new AllowanceLine(label, pair.Value, Allowances.Parse(pair.Value),
+                Allowances.Hours(pair.Value), Allowances.Minutes(pair.Value)));
+        }
+
         var signatures = lines.Count(l =>
             Allowances.Signatures.Any(s => Allowances.IsLabel(l.Label, s)));
 

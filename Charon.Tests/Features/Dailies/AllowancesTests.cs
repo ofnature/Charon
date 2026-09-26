@@ -26,6 +26,49 @@ public class AllowancesTests
     ];
 
     /// <summary>
+    /// The Timers window's rows as the client actually passes them to the addon: a label, a small int, then the
+    /// value. Copied from a live dump of ContentsInfo, including the leading spaces it puts on the countdowns.
+    /// </summary>
+    [Fact]
+    public void RowsComeOutOfTheValueArrayLabelIntValue()
+    {
+        (bool IsText, string Text)[] values =
+        [
+            (false, "258079"),
+            (false, "False"),
+            (false, "0"),
+            (true, "Next Leve Allowance"),
+            (false, "0"),
+            (true, " 6:02 Remaining  (9/26 7:00)"),
+            (true, "Next Mission Allowance"),
+            (false, "2"),
+            (true, " 14:02 Remaining  (9/26 15:00)"),
+            (true, "Review the list of items being requested."),
+            (true, "Next Map Allowance"),
+            (false, "1"),
+            (true, "Available Now"),
+        ];
+
+        var pairs = Allowances.Pairs(values);
+
+        Assert.Contains(pairs, p => p.Label == "Next Mission Allowance"
+                                    && p.Value == "14:02 Remaining  (9/26 15:00)");
+        Assert.Contains(pairs, p => p.Label == "Next Leve Allowance"
+                                    && p.Value == "6:02 Remaining  (9/26 7:00)");
+        Assert.Contains(pairs, p => p.Label == "Next Map Allowance" && p.Value == "Available Now");
+    }
+
+    /// <summary>What those value strings parse to — the whole point of reading them.</summary>
+    [Fact]
+    public void AValueRowParsesLikeAnyOtherLine()
+    {
+        Assert.Equal(AllowanceState.Countdown, Allowances.Parse("14:02 Remaining  (9/26 15:00)"));
+        Assert.Equal(14, Allowances.Hours("14:02 Remaining  (9/26 15:00)"));
+        Assert.Equal(2, Allowances.Minutes("14:02 Remaining  (9/26 15:00)"));
+        Assert.Equal(AllowanceState.Available, Allowances.Parse("Available Now"));
+    }
+
+    /// <summary>
     /// "Ventures" must not match the sentence "No ventures in progress." — that loose match is how a scan
     /// accepted a different window as the Timers window and reported three unrelated lines as allowances.
     /// </summary>

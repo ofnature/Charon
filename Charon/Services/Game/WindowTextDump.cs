@@ -40,6 +40,13 @@ public sealed unsafe class WindowTextDump
     /// <summary>The addon's AtkValues, as printable lines — the other place a window keeps its text.</summary>
     public IReadOnlyList<string> AtkValueDump { get; private set; } = [];
 
+    /// <summary>
+    /// The addon's AtkValues in order, each marked as text or not. The Timers window keeps its ROWS here — a
+    /// label, a small int and the row's value — so this is the version a reader needs; <see cref="AtkValueDump"/>
+    /// is the human-readable one.
+    /// </summary>
+    public IReadOnlyList<(bool IsText, string Text)> ValueTexts { get; private set; } = [];
+
     /// <summary>The last dump, so a caller can echo a preview into chat instead of only into the log.</summary>
     public IReadOnlyList<(int Index, float X, float Y, string Text)> LastDump { get; private set; } = [];
 
@@ -208,6 +215,7 @@ public sealed unsafe class WindowTextDump
             var seen = new HashSet<nint>();
             var types = new Dictionary<int, int>();
             LastRowsReached = 0;
+            ValueTexts = [];
 
             Walk(unit->RootNode, lines, seen, types, 0);
 
@@ -235,6 +243,7 @@ public sealed unsafe class WindowTextDump
             // component from them every time the data changes), so the dump reports them too — that is where
             // a row's text lives for windows that have none on the node tree.
             AtkValueDump = DumpAtkValues(unit);
+            ValueTexts = ReadValueTexts(unit);
 
             var componentKinds = types
                 .Where(kv => kv.Key >= 1000)
@@ -266,6 +275,46 @@ public sealed unsafe class WindowTextDump
         }
 
         return lines;
+    }
+
+    /// <summary>Read the value array in order, marking which entries are text.</summary>
+    private List<(bool IsText, string Text)> ReadValueTexts(AtkUnitBase* unit)
+    {
+        var values = new List<(bool IsText, string Text)>();
+
+        try
+        {
+            var count = Math.Min((int)unit->AtkValuesCount, 256);
+            for (var i = 0; i < count; i++)
+            {
+                var value = unit->AtkValues[i];
+                switch (value.Type)
+                {
+                    case AtkValueType.ConstString:
+                    case AtkValueType.String:
+                        values.Add((true, value.String.ToString()));
+                        break;
+
+                    case AtkValueType.Int:
+                        values.Add((false, value.Int.ToString()));
+                        break;
+
+                    case AtkValueType.UInt:
+                        values.Add((false, value.UInt.ToString()));
+                        break;
+
+                    default:
+                        values.Add((false, string.Empty));
+                        break;
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _log.Debug("[TextDump] values unreadable: {0}", ex.Message);
+        }
+
+        return values;
     }
 
     /// <summary>

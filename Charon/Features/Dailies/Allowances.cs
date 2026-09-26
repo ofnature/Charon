@@ -88,6 +88,42 @@ public static class Allowances
     ];
 
     /// <summary>
+    /// Label/value pairs out of the window's value array.
+    ///
+    /// The Timers window's rows arrive here as a text value, then a small int (the row's kind), then the value
+    /// text — verified against a dump of the live window, where those values are literally
+    /// "Next Mission Allowance" / int 2 / " 14:02 Remaining  (9/26 15:00)". So a pair is a text value followed by
+    /// another text value within the next two slots. Extra pairs come out of this (a value followed by the next
+    /// row's label), which costs nothing: a caller only accepts pairs whose label IT recognises.
+    ///
+    /// Pure, so the shape is tested without a client.
+    /// </summary>
+    public static IReadOnlyList<(string Label, string Value)> Pairs(IReadOnlyList<(bool IsText, string Text)> values)
+    {
+        var pairs = new List<(string Label, string Value)>();
+
+        for (var i = 0; i < values.Count; i++)
+        {
+            if (!values[i].IsText || values[i].Text.Length == 0)
+                continue;
+
+            for (var gap = 1; gap <= 2 && i + gap < values.Count; gap++)
+            {
+                var next = values[i + gap];
+                if (!next.IsText)
+                    continue;
+
+                if (next.Text.Length > 0)
+                    pairs.Add((values[i].Text.Trim(), next.Text.Trim()));
+
+                break;
+            }
+        }
+
+        return pairs;
+    }
+
+    /// <summary>
     /// Does a node's text CARRY this label? It has to START with it.
     ///
     /// "Contains" was loose enough to accept the wrong window: "No ventures in progress." contains the label
