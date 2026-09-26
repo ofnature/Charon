@@ -121,6 +121,8 @@ public sealed class MainWindow : Window
     private readonly Func<string> _levelingStatus;
     private readonly QuickKillExecutor _quickKill;
     private readonly Func<ulong> _localContentId;
+    private readonly Func<bool, string> _handOffToHephaestus;
+    private string _handoffResult = string.Empty;
     private readonly SpawnScanner _spawnScanner;
     private readonly GilCapSeller _gilSeller;
     private readonly DomanDonator _doman;
@@ -211,11 +213,13 @@ public sealed class MainWindow : Window
         Func<string> localName,
         FollowCommands followCommands,
         Func<string, string?> reportedFollowLeader,
-        FleetCommands fleetCommands)
+        FleetCommands fleetCommands,
+        Func<bool, string> handOffToHephaestus)
         : base("Charon##CharonMain")
     {
         _config = config;
         _save = save;
+        _handOffToHephaestus = handOffToHephaestus;
         _whitelist = whitelist;
         _roster = roster;
         _pillion = pillion;
@@ -3160,6 +3164,28 @@ public sealed class MainWindow : Window
             DrawStatusLine($"  {entry.Name} — {kind} ({entry.Job}) · asked {entry.Requested:N0} · need {shortfall:N0}",
                 shortfall == 0 ? CharonTheme.TextDisabled : CharonTheme.TextSecondary);
         }
+
+        // The hand-off itself. Queue is the default because it is reversible and starts nothing; running the list
+        // drives the character, so it is a separate, clearly-labelled button.
+        var handoff = CraftHandoff.Build(snapshot,
+            id => _gcDailies.InBags(id) + _gcDailies.InRetainers(id));
+
+        ImGui.Spacing();
+        DrawStatusLine($"Hephaestus hand-off: {CraftHandoff.Describe(handoff)}", CharonTheme.TextSecondary);
+
+        if (handoff.Any)
+        {
+            if (ImGui.Button("Send to Hephaestus queue"))
+                _handoffResult = _handOffToHephaestus(false);
+
+            ImGui.SameLine();
+
+            if (ImGui.Button("Craft now (starts Hephaestus)"))
+                _handoffResult = _handOffToHephaestus(true);
+        }
+
+        if (_handoffResult.Length > 0)
+            DrawStatusLine(_handoffResult, CharonTheme.TextMuted);
     }
 
     private void DrawGcDailiesSection()

@@ -227,6 +227,7 @@ public sealed class CharonPlugin : IDalamudPlugin
 
     private readonly RetainerContentsIpc _retainerContentsIpc;
     private readonly GcRequestsIpc _gcRequestsIpc;
+    private readonly HephaestusClient _hephaestus;
 
     private readonly RetainersWindow _retainersWindow;
     private readonly RetainerBellOverlay _retainerBell;
@@ -481,6 +482,8 @@ public sealed class CharonPlugin : IDalamudPlugin
         _gcDailies = new GcDailiesReader(_retainerContents, _ventureSheet, _allowances, _windowText,
             () => _jobLevels.LocalContentId, log);
 
+        _hephaestus = new HephaestusClient(pluginInterface);
+
         // The day's Grand Company request list, for a crafter to read. Read-only: taking a snapshot is the
         // player's action (the button on the page or /charon snapshot), never something another plugin triggers.
         _gcRequestsIpc = new GcRequestsIpc(
@@ -536,7 +539,8 @@ public sealed class CharonPlugin : IDalamudPlugin
             () => _objectTable.LocalPlayer?.Name.TextValue ?? string.Empty,
             new MainWindow.FollowCommands(CommandFollow, CommandStopFollow, CommandFollowAll, CommandStopFollowAll),
             GetReportedFollowLeader,
-            new MainWindow.FleetCommands(CommandSetFleetLeader, CommandFleetLeaveDuty));
+            new MainWindow.FleetCommands(CommandSetFleetLeader, CommandFleetLeaveDuty),
+            HandOffToHephaestus);
         _mainWindow.IsOpen = _config.MainWindowVisible;
         _windowSystem.AddWindow(_mainWindow);
 
@@ -653,6 +657,7 @@ public sealed class CharonPlugin : IDalamudPlugin
         _gearIpc.Dispose();
         _retainerContentsIpc.Dispose();
         _gcRequestsIpc.Dispose();
+        _hephaestus.Dispose();
         _dutyPop.Dispose();
         _revivalPrompt.Dispose();
         _teleportOffer.Dispose();
@@ -694,6 +699,29 @@ public sealed class CharonPlugin : IDalamudPlugin
         return snapshot;
     }
 
+    /// <summary>
+    /// Hand the day's crafts to Hephaestus, and say in the operator's words what happened.
+    ///
+    /// Queue by default, start only on the explicit request: appending to the player's list is reversible and
+    /// starts nothing, whereas running it drives the character — and no plugin of ours takes the wheel without
+    /// being asked.
+    /// </summary>
+    private string HandOffToHephaestus(bool startNow)
+    {
+        var snapshot = LocalGcRequests;
+        var handoff = CraftHandoff.Build(snapshot, id => _gcDailies.InBags(id) + _gcDailies.InRetainers(id));
+
+        if (!handoff.Any)
+            return CraftHandoff.Describe(handoff);
+
+        var accepted = startNow ? _hephaestus.CraftNow(handoff.Json) : _hephaestus.AddToQueue(handoff.Json);
+
+        _log.Information("[GC] hand-off to Hephaestus ({0}): {1}",
+            startNow ? "craft now" : "queue", handoff.Json);
+
+        return $"{CraftHandoff.Describe(handoff)} — {_hephaestus.DescribeResult(accepted, startNow)}";
+    }
+
     private void OnCommand(string command, string args)
     {
         var trimmed = args.Trim();
@@ -714,6 +742,37 @@ public sealed class CharonPlugin : IDalamudPlugin
         if (trimmed.Equals("unfollow", StringComparison.OrdinalIgnoreCase))
         {
             StopLocalFollow();
+            return;
+        }
+
+        // "/charon handoff" reports what WOULD go to Hephaestus; "handoff queue" appends it to the player's
+        // list; "handoff craft" also starts it. Nothing is sent without being asked for.
+        if (trimmed.StartsWith("handoff", StringComparison.OrdinalIgnoreCase))
+        {
+            var mode = trimmed.Length > 7 ? trimmed[7..].Trim() : string.Empty;
+
+            if (mode.Length == 0)
+            {
+                var handoff = CraftHandoff.Build(LocalGcRequests,
+                    id => _gcDailies.InBags(id) + _gcDailies.InRetainers(id));
+
+                _chat.Print($"[Charon] Hephaestus hand-off: {CraftHandoff.Describe(handoff)}");
+                _chat.Print(handoff.Any
+                    ? $"  would send: {handoff.Json}"
+                    : "  nothing to send — take a snapshot at the delivery board first");
+                _chat.Print($"  Hephaestus: {(_hephaestus.Available ? $"loaded, v{_hephaestus.Version}" : "not loaded")}"
+                            + $", busy={_hephaestus.Busy}");
+                return;
+            }
+
+            if (mode.Equals("queue", StringComparison.OrdinalIgnoreCase)
+                || mode.Equals("craft", StringComparison.OrdinalIgnoreCase))
+            {
+                _chat.Print($"[Charon] {HandOffToHephaestus(mode.Equals("craft", StringComparison.OrdinalIgnoreCase))}");
+                return;
+            }
+
+            _chat.Print("[Charon] usage: /charon handoff [queue|craft] — no argument reports only");
             return;
         }
 
