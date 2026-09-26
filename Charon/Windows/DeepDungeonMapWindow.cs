@@ -25,6 +25,7 @@ public sealed class DeepDungeonMapWindow : Window
     public DeepDungeonMapWindow(DeepDungeonReader reader, IObjectTable objectTable)
         : base("Charon — Deep Dungeon##CharonDeepDungeonMap")
     {
+        BgAlpha = CharonTheme.PanelAlpha;
         _reader = reader;
         _objectTable = objectTable;
 

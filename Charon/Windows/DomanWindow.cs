@@ -24,6 +24,7 @@ public sealed class DomanWindow : Window
     public DomanWindow(CharonConfig config, Action save, DomanDonator doman, GilCapSeller gilSeller)
         : base("Charon — Doman Donate##CharonDoman")
     {
+        BgAlpha = CharonTheme.PanelAlpha;
         _config = config;
         _save = save;
         _doman = doman;

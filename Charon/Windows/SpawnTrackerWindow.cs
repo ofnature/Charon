@@ -17,6 +17,7 @@ public sealed class SpawnTrackerWindow : Window
     public SpawnTrackerWindow(SpawnScanner scanner)
         : base("Charon — Spawns##CharonSpawnTracker")
     {
+        BgAlpha = CharonTheme.PanelAlpha;
         _scanner = scanner;
 
         Size = new Vector2(340, 260);

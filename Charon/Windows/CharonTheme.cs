@@ -28,6 +28,14 @@ internal static class CharonTheme
 
     // Surfaces.
     public static readonly Vector4 BgDeep = new(0.055f, 0.059f, 0.075f, 1.00f);
+
+    /// <summary>
+    /// The background alpha every Charon PANEL draws at. Dalamud's default is translucent, and a translucent window
+    /// lets whatever sits behind it read as if it were part of its content — a table in the window underneath was
+    /// unreadable, and Charon's own rows sat on top of visual noise. Overlays keep their transparency on purpose
+    /// (the bell, saddlebag, ESP and search windows exist to sit OVER the game); panels do not want it.
+    /// </summary>
+    public const float PanelAlpha = 1f;
     public static readonly Vector4 CardBg = new(0.098f, 0.110f, 0.133f, 0.90f);
     public static readonly Vector4 CardBgSoft = new(0.086f, 0.098f, 0.117f, 0.55f);
     public static readonly Vector4 CardBgHover = new(0.118f, 0.133f, 0.161f, 0.95f);

@@ -48,6 +48,7 @@ public sealed class RetainersWindow : Window
         Func<ulong> contentId)
         : base("Charon — Retainers##CharonRetainers")
     {
+        BgAlpha = CharonTheme.PanelAlpha;
         _retainers = retainers;
         _planner = planner;
         _contents = contents;

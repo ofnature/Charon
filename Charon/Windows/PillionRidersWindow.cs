@@ -50,6 +50,7 @@ public sealed class PillionRidersWindow : Window
         PillionManager pillion)
         : base("Charon — Riders##CharonPillionRiders")
     {
+        BgAlpha = CharonTheme.PanelAlpha;
         _occupancy = occupancy;
         _driverName = driverName;
         _mountName = mountName;

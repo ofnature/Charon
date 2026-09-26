@@ -217,6 +217,7 @@ public sealed class MainWindow : Window
         Func<bool, string> handOffToHephaestus)
         : base("Charon##CharonMain")
     {
+        BgAlpha = CharonTheme.PanelAlpha;
         _config = config;
         _save = save;
         _handOffToHephaestus = handOffToHephaestus;

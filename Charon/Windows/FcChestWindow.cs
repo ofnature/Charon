@@ -21,6 +21,7 @@ public sealed class FcChestWindow : Window
     public FcChestWindow(CharonConfig config, Action save, FcChestManager fcChest)
         : base("Charon — FC Chest##CharonFcChest")
     {
+        BgAlpha = CharonTheme.PanelAlpha;
         _config = config;
         _save = save;
         _fcChest = fcChest;
