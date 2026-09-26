@@ -206,7 +206,7 @@ public sealed unsafe class WindowTextDump
             // accessor does the cast the SDK's own authors intended, instead of a hand comparison against a
             // type byte, which is what matched almost nothing before.
             var seen = new HashSet<nint>();
-            var types = new Dictionary<byte, int>();
+            var types = new Dictionary<int, int>();
 
             Walk(unit->RootNode, lines, seen, types, 0);
 
@@ -218,7 +218,7 @@ public sealed unsafe class WindowTextDump
                 if (node == null || !seen.Add((nint)node))
                     continue;
 
-                var t = (byte)node->Type;
+                var t = (int)node->Type;
                 types[t] = types.TryGetValue(t, out var seenCount) ? seenCount + 1 : 1;
 
                 var textNode = node->GetAsAtkTextNode();
@@ -235,14 +235,27 @@ public sealed unsafe class WindowTextDump
             // a row's text lives for windows that have none on the node tree.
             AtkValueDump = DumpAtkValues(unit);
 
+            var componentKinds = types
+                .Where(kv => kv.Key >= 1000)
+                .OrderByDescending(kv => kv.Value)
+                .Select(kv => $"{kv.Key}x{kv.Value}")
+                .ToList();
+
             var histogram = string.Join(", ", types.OrderByDescending(kv => kv.Value)
                 .Take(6)
                 .Select(kv => $"{kv.Key}x{kv.Value}"));
 
+            // Component kinds are called out separately: "no components reached" means the descent found nothing
+            // to descend into, which is a different problem from "descended and the rows have no text".
+            var components = componentKinds.Count == 0
+                ? "none reached"
+                : string.Join(", ", componentKinds);
+
             LastDiagnostics = lines.Count == 0
                 ? $"{addonName}: root={(unit->RootNode == null ? "null" : "ok")}, "
-                  + $"uldList={count}, treeNodes={seen.Count}, types [{histogram}], 0 text nodes read"
-                : $"{addonName}: {lines.Count} text node(s) from {seen.Count} node(s), types [{histogram}]";
+                  + $"uldList={count}, treeNodes={seen.Count}, components [{components}], 0 text nodes read"
+                : $"{addonName}: {lines.Count} text node(s) from {seen.Count} node(s), "
+                  + $"components [{components}]";
         }
         catch (Exception ex)
         {
@@ -313,7 +326,7 @@ public sealed unsafe class WindowTextDump
         AtkResNode* node,
         List<(int, float, float, string)> lines,
         HashSet<nint> seen,
-        Dictionary<byte, int> types,
+        Dictionary<int, int> types,
         int depth)
     {
         if (depth > MaxDepth)
@@ -340,13 +353,17 @@ public sealed unsafe class WindowTextDump
                 if (text.Length > 0)
                     lines.Add((lines.Count, node->ScreenX, node->ScreenY, text));
             }
-            else if (node->Type == NodeType.Component)
+            else if (node->GetAsAtkComponentNode() != null)
             {
                 // A component's CONTENT is not in the addon's node list: a TreeList/List component renders its
                 // rows inside itself, in its own UldManager. That is why the Timers window reported three text
                 // nodes while showing eleven rows — the rows are one component deep, and this is the descent.
+                //
+                // The test is the SDK's own cast, NOT `Type == NodeType.Component`: the type field carries the
+                // component's KIND, which is numbered from 1000 up (RadioButton 1004, Slider 1005, DropDown 1009,
+                // TreeList 1011), so comparing against the base value matched nothing and no descent happened.
                 var componentNode = node->GetAsAtkComponentNode();
-                if (componentNode != null && componentNode->Component != null)
+                if (componentNode->Component != null)
                 {
                     var compUld = &componentNode->Component->UldManager;
                     var compCount = Math.Min((int)compUld->NodeListCount, MaxNodesPerAddon);
