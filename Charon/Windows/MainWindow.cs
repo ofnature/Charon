@@ -2445,80 +2445,27 @@ public sealed class MainWindow : Window
 
     // --- GIL: Doman Donate ---
 
+    /// <summary>
+    /// The Doman donation page. The content is <see cref="DomanView"/>, shared with the pop-up window that
+    /// rides the donation basket, so the section and the window can never disagree about the flow.
+    /// </summary>
     private void DrawDomanSection()
     {
         DrawPageHeader("Doman Donate");
 
-        var snapshot = _doman.GetSnapshot();
-        var (itemName, price) = _gilSeller.ItemInfo(_config.GilItemId);
-        var held = GilCapSeller.CountInBags(_config.GilItemId);
-
-        var enclave = _doman.ReadEnclaveState();
-        if (enclave.Loaded)
+        var popUp = _config.DomanWindowEnabled;
+        if (ImGui.Checkbox("Pop up with the donation basket##doman", ref popUp))
         {
-            // Live client state — the same source as Timers, readable anywhere, no trip needed.
-            DrawStatusLine(enclave.AcceptingDonations
-                ? $"Game state: accepting — {enclave.BudgetRemaining:N0} budget left, rate {enclave.RatePercent}%"
-                : "Game state: not accepting donations (spent this week, or Doman not unlocked)",
-                enclave.AcceptingDonations ? CharonTheme.StatusGreen : CharonTheme.TextSecondary);
+            _config.DomanWindowEnabled = popUp;
+            _save();
         }
-        else if (_doman.DonatedThisWeek)
-        {
-            ImGui.TextColored(CharonTheme.StatusGreen,
-                "This week's budget is spent — resets Tuesday 08:00 UTC. No trip needed.");
-        }
-        else
-        {
-            if (ImGui.SmallButton("Mark this week spent##doman"))
-                _doman.MarkWeekSpent();
-            CharonTheme.HelpMarker("For a donation made without Charon: a spent basket refuses to\n"
-                                   + "even open, so it can't be detected — tell it here instead.\n"
-                                   + "Clears itself at the Tuesday reset.\n"
-                                   + "(Only shown when the game's own Doman state isn't readable.)");
-        }
-
-        if (!snapshot.Open)
-        {
-            DrawStatusLine("Stand at the Doman Enclave donation basket and open it — the window is the session.");
-        }
-        else
-        {
-            var gratuity = DonationWindowParser.UnitGratuity(price, snapshot.RatePercent);
-            var target = DonationWindowParser.TargetQuantity(
-                snapshot.BudgetRemaining, price, snapshot.RatePercent, held);
-            DrawStatusLine($"Weekly budget remaining: {snapshot.BudgetRemaining:N0} · rate {snapshot.RatePercent}%");
-            DrawStatusLine($"{itemName}: {held:N0} in bags · {gratuity:N0} budget each"
-                           + (target > 0 ? $" · would donate {target}" : " · nothing to donate"));
-        }
+        CharonTheme.HelpMarker("A window with these two steps, opening when you stand at the Doman\n"
+                               + "Enclave donation basket. It also stays up while a step is running or\n"
+                               + "a split stack is waiting, since Prepare has to close the basket.\n"
+                               + "Closing it by hand keeps it closed for that basket.");
 
         ImGui.Spacing();
-
-        if (_doman.Busy)
-        {
-            if (ImGui.Button("Stop##doman", new Vector2(120, 26)))
-                _doman.Cancel();
-        }
-        else
-        {
-            var canAct = snapshot.Open && held > 0;
-            if (!canAct) ImGui.BeginDisabled();
-            if (ImGui.Button("1. Prepare stack##doman", new Vector2(160, 26)))
-                _doman.RequestPrepare(_config.GilItemId);
-            ImGui.SameLine();
-            if (ImGui.Button("2. Stage into basket##doman", new Vector2(180, 26)))
-                _doman.RequestStage(_config.GilItemId);
-            if (!canAct) ImGui.EndDisabled();
-        }
-
-        CharonTheme.HelpMarker("Prepare reads the budget and rate, closes the window (the game\n"
-                               + "blocks splits while it is open) and splits the exact stack.\n"
-                               + "Reopen the basket, then Stage runs the rest: donates the stack\n"
-                               + "into the list, presses Donate, ticks Confirm on the budget\n"
-                               + "dialog and answers Yes. Target overshoots the weekly budget by\n"
-                               + "the smallest possible margin — over, never short.");
-
-        ImGui.Spacing();
-        DrawStatusLine(_doman.Status, CharonTheme.TextDisabled);
+        DomanView.DrawBody(_config, _save, _doman, _gilSeller);
     }
 
     // --- Trusted Characters ---
@@ -2871,6 +2818,8 @@ public sealed class MainWindow : Window
         // Read-only: this never opens a bell, so it is safe on a hand-played box.
         _retainers.Read(DateTime.UtcNow);
         DrawStatusLine($"Retainers: {_retainers.Status} · ventures: {_ventureRunner.Status}");
+        DrawStatusLine($"Doman: {_doman.Status}"
+                       + (_doman.StackReady ? " · stack ready to stage" : string.Empty));
         DrawStatusLine($"Fleet duty exit: {ScrambleIn(_dutyExitStatus())}");
         if (_inviteManager.AcceptPending)
             DrawStatusLine("Invite accept pending (delay running)", CharonTheme.StatusYellow);

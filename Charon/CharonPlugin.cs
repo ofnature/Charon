@@ -84,6 +84,8 @@ public sealed class CharonPlugin : IDalamudPlugin
     private readonly SpawnScanner _spawnScanner;
     private bool _spawnWindowShown;
     private readonly SpawnTrackerWindow _spawnWindow;
+    private readonly DomanWindow _domanWindow;
+    private bool _domanWindowShown;
     private readonly ChestSearchFilter _chestSearch;
     private readonly FcChestSearchOverlay _fcSearchOverlay;
     private readonly PillionRidersWindow _pillionRidersWindow;
@@ -464,6 +466,9 @@ public sealed class CharonPlugin : IDalamudPlugin
         _ddMapWindow = new DeepDungeonMapWindow(_ddReader, _objectTable);
         _windowSystem.AddWindow(_ddMapWindow);
 
+        _domanWindow = new DomanWindow(_config, SaveConfig, _doman, _gilSeller);
+        _windowSystem.AddWindow(_domanWindow);
+
         _pillionRidersWindow = new PillionRidersWindow(
             ReadRawSeatOccupancy,
             () => _objectTable.LocalPlayer?.Name.TextValue ?? string.Empty,
@@ -593,6 +598,42 @@ public sealed class CharonPlugin : IDalamudPlugin
         _fcChestWindow.IsOpen = false;
     }
 
+    /// <summary>
+    /// The Doman donation window rides the basket, but NOT as a plain mirror of it. Prepare closes the
+    /// basket on purpose (the game blocks inventory splits while it is open) and the split stack still has
+    /// to be staged, so a running operation or a ready stack keeps the window up after the basket goes —
+    /// closing it there would take the Stage button away exactly when it is the next move.
+    ///
+    /// Opening happens ONCE per basket session rather than every tick, so closing it by hand while
+    /// standing at the basket sticks (the spawn window's lesson: a window forced open every frame cannot
+    /// be shut).
+    /// </summary>
+    private void UpdateDomanWindow()
+    {
+        if (!_config.DomanWindowEnabled)
+        {
+            _domanWindowShown = false;
+            _domanWindow.IsOpen = false;
+            return;
+        }
+
+        // 500ms-cached read of the addon, so the tick can ask every frame for free.
+        if (!_doman.GetSnapshot().Open)
+        {
+            _domanWindowShown = false;
+            if (!_doman.Busy && !_doman.StackReady)
+                _domanWindow.IsOpen = false;
+
+            return;
+        }
+
+        if (_domanWindowShown)
+            return;
+
+        _domanWindowShown = true;
+        _domanWindow.IsOpen = true;
+    }
+
     /// <summary>At a bell — show the venture tools. Nothing runs until the button is pressed.</summary>
     private void OnRetainerListOpen(AddonEvent type, AddonArgs args)
     {
@@ -695,6 +736,7 @@ public sealed class CharonPlugin : IDalamudPlugin
         // The riders window follows the mount: open while driving a multi-seat mount, gone on
         // dismount (the occupancy read is the tick-cached snapshot — no rescan).
         _pillionRidersWindow.IsOpen = _config.PillionRidersWindowEnabled && ReadRawSeatOccupancy().Count > 0;
+        UpdateDomanWindow();
         // Search bar rides the FC chest window; the filter also runs while it closes (restores alpha).
         _fcSearchOverlay.IsOpen = _config.FcChestSearchEnabled && _fcChest.IsChestOpen();
         _chestSearch.Update(_fcSearchOverlay.IsOpen ? _fcSearchOverlay.Query : string.Empty);

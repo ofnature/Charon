@@ -304,6 +304,9 @@ public sealed class CharonConfig : IPluginConfiguration
     /// <summary>The item the gil tools sell/donate — Duck Bones (10119, PriceLow 360, verified).</summary>
     public uint GilItemId { get; set; } = 10119;
 
+    /// <summary>Pop the standalone Doman donation window up with the game's donation basket.</summary>
+    public bool DomanWindowEnabled { get; set; } = true;
+
     /// <summary>
     /// When each character (by content id) last donated at the Doman Enclave — or was OBSERVED
     /// with an empty weekly budget, which counts the same. Checked against the Tuesday 08:00 UTC

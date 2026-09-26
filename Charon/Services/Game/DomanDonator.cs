@@ -37,7 +37,8 @@ namespace Charon.Services.Game;
 /// </summary>
 public sealed unsafe class DomanDonator : IDisposable
 {
-    private const string AddonName = "ReconstructionBox";
+    /// <summary>The game's donation basket window — also the session the pop-up window rides.</summary>
+    public const string AddonName = "ReconstructionBox";
     private const uint BudgetNodeId = 21;
     private const uint RateNodeId = 7;
     private const uint GrandTotalNodeId = 25;
@@ -129,6 +130,15 @@ public sealed unsafe class DomanDonator : IDisposable
     }
 
     public bool Busy => _phase != Phase.Idle;
+
+    /// <summary>
+    /// True from a finished Prepare until the stack is staged, cancelled, failed or the week is marked
+    /// spent: the exact stack is sitting in the bags and the basket has been CLOSED on purpose (the game
+    /// blocks splits while it is open), so the only thing left is to reopen it and Stage. The Doman window
+    /// keys both its step tracker and its auto-close on this: following the basket alone would take the
+    /// Stage button away the instant Prepare worked.
+    /// </summary>
+    public bool StackReady { get; private set; }
 
     /// <summary>What it is doing, or why the last run ended how it did — for the Debug line.</summary>
     public string Status { get; private set; } = "idle";
@@ -234,7 +244,11 @@ public sealed unsafe class DomanDonator : IDisposable
     /// open (user-verified), so a donation Charon didn't perform can never be learned from the
     /// window — the toon would keep looking available until the reset.
     /// </summary>
-    public void MarkWeekSpent() => _recordDonated();
+    public void MarkWeekSpent()
+    {
+        StackReady = false; // nothing is worth staging into a basket that will not open
+        _recordDonated();
+    }
 
     /// <summary>Live-ish window numbers (500ms cache); Open=false when the basket is closed.</summary>
     public WindowSnapshot GetSnapshot()
@@ -413,6 +427,7 @@ public sealed unsafe class DomanDonator : IDisposable
         _grandTotalAtStage = snapshot.GrandTotal;
         _menuStack = pick.Value;
         _menuIssued = false;
+        StackReady = false; // the prepared stack is being consumed from here on
         EnterPhase(Phase.WaitStageMenu);
         Status = $"staging a stack of {pick.Value.Quantity}";
         return true;
@@ -492,7 +507,7 @@ public sealed unsafe class DomanDonator : IDisposable
         {
             if (stack.Quantity == _target)
             {
-                Finish(true, $"stack of {_target} already ready — reopen the basket and Stage");
+                FinishPrepared($"stack of {_target} already ready — reopen the basket and Stage");
                 return;
             }
         }
@@ -511,7 +526,7 @@ public sealed unsafe class DomanDonator : IDisposable
         {
             // Nothing big enough to split — everything held is under target, so the whole
             // holding IS the donation (as close as this toon gets; staging is per-stack).
-            Finish(true, $"holding less than {_target} — reopen the basket and Stage everything");
+            FinishPrepared($"holding less than {_target} — reopen the basket and Stage everything");
             return;
         }
 
@@ -569,7 +584,7 @@ public sealed unsafe class DomanDonator : IDisposable
         {
             if (stack.Quantity == _target)
             {
-                Finish(true, $"stack of {_target} ready — reopen the basket and Stage");
+                FinishPrepared($"stack of {_target} ready — reopen the basket and Stage");
                 return;
             }
         }
@@ -749,7 +764,20 @@ public sealed unsafe class DomanDonator : IDisposable
         _phase = Phase.Idle;
         _lastOpUtc = DateTime.UtcNow;
         Status = ok ? $"done — {detail}" : $"FAILED — {detail}";
+
+        // A failure or a cancel can leave a split stack behind and cannot tell us which, so the flag is
+        // cleared and re-earned: re-running Prepare finds an already-ready stack and sets it again.
+        if (!ok)
+            StackReady = false;
+
         _completed("domanDonate", ok, detail);
+    }
+
+    /// <summary>Prepare finished and the exact stack is verified in the bags — see <see cref="StackReady"/>.</summary>
+    private void FinishPrepared(string detail)
+    {
+        StackReady = true;
+        Finish(true, detail);
     }
 
     private long ReadNodeAmount(uint nodeId)
