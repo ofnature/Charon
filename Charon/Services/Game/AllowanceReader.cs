@@ -21,14 +21,21 @@ namespace Charon.Services.Game;
 /// </summary>
 public sealed class AllowanceReader
 {
-    /// <summary>Candidate addon names, most likely first. The first one that is open wins and is remembered.</summary>
-    private static readonly string[] Candidates = ["_ToDoList", "ToDoList", "Timers", "Timer", "AddonTimers"];
+    /// <summary>
+    /// Candidate addon names are only a HINT list now. The reader identifies the window by finding the label
+    /// inside it, because names are exactly what this fooled itself with once: "_ToDoList" looked right and is
+    /// a HUD widget (every underscore-prefixed addon is a HUD element, not a window).
+    /// </summary>
+    private static readonly string[] Candidates = ["Timers", "Timer", "AddonTimers", "_ToDoList", "ToDoList"];
+
+    private static readonly TimeSpan ScanEvery = TimeSpan.FromSeconds(2);
 
     private readonly WindowTextDump _windows;
     private readonly IPluginLog _log;
 
     private string? _addon;
     private bool _loggedMiss;
+    private DateTime _lastScanUtc = DateTime.MinValue;
 
     public AllowanceReader(WindowTextDump windows, IPluginLog log)
     {
@@ -38,6 +45,9 @@ public sealed class AllowanceReader
 
     /// <summary>The window the last successful read came from, or empty when none has answered yet.</summary>
     public string Addon { get; private set; } = string.Empty;
+
+    /// <summary>How many windows the last scan looked inside — evidence, when nothing was found.</summary>
+    public int LastScanCount { get; private set; }
 
     /// <summary>When the lines below were read — nothing here is live.</summary>
     public DateTime SeenUtc { get; private set; } = DateTime.MinValue;
@@ -62,21 +72,66 @@ public sealed class AllowanceReader
     };
 
     public string Status => Addon.Length == 0
-        ? "no Timers window read yet — open it once and Charon reads the game's own answer"
+        ? LastScanCount == 0
+            ? "no Timers window read yet — open it once and Charon reads the game's own answer"
+            : $"no allowance labels found in the {LastScanCount} window(s) that are open — open the game's "
+              + "Timers window and Charon picks it up on its own"
         : SeenUtc == DateTime.MinValue
             ? $"{Addon}: nothing read yet"
             : $"read from '{Addon}', {Describe(DateTime.UtcNow - SeenUtc)} ago";
 
-    /// <summary>Called every tick; a read happens only while one of the candidate windows is actually open.</summary>
+    /// <summary>
+    /// Called every tick. Once the window has been found it is re-read directly; until then the open windows
+    /// are scanned (twice a second) for the label, so the window identifies itself and no name is assumed.
+    /// </summary>
     public void Update(DateTime nowUtc)
     {
-        var addon = _addon ?? Candidates.FirstOrDefault(IsOpen);
-        if (addon == null || !IsOpen(addon))
+        if (_addon != null)
+        {
+            if (IsOpen(_addon))
+                ReadFrom(_addon, nowUtc);
+
+            return;
+        }
+
+        if (nowUtc - _lastScanUtc < ScanEvery)
             return;
 
-        var lines = new List<AllowanceLine>();
-        var nodes = _windows.Read(addon).Select(n => (n.X, n.Y, n.Text)).ToList();
+        _lastScanUtc = nowUtc;
 
+        var open = _windows.LoadedAddons(visibleOnly: true);
+        LastScanCount = open.Count;
+
+        // The hint list first (cheap), then everything else that is open. A window that holds the labels is
+        // the Timers window whatever it is called.
+        foreach (var name in Candidates.Concat(open).Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            if (ReadFrom(name, nowUtc))
+            {
+                _addon = name;
+                Addon = name;
+                _log.Information("[Allowances] the allowance lines are in '{0}' — reading that window from now on.",
+                    name);
+                return;
+            }
+        }
+
+        if (!_loggedMiss && LastScanCount > 0)
+        {
+            _loggedMiss = true;
+            _log.Information("[Allowances] none of the {0} open window(s) held an allowance label — open the "
+                             + "game's Timers window and it will be found automatically.", LastScanCount);
+        }
+    }
+
+    /// <summary>Read one window: fills the lines when it holds the labels, and says whether it did.</summary>
+    private bool ReadFrom(string addon, DateTime nowUtc)
+    {
+        var nodes = _windows.Read(addon).Select(n => (n.X, n.Y, n.Text)).ToList();
+        if (nodes.Count == 0)
+            return false;
+
+        var lines = new List<AllowanceLine>();
         foreach (var label in Allowances.KnownLabels)
         {
             var line = Allowances.Find(nodes, label);
@@ -84,22 +139,13 @@ public sealed class AllowanceReader
                 lines.Add(line);
         }
 
-        if (lines.Count == 0)
-        {
-            if (!_loggedMiss)
-            {
-                _loggedMiss = true;
-                _log.Debug("[Allowances] '{0}' is open but none of the known allowance labels were in it "
-                           + "({1} text node(s)) — /charon text {0} records what is.", addon, nodes.Count);
-            }
+        // One label could be a coincidence; two means this is the window.
+        if (lines.Count < 2)
+            return false;
 
-            return;
-        }
-
-        _addon = addon;
-        Addon = addon;
         Lines = lines;
         SeenUtc = nowUtc;
+        return true;
     }
 
     private bool IsOpen(string addon) => _windows.Read(addon).Count > 0;

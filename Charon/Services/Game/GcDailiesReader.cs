@@ -22,7 +22,8 @@ public sealed record GcBoard(
     string Status,
     string AllowanceText = "",
     DateTime? AllowanceSeenUtc = null,
-    bool? DailiesOpen = null);
+    bool? DailiesOpen = null,
+    string AllowanceStatus = "");
 
 /// <summary>
 /// Reads the Grand Company delivery board — Supply, Provisioning and Expert Delivery — from the game's own
@@ -159,7 +160,8 @@ public sealed unsafe class GcDailiesReader
                 + (open ? string.Empty : " — open the board at your GC officer to refresh"),
                 allowance?.Value ?? string.Empty,
                 _allowances.SeenUtc == DateTime.MinValue ? null : _allowances.SeenUtc,
-                _allowances.DailiesOpen);
+                _allowances.DailiesOpen,
+                _allowances.Status);
         }
         catch (Exception ex)
         {

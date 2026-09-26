@@ -701,6 +701,14 @@ public sealed class CharonPlugin : IDalamudPlugin
             }
 
             var dump = _windowText.LastDump;
+            if (dump.Count == 0)
+            {
+                _chat.Print($"[Charon] {_windowText.LastDiagnostics}");
+                _chat.Print("  nothing on the node tree — /charon text <other window> if this is not the one "
+                            + "you meant");
+                return;
+            }
+
             _chat.Print($"[Charon] '{resolved}': {dump.Count} text node(s) — full dump in /xllog");
 
             // A preview, so the answer is visible without opening a log at all.

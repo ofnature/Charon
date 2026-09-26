@@ -37,6 +37,9 @@ public sealed unsafe class WindowTextDump
 
     public string LastDumpAddon { get; private set; } = string.Empty;
 
+    /// <summary>What the last read actually saw — counts, and whether the root node was there at all.</summary>
+    public string LastDiagnostics { get; private set; } = string.Empty;
+
     /// <summary>Every window the client currently has loaded, optionally only the visible ones.</summary>
     public IReadOnlyList<string> LoadedAddons(bool visibleOnly)
     {
@@ -88,7 +91,7 @@ public sealed unsafe class WindowTextDump
         return loaded.FirstOrDefault(n => n.Contains(nameOrFragment, StringComparison.OrdinalIgnoreCase));
     }
 
-    /// <summary>Every text node in the addon, in node order, with its screen position.</summary>
+    /// <summary>Every text node in the addon, in tree order, with its screen position.</summary>
     public IReadOnlyList<(int Index, float X, float Y, string Text)> Read(string addonName)
     {
         var lines = new List<(int, float, float, string)>();
@@ -99,28 +102,51 @@ public sealed unsafe class WindowTextDump
             if (unit == null || !unit->IsVisible)
                 return lines;
 
-            var list = unit->UldManager.NodeList;
-            var count = unit->UldManager.NodeListCount;
+            // Walk the node TREE rather than UldManager.NodeList: an addon whose rows live in a list component
+            // keeps them as children of that component, and a flat NodeList can come back empty for exactly
+            // those windows (which is what "_ToDoList has 0 text node(s)" was).
+            var seen = new HashSet<nint>();
+            Walk(unit->RootNode, lines, seen);
 
-            for (var i = 0; i < count; i++)
+            if (lines.Count == 0)
             {
-                var node = list[i];
-                if (node == null || node->Type != NodeType.Text)
-                    continue;
-
-                var text = ReadText((AtkTextNode*)node);
-                if (text.Length == 0)
-                    continue;
-
-                lines.Add((i, node->ScreenX, node->ScreenY, text));
+                LastDiagnostics = $"{addonName}: root={(unit->RootNode == null ? "null" : "ok")}, "
+                                   + $"nodeList={unit->UldManager.NodeListCount} entries, 0 text nodes in the tree";
+            }
+            else
+            {
+                LastDiagnostics = $"{addonName}: {lines.Count} text node(s)";
             }
         }
         catch (Exception ex)
         {
+            LastDiagnostics = $"{addonName}: {ex.Message}";
             _log.Debug("[TextDump] {0} could not be read: {1}", addonName, ex.Message);
         }
 
         return lines;
+    }
+
+    /// <summary>Depth-first over ChildNode / NextSiblingNode — the same shape the client itself walks.</summary>
+    private static void Walk(AtkResNode* node, List<(int, float, float, string)> lines, HashSet<nint> seen)
+    {
+        while (node != null)
+        {
+            if (!seen.Add((nint)node))
+                return; // a cycle here would spin forever, and this must never do that
+
+            if (node->Type == NodeType.Text)
+            {
+                var text = ReadText((AtkTextNode*)node);
+                if (text.Length > 0)
+                    lines.Add((lines.Count, node->ScreenX, node->ScreenY, text));
+            }
+
+            if (node->ChildNode != null)
+                Walk(node->ChildNode, lines, seen);
+
+            node = node->NextSiblingNode;
+        }
     }
 
     /// <summary>Record a window's text: full detail to the log, and the lines kept for a chat preview.</summary>
@@ -146,8 +172,12 @@ public sealed unsafe class WindowTextDump
         LastDumpAddon = addonName;
 
         var report = new StringBuilder();
-        report.Append("[TextDump] '").Append(addonName).Append("' has ").Append(ordered.Count)
-            .Append(" text node(s):");
+        report.Append("[TextDump] ").Append(LastDiagnostics).Append(':');
+        if (ordered.Count == 0)
+        {
+            report.Append("\n  (nothing to list — a window whose rows are drawn by a component may keep "
+                          + "them off the node tree entirely; that is a finding, not a failure)");
+        }
 
         foreach (var line in ordered)
         {

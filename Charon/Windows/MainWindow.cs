@@ -3146,8 +3146,7 @@ public sealed class MainWindow : Window
         }
         else
         {
-            DrawStatusLine("Next mission allowance: open the game's Timers window once and Charon reads the "
-                           + "game's own answer for the day.", CharonTheme.TextMuted);
+            DrawStatusLine($"Next mission allowance: {board.AllowanceStatus}", CharonTheme.TextMuted);
         }
 
         DrawStatusLine(GcDailies.Summarise(plans), CharonTheme.TextSecondary);
