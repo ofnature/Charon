@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using Charon.Features.GrandCompany;
+using Charon.Features.Dailies;
 using Charon.Features.Retainers;
 using Dalamud.Plugin.Services;
 using FFXIVClientStructs.FFXIV.Client.Game;
@@ -53,6 +54,7 @@ public sealed unsafe class GcDailiesReader
     private readonly VentureSheetReader _sheet;
     private readonly AllowanceReader _allowances;
     private readonly WindowTextDump _windows;
+    private readonly Func<ulong> _contentId;
     private readonly IPluginLog _log;
 
     private GcBoard? _cached;
@@ -64,13 +66,38 @@ public sealed unsafe class GcDailiesReader
         VentureSheetReader sheet,
         AllowanceReader allowances,
         WindowTextDump windows,
+        Func<ulong> contentId,
         IPluginLog log)
     {
         _contents = contents;
         _sheet = sheet;
         _allowances = allowances;
         _windows = windows;
+        _contentId = contentId;
         _log = log;
+    }
+
+    /// <summary>
+    /// Take a snapshot of the day's request list — what the company is asking for, which is what a crafter needs.
+    ///
+    /// Null when the board is not open: a snapshot of a board nobody is looking at would be a list of zero items,
+    /// and "the company wants nothing" is not the same answer as "nobody has looked".
+    /// </summary>
+    public GcRequestSnapshot? CaptureRequests(DateTime nowLocal)
+    {
+        var board = Read();
+        if (!board.Open || board.Missions.Count == 0)
+            return null;
+
+        var entries = board.Missions
+            .Where(m => m.ItemId != 0)
+            .Select(m => new GcRequestEntry(m.ItemId, m.ItemName, m.Requested, m.Kind, m.Job));
+
+        return GcRequests.Build(
+            _contentId().ToString(),
+            DateTime.UtcNow,
+            Allowances.Rollover(_allowances.MissionAllowance?.Value, nowLocal),
+            entries);
     }
 
     /// <summary>

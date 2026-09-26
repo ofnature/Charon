@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using Charon.Features.GrandCompany;
 using Dalamud.Configuration;
 
 namespace Charon;
@@ -367,6 +368,12 @@ public sealed class CharonConfig : IPluginConfiguration
 
     /// <inheritdoc cref="RetainerSnapshot"/>
     public Dictionary<string, RetainerSnapshot> RetainerContents { get; set; } = new();
+
+    /// <summary>
+    /// The day's Grand Company request list per character, as captured from the delivery board. A snapshot, not a
+    /// live view: the board is only readable while it is open, and the list rolls over daily.
+    /// </summary>
+    public Dictionary<string, GcRequestSnapshot> GcRequests { get; set; } = new();
 
     /// <summary>
     /// Whether other plugins may ask Charon to MOVE items (fetch from a retainer, run a refresh). Off until

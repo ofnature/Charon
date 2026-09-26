@@ -3118,6 +3118,50 @@ public sealed class MainWindow : Window
     /// first and Charon does not click rows in a list whose selection mechanism it has never verified. The
     /// turn-in fill (TWEAKS → auto-select turn-ins) fills the delivery window once the game opens it.
     /// </summary>
+    /// <summary>
+    /// The day's request list, kept as a snapshot — the list a crafter works from.
+    ///
+    /// It is a snapshot because the board is only readable while it is open, and it is per character because the
+    /// company asks each of them for different things. Nothing downstream is wired to it yet: the hand-off (a
+    /// crafting list Hephaestus can pull over IPC) is the next step, and the list is captured now so that step has
+    /// something real to work from.
+    /// </summary>
+    private void DrawRequestSnapshotCard()
+    {
+        var character = _localContentId().ToString();
+        var snapshot = _config.GcRequests.TryGetValue(character, out var known) ? known : null;
+
+        ImGui.Spacing();
+        DrawStatusLine($"Request list snapshot: {GcRequests.Describe(snapshot, DateTime.UtcNow)}",
+            CharonTheme.TextSecondary);
+
+        if (ImGui.Button("Take snapshot"))
+        {
+            var taken = _gcDailies.CaptureRequests(DateTime.Now);
+            if (taken != null)
+            {
+                _config.GcRequests[taken.Character] = taken;
+                _save();
+            }
+        }
+
+        CharonTheme.HelpMarker("Captured from the delivery board while it is open, because the rows are only\n"
+                               + "readable then. This is the list the crafter hand-off will read\n"
+                               + "(Charon.GrandCompany.GetRequestsJson) — adding items to a crafting list comes\n"
+                               + "next.");
+
+        if (snapshot == null)
+            return;
+
+        foreach (var (entry, shortfall) in GcRequests.Demand(snapshot,
+                     id => _gcDailies.InBags(id) + _gcDailies.InRetainers(id)))
+        {
+            var kind = entry.Kind == GcMissionKind.Supply ? "craft" : "gather";
+            DrawStatusLine($"  {entry.Name} — {kind} ({entry.Job}) · asked {entry.Requested:N0} · need {shortfall:N0}",
+                shortfall == 0 ? CharonTheme.TextDisabled : CharonTheme.TextSecondary);
+        }
+    }
+
     private void DrawGcDailiesSection()
     {
         DrawPageHeader("Grand Company Dailies", "supply, provisioning and expert delivery — what the day asks for");
@@ -3160,6 +3204,8 @@ public sealed class MainWindow : Window
         // is actually showing it — "You possess no applicable items." is the Expert Delivery tab saying it.
         if (board.Notice.Length > 0 && board.SelectedTabEmpty)
             DrawStatusLine($"the window says: \"{board.Notice}\"", CharonTheme.TextMuted);
+
+        DrawRequestSnapshotCard();
 
         DrawStatusLine(GcDailies.Summarise(plans), CharonTheme.TextSecondary);
         DrawStatusLine(board.Status, CharonTheme.TextDisabled);

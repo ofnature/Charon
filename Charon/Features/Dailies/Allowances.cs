@@ -238,6 +238,52 @@ public static class Allowances
         return parts?.Minutes ?? 0;
     }
 
+    /// <summary>
+    /// When a line's countdown ends, from the stamp the window prints in parentheses — "(9/26 15:00)" in
+    /// " 14:02 Remaining  (9/26 15:00)". The year is not printed, so the current one is assumed and a date more
+    /// than a day in the past is taken to be next year's: a countdown never ends in the past.
+    ///
+    /// This is what makes a request-list snapshot know when it stops being today's list, instead of inferring it
+    /// from a fixed number of hours.
+    /// </summary>
+    public static DateTime? Rollover(string? value, DateTime nowLocal)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return null;
+
+        var open = value.IndexOf('(');
+        var close = value.IndexOf(')', open + 1);
+        if (open < 0 || close < open)
+            return null;
+
+        var inside = value[(open + 1)..close].Trim();
+        var parts = inside.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        if (parts.Length != 2)
+            return null;
+
+        var date = parts[0].Split('/');
+        var time = parts[1].Split(':');
+        if (date.Length != 2 || time.Length != 2
+            || !int.TryParse(date[0], out var month) || !int.TryParse(date[1], out var day)
+            || !int.TryParse(time[0], out var hour) || !int.TryParse(time[1], out var minute))
+            return null;
+
+        if (month is < 1 or > 12 || day is < 1 or > 31 || hour is < 0 or > 23 || minute is < 0 or > 59)
+            return null;
+
+        try
+        {
+            var stamp = new DateTime(nowLocal.Year, month, day, hour, minute, 0, DateTimeKind.Local);
+            return stamp < nowLocal.AddDays(-1) ? stamp.AddYears(1) : stamp;
+        }
+        catch (ArgumentOutOfRangeException)
+        {
+            // e.g. 2/30 — the window said something this reader does not understand, so it says so by answering
+            // nothing rather than by guessing a date.
+            return null;
+        }
+    }
+
     private static (int Hours, int Minutes)? Split(string? value)
     {
         if (string.IsNullOrWhiteSpace(value))

@@ -12,6 +12,7 @@ using Dalamud.Plugin.Services;
 using Charon.Features.AutoAccept;
 using Charon.Features.Dailies;
 using Charon.Features.AutoPillion;
+using Charon.Features.GrandCompany;
 using Charon.Features.Fleet;
 using Charon.Features.Follow;
 using Charon.Features.GroupManagement;
@@ -225,6 +226,7 @@ public sealed class CharonPlugin : IDalamudPlugin
     private readonly IChatGui _chat;
 
     private readonly RetainerContentsIpc _retainerContentsIpc;
+    private readonly GcRequestsIpc _gcRequestsIpc;
 
     private readonly RetainersWindow _retainersWindow;
     private readonly RetainerBellOverlay _retainerBell;
@@ -476,7 +478,16 @@ public sealed class CharonPlugin : IDalamudPlugin
 
         _windowText = new WindowTextDump(gameGui, log);
         _allowances = new AllowanceReader(_windowText, log);
-        _gcDailies = new GcDailiesReader(_retainerContents, _ventureSheet, _allowances, _windowText, log);
+        _gcDailies = new GcDailiesReader(_retainerContents, _ventureSheet, _allowances, _windowText,
+            () => _jobLevels.LocalContentId, log);
+
+        // The day's Grand Company request list, for a crafter to read. Read-only: taking a snapshot is the
+        // player's action (the button on the page or /charon snapshot), never something another plugin triggers.
+        _gcRequestsIpc = new GcRequestsIpc(
+            pluginInterface,
+            () => LocalGcRequests,
+            itemId => _gcDailies.InBags(itemId) + _gcDailies.InRetainers(itemId),
+            log);
         _chat = chatGui;
 
         _mainWindow = new MainWindow(_config, SaveConfig, _whitelist, _daedalusIpc, _pillionManager, _inviteManager,
@@ -641,6 +652,7 @@ public sealed class CharonPlugin : IDalamudPlugin
         _levelingIpc.Dispose();
         _gearIpc.Dispose();
         _retainerContentsIpc.Dispose();
+        _gcRequestsIpc.Dispose();
         _dutyPop.Dispose();
         _revivalPrompt.Dispose();
         _teleportOffer.Dispose();
@@ -650,6 +662,25 @@ public sealed class CharonPlugin : IDalamudPlugin
 
         _config.MainWindowVisible = _mainWindow.IsOpen;
         SaveConfig();
+    }
+
+    /// <summary>The local character's last request-list snapshot, or null when none was ever taken.</summary>
+    private GcRequestSnapshot? LocalGcRequests =>
+        _config.GcRequests.TryGetValue(_jobLevels.LocalContentId.ToString(), out var snapshot) ? snapshot : null;
+
+    /// <summary>
+    /// Take a snapshot of the day's request list and keep it. Null when the delivery board is not open — a
+    /// snapshot of a board nobody is looking at would read as an empty list, which is a different answer.
+    /// </summary>
+    private GcRequestSnapshot? TakeGcSnapshot()
+    {
+        var snapshot = _gcDailies.CaptureRequests(DateTime.Now);
+        if (snapshot == null)
+            return null;
+
+        _config.GcRequests[snapshot.Character] = snapshot;
+        SaveConfig();
+        return snapshot;
     }
 
     private void OnCommand(string command, string args)
@@ -672,6 +703,27 @@ public sealed class CharonPlugin : IDalamudPlugin
         if (trimmed.Equals("unfollow", StringComparison.OrdinalIgnoreCase))
         {
             StopLocalFollow();
+            return;
+        }
+
+        // "/charon snapshot" — take the day's Grand Company request list from the open delivery board. This is
+        // the list a crafter works from: per item, what is asked for and what is still short.
+        if (trimmed.Equals("snapshot", StringComparison.OrdinalIgnoreCase))
+        {
+            var snapshot = TakeGcSnapshot();
+
+            if (snapshot == null)
+            {
+                _chat.Print("[Charon] no snapshot taken — open the Grand Company delivery board first "
+                            + "(the rows are only readable while it is up)");
+                return;
+            }
+
+            _chat.Print($"[Charon] request list captured: {GcRequests.Describe(snapshot, DateTime.UtcNow)}");
+
+            foreach (var (entry, shortfall) in GcRequests.Demand(snapshot, id => _gcDailies.InBags(id) + _gcDailies.InRetainers(id)))
+                _chat.Print($"  {entry.Name} — {entry.Kind} ({entry.Job}) asked {entry.Requested}, need {shortfall}");
+
             return;
         }
 
