@@ -207,6 +207,7 @@ public sealed unsafe class WindowTextDump
             // type byte, which is what matched almost nothing before.
             var seen = new HashSet<nint>();
             var types = new Dictionary<int, int>();
+            LastRowsReached = 0;
 
             Walk(unit->RootNode, lines, seen, types, 0);
 
@@ -253,7 +254,8 @@ public sealed unsafe class WindowTextDump
 
             LastDiagnostics = lines.Count == 0
                 ? $"{addonName}: root={(unit->RootNode == null ? "null" : "ok")}, "
-                  + $"uldList={count}, treeNodes={seen.Count}, components [{components}], 0 text nodes read"
+                  + $"uldList={count}, treeNodes={seen.Count}, components [{components}], "
+                  + $"rows={LastRowsReached}, 0 text nodes read"
                 : $"{addonName}: {lines.Count} text node(s) from {seen.Count} node(s), "
                   + $"components [{components}]";
         }
@@ -271,6 +273,9 @@ public sealed unsafe class WindowTextDump
     /// IS its content. Bounded, and every value read defensively — a null string pointer is a window mid-refresh,
     /// not a reason to take the tick down.
     /// </summary>
+    /// <summary>Rows reached through a list component during the last read — 0 means the descent found none.</summary>
+    public int LastRowsReached { get; private set; }
+
     private List<string> DumpAtkValues(AtkUnitBase* unit)
     {
         var lines = new List<string>();
@@ -299,6 +304,9 @@ public sealed unsafe class WindowTextDump
                         lines.Add($"[{i}] bool {value.Bool}");
                         break;
 
+                    // The client's string values report as ConstString; String is handled too so neither has to
+                    // be guessed at again — a type named but not read is how the rows stayed invisible.
+                    case AtkValueType.ConstString:
                     case AtkValueType.String:
                         // String is a CStringPointer: it reads itself, and a null one throws — which the
                         // try/catch above turns into "(atkValues unreadable)" rather than a dead tick.
@@ -321,8 +329,51 @@ public sealed unsafe class WindowTextDump
         return lines;
     }
 
+    /// <summary>
+    /// The node type of a tree-list component, from a known-good dump of the Timers window. The SDK documents the
+    /// node type enum's members but not their numbers, and reading a component as a list when it is not one is a
+    /// wild pointer read — so this descent is limited to the type we have actually seen.
+    /// </summary>
+    private const int TreeListNodeType = 1011;
+
+    /// <summary>
+    /// Walk a list component's item renderers. They are NOT children of the component's node list: the rows live
+    /// in the renderer objects, each with its own UldManager, which is why a window showing eleven rows can report
+    /// four text nodes.
+    /// </summary>
+    private void WalkRenderers(
+        AtkComponentTreeList* list,
+        List<(int Index, float X, float Y, string Text)> lines,
+        HashSet<nint> seen,
+        Dictionary<int, int> types,
+        int depth)
+    {
+        // The SDK's own row accessors, rather than indexing ItemRendererList by hand: that field's declared
+        // type is the list's item DATA, not a renderer array, and reading a component as the wrong shape is a
+        // wild pointer dereference.
+        var rows = Math.Min(list->GetItemCount(), 64);
+        LastRowsReached += rows;
+
+        for (var i = 0; i < rows; i++)
+        {
+            var renderer = list->GetItemRenderer(i);
+            if (renderer == null)
+                continue;
+
+            var uld = &renderer->UldManager;
+            var nodeCount = Math.Min((int)uld->NodeListCount, MaxNodesPerAddon);
+
+            for (var n = 1; n < nodeCount; n++)
+            {
+                var child = uld->NodeList[n];
+                if (child != null)
+                    Walk(child, lines, seen, types, depth + 1);
+            }
+        }
+    }
+
     /// <summary>Depth-first over ChildNode / NextSiblingNode — the same shape the client itself walks.</summary>
-    private static void Walk(
+    private void Walk(
         AtkResNode* node,
         List<(int, float, float, string)> lines,
         HashSet<nint> seen,
@@ -374,6 +425,14 @@ public sealed unsafe class WindowTextDump
                         if (child != null)
                             Walk(child, lines, seen, types, depth + 1);
                     }
+
+                    // A tree/list component keeps its ROWS as item renderers, which are none of the above: each
+                    // renderer is a component with its own UldManager, and the row's text lives in there. Without
+                    // this, the Timers window reports four text nodes (its title and three placeholders) while
+                    // showing eleven rows. 1011 is the tree-list node type — the value comes from a known-good
+                    // dump of that window, since the enum's members are not documented with their numbers.
+                    if ((int)node->Type == TreeListNodeType)
+                        WalkRenderers((AtkComponentTreeList*)componentNode->Component, lines, seen, types, depth);
                 }
             }
 
