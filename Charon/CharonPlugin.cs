@@ -703,6 +703,23 @@ public sealed class CharonPlugin : IDalamudPlugin
                     _chat.Print($"  {probe}");
             }
 
+            // Nothing found yet: show what the Timers window IS holding. A window whose rows come from a list
+            // component keeps them as the component's DATA (Items / ItemLabels) rather than as child text
+            // nodes, and those arrive as the addon's AtkValues — so the values are the next place to look, and
+            // printing them here means the question is answered in one command instead of one per guess.
+            if (_allowances.Lines.Count == 0)
+            {
+                var texts = _windowText.Read("ContentsInfo", requireVisible: false);
+
+                _chat.Print($"[Charon] ContentsInfo: {_windowText.LastDiagnostics}");
+
+                foreach (var node in texts.Take(8))
+                    _chat.Print($"  text ({node.X:0},{node.Y:0}) \"{node.Text}\"");
+
+                foreach (var value in _windowText.AtkValueDump.Take(16))
+                    _chat.Print($"  atk {value}");
+            }
+
             return;
         }
 
