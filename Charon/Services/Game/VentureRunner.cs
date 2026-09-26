@@ -34,6 +34,8 @@ namespace Charon.Services.Game;
 /// </summary>
 public sealed unsafe class VentureRunner
 {
+    private const uint AddonRowQuit = 2383;
+    private const uint AddonRowViewReportDated = 2384;
     private const uint AddonRowViewReport = 2385;
     private const uint AddonRowAssignIdle = 2386;
     private const uint AddonRowAssignInProgress = 2387;
@@ -85,6 +87,12 @@ public sealed unsafe class VentureRunner
     private bool _targetSent;
     private int _selectAttempts;
 
+    /// <summary>A send has gone out for the retainer in front of us: its cycle is collectable-complete.</summary>
+    private bool _sentThisRetainer;
+
+    /// <summary>The retainer's menu has been closed by us — the run is finished with it.</summary>
+    private bool _closedThisRetainer;
+
     /// <summary>
     /// The venture the next retainer should be sent on, as planned by the window (0 = no plan: the runner
     /// then only ever reassigns or takes quick exploration, which is exactly what it did before).
@@ -102,6 +110,8 @@ public sealed unsafe class VentureRunner
         TargetIndex = -1;
         _targetOpened = false;
         _targetSent = false;
+        _sentThisRetainer = false;
+        _closedThisRetainer = false;
         _selectAttempts = 0;
         _lastSessionUtc = DateTime.UtcNow;
         _repeats = 0;
@@ -143,6 +153,8 @@ public sealed unsafe class VentureRunner
         TargetIndex = -1;
         _targetOpened = false;
         _targetSent = false;
+        _sentThisRetainer = false;
+        _closedThisRetainer = false;
         WantedTaskId = 0; // a stopped operation leaves no queued intention behind
         _repeats = 0;
         _lastStep = string.Empty;
@@ -170,7 +182,7 @@ public sealed unsafe class VentureRunner
 
                 // Finished: the send has gone out and the game is back at the retainer list. Without this the run
                 // would carry on down the list, which is what "Collect all" is for, not a single row's button.
-                if (_targetOpened && _targetSent && screen == VentureScreen.None && listOpen)
+                if (_targetOpened && _targetSent && _closedThisRetainer && screen == VentureScreen.None && listOpen)
                 {
                     Stop("done — collected and sent out");
                     return;
@@ -196,7 +208,8 @@ public sealed unsafe class VentureRunner
                 return;
             }
 
-            var decision = VentureStep.Decide(Armed, screen, entries, reassign, confirm, assign, Text(), WantedTaskId);
+            var decision = VentureStep.Decide(Armed, screen, entries, reassign, confirm, assign, Text(), WantedTaskId,
+                closeWhenDone: _sentThisRetainer);
             if (decision.Action == VentureAction.None)
             {
                 Status = decision.Reason;
@@ -221,9 +234,20 @@ public sealed unsafe class VentureRunner
             _lastActionUtc = nowUtc;
             if (Execute(decision))
             {
-                // A send is what marks the targeted round trip as done: collecting alone leaves the retainer idle.
+                // A send marks the retainer's cycle as done — collecting alone would leave it idle, and the run
+                // would have nothing to close.
                 if (decision.Action is VentureAction.Reassign or VentureAction.PickVenture or VentureAction.Assign)
+                {
                     _targetSent = true;
+                    _sentThisRetainer = true;
+                }
+
+                if (decision.Action == VentureAction.Quit)
+                {
+                    // Back to the list: the next retainer starts a fresh cycle, and a targeted run is finished.
+                    _sentThisRetainer = false;
+                    _closedThisRetainer = true;
+                }
 
                 Status = decision.Reason;
                 _log.Debug("Ventures: {0}", decision.Reason);
@@ -280,6 +304,14 @@ public sealed unsafe class VentureRunner
     {
         switch (decision.Action)
         {
+            case VentureAction.Quit:
+                // Same click as an entry, named for what it means: the retainer's own menu, choosing Quit.
+                var retainerMenu = (AtkUnitBase*)_gameGui.GetAddonByName("SelectString").Address;
+                if (retainerMenu == null)
+                    return false;
+                retainerMenu->FireCallbackInt(decision.EntryIndex);
+                return true;
+
             case VentureAction.SelectEntry:
                 var menu = (AtkUnitBase*)_gameGui.GetAddonByName("SelectString").Address;
                 if (menu == null)
@@ -376,19 +408,24 @@ public sealed unsafe class VentureRunner
             return _text;
 
         var view = AddonText(AddonRowViewReport);
+        var viewDated = AddonText(AddonRowViewReportDated);
         var assignIdle = AddonText(AddonRowAssignIdle);
         var inProgress = AddonText(AddonRowAssignInProgress);
         var quick = BellText(BellRowQuickExploration);
+        var quit = AddonText(AddonRowQuit);
 
         if (view.Length == 0 || assignIdle.Length == 0)
             _log.Warning("Ventures: retainer menu text unreadable, the assist will stay idle");
         if (quick.Length == 0)
             _log.Warning("Ventures: quick exploration text unreadable, idle retainers will be skipped");
 
-        _log.Debug("Ventures: menu text - report {0} / idle {1} / in progress {2} / quick {3}",
-            view, assignIdle, inProgress, quick);
+        if (quit.Length == 0)
+            _log.Warning("Ventures: the menu's quit entry is unreadable, runs will leave the retainer menu open");
 
-        _text = new VentureMenuText(view, assignIdle, inProgress, quick);
+        _log.Debug("Ventures: menu text - report {0} / report(dated) {1} / idle {2} / in progress {3} / quick {4} / quit {5}",
+            view, viewDated, assignIdle, inProgress, quick, quit);
+
+        _text = new VentureMenuText(view, assignIdle, inProgress, quick, quit, viewDated);
         return _text;
     }
 

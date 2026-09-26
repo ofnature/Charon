@@ -169,4 +169,76 @@ public sealed class VentureStepTests
         Assert.Equal(VentureAction.None, d.Action);
         Assert.Equal("nothing to do for this retainer", d.Reason);
     }
+
+    /// <summary>
+    /// The menu texts, verbatim from the game's Addon sheet: 2383 Quit, 2384 the dated report, 2385 the plain
+    /// report, 2386 assign, 2387 assign in progress. The retainer menu in the wild shows the last of these
+    /// alongside the report, which is why the cycle needs a way out.
+    /// </summary>
+    private static readonly VentureMenuText SheetText = new(
+        "View venture report. (Complete)",
+        "Assign venture.",
+        "Assign venture. (In progress)",
+        "Quick exploration.",
+        "Quit.",
+        "View venture report. (Complete on 27/8 8:00)");
+
+    /// <summary>
+    /// Once the cycle is done the run leaves the retainer. This is the state the user was left in: the send was
+    /// out, so nothing more was clicked, and the retainer's menu stayed open on screen.
+    /// </summary>
+    [Fact]
+    public void AFinishedCycleClosesTheRetainerMenu()
+    {
+        string[] menu = ["Entrust or withdraw items.", "View retainer attributes and gear.", "Assign venture. (In progress)", "Quit."];
+
+        var decision = VentureStep.Decide(true, VentureScreen.Menu, menu, false, false, false, SheetText,
+            closeWhenDone: true);
+
+        Assert.Equal(VentureAction.Quit, decision.Action);
+        Assert.Equal(3, decision.EntryIndex);
+        Assert.Contains("closing", decision.Reason);
+    }
+
+    /// <summary>And without that flag nothing changes: an unfinished cycle must never close the menu early.</summary>
+    [Fact]
+    public void AFinishedCycleOnlyClosesWhenTheSendHasGoneOut()
+    {
+        string[] menu = ["View venture report. (Complete)", "Assign venture.", "Quit."];
+
+        var decision = VentureStep.Decide(true, VentureScreen.Menu, menu, false, false, false, SheetText);
+
+        Assert.Equal(VentureAction.SelectEntry, decision.Action);
+        Assert.Equal(0, decision.EntryIndex);
+    }
+
+    /// <summary>
+    /// The client words the report two ways — with the completion date and without — so a finished venture stays
+    /// collectable instead of looking like a retainer with nothing to do.
+    /// </summary>
+    [Fact]
+    public void EitherWordingOfTheReportCountsAsAReport()
+    {
+        string[] menu = ["View venture report. (Complete on 27/8 8:00)", "Assign venture. (In progress)", "Quit."];
+
+        var decision = VentureStep.Decide(true, VentureScreen.Menu, menu, false, false, false, SheetText);
+
+        Assert.Equal(VentureAction.SelectEntry, decision.Action);
+        Assert.Equal(0, decision.EntryIndex);
+        Assert.Equal("opening the venture report", decision.Reason);
+    }
+
+    /// <summary>An unread sheet row never matches, so a blank Quit stays put rather than clicking the last entry.</summary>
+    [Fact]
+    public void AnUnreadableQuitEntryIsNotClicked()
+    {
+        var noQuit = SheetText with { Quit = string.Empty };
+        string[] menu = ["Assign venture. (In progress)", "Quit."];
+
+        var decision = VentureStep.Decide(true, VentureScreen.Menu, menu, false, false, false, noQuit,
+            closeWhenDone: true);
+
+        Assert.NotEqual(VentureAction.Quit, decision.Action);
+        Assert.Equal(VentureAction.None, decision.Action);
+    }
 }

@@ -43,6 +43,9 @@ public enum VentureAction
     /// <summary>Confirm the new venture assignment.</summary>
     Assign,
 
+    /// <summary>Leave the retainer: pick the menu's Quit entry, so the run ends back at the retainer list.</summary>
+    Quit,
+
     /// <summary>Choose the planned venture in the venture list (see <c>VentureStep.Decide</c>'s wantedTaskId).</summary>
     PickVenture,
 }
@@ -71,7 +74,11 @@ public sealed record VentureMenuText(
     string ViewReport,
     string AssignIdle,
     string AssignInProgress,
-    string QuickExploration);
+    string QuickExploration,
+    /// <summary>The menu's last entry, "Quit." — how a run leaves the retainer instead of parking in its menu.</summary>
+    string Quit = "",
+    /// <summary>"View venture report. (Complete on 27/8 8:00)" — the dated variant of <see cref="ViewReport"/>.</summary>
+    string ViewReportDated = "");
 
 /// <summary>
 /// Decides the ONE next click inside an already-open retainer window. Pure logic — no Dalamud types.
@@ -106,7 +113,8 @@ public static class VentureStep
         bool confirmEnabled,
         bool assignEnabled,
         VentureMenuText text,
-        uint wantedTaskId = 0)
+        uint wantedTaskId = 0,
+        bool closeWhenDone = false)
     {
         if (!armed)
             return VentureDecision.Nothing("not armed");
@@ -139,9 +147,21 @@ public static class VentureStep
                     : new VentureDecision(VentureAction.PickVenture, -1, $"picking planned venture {wantedTaskId}");
 
             case VentureScreen.Menu:
+                // The cycle is over for this retainer, so leave it: without this the run parks in the retainer's
+                // menu with the work already done, which is where it used to end. Only reached once a send has
+                // actually gone out — closing before that would abandon a collect or a re-send half done.
+                if (closeWhenDone)
+                {
+                    var quit = IndexOf(entries, text.Quit);
+                    if (quit >= 0)
+                        return new VentureDecision(VentureAction.Quit, quit, "closing the retainer");
+                }
+
                 // Order matters: collect before assigning, or a finished venture's rewards would be
-                // left sitting in the report while we sent the retainer straight back out.
-                var report = IndexOf(entries, text.ViewReport);
+                // left sitting in the report while we sent the retainer straight back out. The report has two
+                // labels in the client — with a completion date and without — and a both-branches check is how a
+                // finished venture stays collectable instead of looking like nothing to do.
+                var report = Math.Max(IndexOf(entries, text.ViewReportDated), IndexOf(entries, text.ViewReport));
                 if (report >= 0)
                     return new VentureDecision(VentureAction.SelectEntry, report, "opening the venture report");
 
