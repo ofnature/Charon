@@ -37,6 +37,9 @@ public sealed unsafe class WindowTextDump
         _log = log;
     }
 
+    /// <summary>The addon's AtkValues, as printable lines — the other place a window keeps its text.</summary>
+    public IReadOnlyList<string> AtkValueDump { get; private set; } = [];
+
     /// <summary>The last dump, so a caller can echo a preview into chat instead of only into the log.</summary>
     public IReadOnlyList<(int Index, float X, float Y, string Text)> LastDump { get; private set; } = [];
 
@@ -227,6 +230,11 @@ public sealed unsafe class WindowTextDump
                     lines.Add((lines.Count, node->ScreenX, node->ScreenY, text));
             }
 
+            // A window can be filled from AtkValues rather than from text nodes (the client re-renders a list
+            // component from them every time the data changes), so the dump reports them too — that is where
+            // a row's text lives for windows that have none on the node tree.
+            AtkValueDump = DumpAtkValues(unit);
+
             var histogram = string.Join(", ", types.OrderByDescending(kv => kv.Value)
                 .Take(6)
                 .Select(kv => $"{kv.Key}x{kv.Value}"));
@@ -240,6 +248,61 @@ public sealed unsafe class WindowTextDump
         {
             LastDiagnostics = $"{addonName}: {ex.Message}";
             _log.Debug("[TextDump] {0} could not be read: {1}", addonName, ex.Message);
+        }
+
+        return lines;
+    }
+
+    /// <summary>
+    /// Read an addon's AtkValues: the value array the client passes to a window, which for a list-driven window
+    /// IS its content. Bounded, and every value read defensively — a null string pointer is a window mid-refresh,
+    /// not a reason to take the tick down.
+    /// </summary>
+    private List<string> DumpAtkValues(AtkUnitBase* unit)
+    {
+        var lines = new List<string>();
+
+        try
+        {
+            var count = Math.Min((int)unit->AtkValuesCount, 64);
+            for (var i = 0; i < count; i++)
+            {
+                var value = unit->AtkValues[i];
+                switch (value.Type)
+                {
+                    case AtkValueType.Int:
+                        lines.Add($"[{i}] int {value.Int}");
+                        break;
+
+                    case AtkValueType.UInt:
+                        lines.Add($"[{i}] uint {value.UInt}");
+                        break;
+
+                    case AtkValueType.Float:
+                        lines.Add($"[{i}] float {value.Float:0.###}");
+                        break;
+
+                    case AtkValueType.Bool:
+                        lines.Add($"[{i}] bool {value.Bool}");
+                        break;
+
+                    case AtkValueType.String:
+                        // String is a CStringPointer: it reads itself, and a null one throws — which the
+                        // try/catch above turns into "(atkValues unreadable)" rather than a dead tick.
+                        var text = value.String.ToString().Trim();
+                        if (text.Length > 0)
+                            lines.Add($"[{i}] str \"{text}\"");
+                        break;
+
+                    default:
+                        lines.Add($"[{i}] {value.Type}");
+                        break;
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            lines.Add($"(atkValues unreadable: {ex.Message})");
         }
 
         return lines;
@@ -344,6 +407,11 @@ public sealed unsafe class WindowTextDump
 
         var report = new StringBuilder();
         report.Append("[TextDump] ").Append(LastDiagnostics).Append(':');
+
+        // AtkValues come first because a list-driven window keeps its content there, and "no text nodes" plus
+        // "these values" is the whole answer in one line.
+        foreach (var value in AtkValueDump)
+            report.Append('\n').Append("  atk ").Append(value);
         if (ordered.Count == 0)
         {
             report.Append("\n  (nothing to list — a window whose rows are drawn by a component may keep "

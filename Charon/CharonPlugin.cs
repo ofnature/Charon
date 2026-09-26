@@ -756,8 +756,16 @@ public sealed class CharonPlugin : IDalamudPlugin
             if (dump.Count == 0)
             {
                 _chat.Print($"[Charon] {_windowText.LastDiagnostics}");
-                _chat.Print("  nothing on the node tree — /charon text <other window> if this is not the one "
-                            + "you meant");
+
+                // No text on the node tree is a real answer for a list-driven window: what it is showing is in
+                // its AtkValues, so those go to chat rather than only to the log.
+                foreach (var value in _windowText.AtkValueDump.Take(12))
+                    _chat.Print($"  atk {value}");
+
+                if (_windowText.AtkValueDump.Count == 0)
+                    _chat.Print("  nothing on the node tree and no AtkValues — this window draws its content "
+                                + "some other way");
+
                 return;
             }
 
