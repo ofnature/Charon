@@ -30,12 +30,16 @@ public sealed class AllowanceReader
 
     private static readonly TimeSpan ScanEvery = TimeSpan.FromSeconds(2);
 
+    /// <summary>How many windows one pass may look inside — bounded so a scan cannot cost a frame.</summary>
+    private const int PerPass = 16;
+
     private readonly WindowTextDump _windows;
     private readonly IPluginLog _log;
 
     private string? _addon;
     private bool _loggedMiss;
     private int _scans;
+    private int _scanOffset;
     private DateTime _lastScanUtc = DateTime.MinValue;
 
     public AllowanceReader(WindowTextDump windows, IPluginLog log)
@@ -107,9 +111,19 @@ public sealed class AllowanceReader
         var open = _windows.LoadedAddons(visibleOnly: false);
         LastScanCount = open.Count;
 
-        // The hint list first (cheap), then everything else that is open. A window that holds the labels is
-        // the Timers window whatever it is called.
-        foreach (var name in Candidates.Concat(open).Distinct(StringComparer.OrdinalIgnoreCase))
+        // Walk a BOUNDED slice per pass and rotate: reading every loaded window is both expensive and the
+        // thing that crashed the tick (walking a window mid-teardown is an access violation, which no
+        // try/catch can catch). Every pass still moves through the list, so nothing is missed for long.
+        var slice = open.Count <= PerPass
+            ? open
+            : Enumerable.Range(0, PerPass)
+                .Select(i => open[(_scanOffset + i) % open.Count])
+                .ToList();
+        _scanOffset = (_scanOffset + PerPass) % Math.Max(1, open.Count);
+
+        // The hint list first (cheap), then the slice. A window that holds the labels is the Timers window
+        // whatever it is called.
+        foreach (var name in Candidates.Concat(slice).Distinct(StringComparer.OrdinalIgnoreCase))
         {
             if (ReadFrom(name, nowUtc))
             {

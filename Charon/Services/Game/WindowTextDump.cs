@@ -23,6 +23,11 @@ namespace Charon.Services.Game;
 /// </summary>
 public sealed unsafe class WindowTextDump
 {
+    /// <summary>Bounds on any one window's walk: no window needs more, and a malformed tree must not run away.</summary>
+    private const int MaxNodesPerAddon = 4000;
+
+    private const int MaxDepth = 24;
+
     private readonly IGameGui _gameGui;
     private readonly IPluginLog _log;
 
@@ -106,6 +111,17 @@ public sealed unsafe class WindowTextDump
             if (unit == null || (requireVisible && !unit->IsVisible))
                 return lines;
 
+            // READINESS IS THE CRASH GUARD, not a nicety. A window that is still loading or already tearing
+            // down has a node list being rewritten under us, and walking that is an ACCESS VIOLATION — which
+            // managed code cannot catch, so the try/catch around this whole method never would have saved it.
+            // (A live report proved exactly that: the exception escaped Read and took the framework tick with
+            // it.) IsReady is the SDK's own notion of "the node tree is intact right now".
+            if (!unit->IsReady)
+            {
+                LastDiagnostics = $"{addonName}: not ready — skipped rather than walked";
+                return lines;
+            }
+
             // Two sources, because a window's text can be on either: the node TREE (components keep their rows
             // as children) and the flat ULD list (which is 1-based — NodeList[0] is not a node). The typed
             // accessor does the cast the SDK's own authors intended, instead of a hand comparison against a
@@ -113,11 +129,11 @@ public sealed unsafe class WindowTextDump
             var seen = new HashSet<nint>();
             var types = new Dictionary<byte, int>();
 
-            Walk(unit->RootNode, lines, seen, types);
+            Walk(unit->RootNode, lines, seen, types, 0);
 
             var list = unit->UldManager.NodeList;
-            var count = unit->UldManager.NodeListCount;
-            for (var i = 1; i <= count; i++)
+            var count = Math.Min((int)unit->UldManager.NodeListCount, MaxNodesPerAddon);
+            for (var i = 1; i < count; i++)
             {
                 var node = list[i];
                 if (node == null || !seen.Add((nint)node))
@@ -158,10 +174,17 @@ public sealed unsafe class WindowTextDump
         AtkResNode* node,
         List<(int, float, float, string)> lines,
         HashSet<nint> seen,
-        Dictionary<byte, int> types)
+        Dictionary<byte, int> types,
+        int depth)
     {
+        if (depth > MaxDepth)
+            return;
+
         while (node != null)
         {
+            if (seen.Count >= MaxNodesPerAddon)
+                return;
+
             if (!seen.Add((nint)node))
                 return; // a cycle here would spin forever, and this must never do that
 
@@ -180,7 +203,7 @@ public sealed unsafe class WindowTextDump
             }
 
             if (node->ChildNode != null)
-                Walk(node->ChildNode, lines, seen, types);
+                Walk(node->ChildNode, lines, seen, types, depth + 1);
 
             node = node->NextSiblingNode;
         }
