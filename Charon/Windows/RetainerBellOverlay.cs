@@ -29,6 +29,8 @@ public sealed unsafe class RetainerBellOverlay : Window
     private readonly VentureRunner _runner;
     private readonly Func<ulong> _contentId;
     private readonly Action _openBoard;
+    private readonly IPluginLog _log;
+    private DateTime _lastLoggedUtc = DateTime.MinValue;
 
     public RetainerBellOverlay(
         IGameGui gameGui,
@@ -36,7 +38,8 @@ public sealed unsafe class RetainerBellOverlay : Window
         RetainerPlanner planner,
         VentureRunner runner,
         Func<ulong> contentId,
-        Action openBoard)
+        Action openBoard,
+        IPluginLog log)
         : base("##CharonRetainerBell")
     {
         _gameGui = gameGui;
@@ -45,6 +48,7 @@ public sealed unsafe class RetainerBellOverlay : Window
         _runner = runner;
         _contentId = contentId;
         _openBoard = openBoard;
+        _log = log;
 
         Flags = ImGuiWindowFlags.NoDecoration | ImGuiWindowFlags.NoBackground
                 | ImGuiWindowFlags.AlwaysAutoResize | ImGuiWindowFlags.NoSavedSettings
@@ -52,6 +56,11 @@ public sealed unsafe class RetainerBellOverlay : Window
                 | ImGuiWindowFlags.NoMove;
         RespectCloseHotkey = false;
         IsOpen = false;
+
+        // Drawn above other plugins' windows. This panel is a decision aid for a GAME window that is open right
+        // now, and it is placed beside it — which is exactly where another plugin's panel can be sitting (an
+        // Allagan Market window covers that spot). Being the one thing the player opened on purpose, it wins.
+        IsTopMost = true;
     }
 
     public override void PreDraw()
@@ -65,15 +74,39 @@ public sealed unsafe class RetainerBellOverlay : Window
         if (node == null)
             return;
 
-        // Just inside the bell list's right edge, so the retainer names under it stay readable.
+        // Just inside the bell list's right edge, so the retainer names under it stay readable — and CLAMPED into
+        // the viewport, because a position derived from the game window can land outside it (a list dragged to the
+        // edge, a scaled HUD) and a window parked off-screen looks exactly like a window that never opened.
         var scale = unit->Scale;
+        var viewport = ImGui.GetMainViewport();
+        const float assumedWidth = 420f;
+        const float assumedHeight = 150f;
+
+        var x = node->ScreenX + (node->Width * scale) + 8f;
+        var y = node->ScreenY;
+
+        var maxX = viewport.WorkPos.X + viewport.WorkSize.X - assumedWidth;
+        var maxY = viewport.WorkPos.Y + viewport.WorkSize.Y - assumedHeight;
+
         Position = new System.Numerics.Vector2(
-            node->ScreenX + (node->Width * scale) + 8f,
-            node->ScreenY);
+            Math.Clamp(x, viewport.WorkPos.X, Math.Max(viewport.WorkPos.X, maxX)),
+            Math.Clamp(y, viewport.WorkPos.Y, Math.Max(viewport.WorkPos.Y, maxY)));
     }
 
     public override void Draw()
     {
+        // Say where this actually landed, at most twice a minute. "Nothing appeared" and "it appeared at
+        // 12000,300" look identical to the player, and only one of them is a drawing problem.
+        if (DateTime.UtcNow - _lastLoggedUtc > TimeSpan.FromSeconds(30))
+        {
+            _lastLoggedUtc = DateTime.UtcNow;
+            var pos = ImGui.GetWindowPos();
+            var size = ImGui.GetWindowSize();
+            _log.Debug("[Retainers] bell overlay drawn at {0},{1} size {2}x{3} (viewport {4}x{5})",
+                pos.X, pos.Y, size.X, size.Y,
+                ImGui.GetMainViewport().WorkSize.X, ImGui.GetMainViewport().WorkSize.Y);
+        }
+
         var rows = _retainers.Read(DateTime.UtcNow);
 
         if (_runner.Armed)

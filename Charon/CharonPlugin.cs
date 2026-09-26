@@ -568,7 +568,8 @@ public sealed class CharonPlugin : IDalamudPlugin
             _retainerPlanner,
             _ventureRunner,
             () => _jobLevels.LocalContentId,
-            () => _retainersWindow.IsOpen = true);
+            () => _retainersWindow.IsOpen = true,
+            log);
         _windowSystem.AddWindow(_retainerBell);
 
         _saddlebagOverlay = new SaddlebagOverlay(gameGui, _saddlebag);
