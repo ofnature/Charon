@@ -25,6 +25,48 @@ public class AllowancesTests
         (420f, 244f, "Today's Remaining Allowances: 12"),
     ];
 
+    /// <summary>
+    /// The rows the reader actually sees come out of a list component, which reports component-relative
+    /// positions — so the same visual line can sit a few pixels apart from its label. The label must still pick
+    /// up its value, and the wider net must not reach into the row below.
+    /// </summary>
+    [Fact]
+    public void AValueAFewPixelsOffItsLabelIsStillThatLabelsValue()
+    {
+        (float X, float Y, string Text)[] window =
+        [
+            (30f, 100f, "Next Mission Allowance"),
+            (420f, 110f, "14:08 Remaining (9/26 15:00)"),
+            (480f, 110f, "Allowances: 12"),
+            (30f, 144f, "Custom Deliveries"),
+            (420f, 144f, "74:08 Remaining (9/29 3:00)"),
+        ];
+
+        var line = Allowances.Find(window, "Next Mission Allowance");
+
+        Assert.Equal(AllowanceState.Countdown, line!.State);
+        Assert.Equal(14, line.Hours);
+        Assert.Equal(8, line.Minutes);
+    }
+
+    /// <summary>An empty value is a state the UI can word honestly, not a crash and not a guess.</summary>
+    [Fact]
+    public void ALabelWithNothingBesideItReadsAsUnknown()
+    {
+        (float X, float Y, string Text)[] window =
+        [
+            (30f, 100f, "Next Mission Allowance"),
+            (30f, 144f, "Custom Deliveries"),
+            (420f, 144f, "74:08 Remaining (9/29 3:00)"),
+        ];
+
+        var line = Allowances.Find(window, "Next Mission Allowance");
+
+        Assert.Equal(AllowanceState.Unknown, line!.State);
+        Assert.Equal(string.Empty, line.Value);
+        Assert.Equal("not read", line.Describe());
+    }
+
     [Fact]
     public void FindsTheMissionAllowanceAndItsCountdown()
     {

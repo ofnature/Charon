@@ -110,6 +110,25 @@ public static class Allowances
                     .Select(t => t.Text)
                     .FirstOrDefault(v => v.Length > 0);
 
+            if (value is null)
+            {
+                // Nothing on the row parsed, which usually means the label and its value did not land on the
+                // same row: nodes reached through a list component carry component-relative positions, so the
+                // same visual line can differ by a few pixels. Widen once, keeping only text to the RIGHT of the
+                // label (the value's side) and stopping short of the next row's height, so a wider net cannot
+                // borrow the neighbouring line's figure.
+                var nearby = nodes
+                    .Where(t => t.Text.Length > 0
+                                && !(Math.Abs(t.X - labelNode.X) < 0.5f && Math.Abs(t.Y - labelNode.Y) < 0.5f)
+                                && Math.Abs(t.Y - labelNode.Y) <= RowTolerance * 3
+                                && t.X > labelNode.X)
+                    .OrderBy(t => t.X)
+                    .ToList();
+
+                value = nearby.Where(t => Parse(t.Text) != AllowanceState.Unknown).Select(t => t.Text).FirstOrDefault()
+                        ?? nearby.Select(t => t.Text).FirstOrDefault();
+            }
+
             if (value is null && i + 1 < rows.Count)
             {
                 var next = rows[i + 1];

@@ -10,6 +10,7 @@ using Dalamud.Interface.Windowing;
 using Dalamud.Plugin;
 using Dalamud.Plugin.Services;
 using Charon.Features.AutoAccept;
+using Charon.Features.Dailies;
 using Charon.Features.AutoPillion;
 using Charon.Features.Fleet;
 using Charon.Features.Follow;
@@ -671,6 +672,28 @@ public sealed class CharonPlugin : IDalamudPlugin
         if (trimmed.Equals("unfollow", StringComparison.OrdinalIgnoreCase))
         {
             StopLocalFollow();
+            return;
+        }
+
+        // "/charon allowances" — what the Timers-window read actually produced: each line's label, the raw
+        // value text it attached, and the state parsed from it. A state that comes back "not recognised" with
+        // an empty value means the association failed, with a raw value means the wording did, and that is a
+        // different fix each time — so the page should not be the only place that knows.
+        if (trimmed.Equals("allowances", StringComparison.OrdinalIgnoreCase))
+        {
+            var age = _allowances.SeenUtc == DateTime.MinValue
+                ? "never"
+                : $"{(DateTime.UtcNow - _allowances.SeenUtc).TotalSeconds:0}s ago";
+
+            _chat.Print($"[Charon] Timers window '{_allowances.Addon}' "
+                        + $"({_allowances.LastScanCount} in the client's list), read {age} — "
+                        + $"{_allowances.Lines.Count} line(s)");
+
+            foreach (var line in _allowances.Lines)
+                _chat.Print($"  {line.Label} -> \"{line.Value}\" ({line.State}"
+                            + (line.State == AllowanceState.Countdown ? $", {line.Hours}h {line.Minutes:00}m" : string.Empty)
+                            + ")");
+
             return;
         }
 
