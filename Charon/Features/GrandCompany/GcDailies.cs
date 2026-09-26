@@ -43,11 +43,20 @@ public sealed record GcMissionPlan(GcDailyMission Mission, int InBags, int InRet
 {
     public int Held => InBags + InRetainers;
 
-    /// <summary>True when the item is where it needs to be for a hand-in at the officer.</summary>
-    public bool Ready => InBags >= Mission.Requested && Mission.Requested > 0 && Mission.TurnInAvailable;
+    /// <summary>
+    /// True when the item is where it needs to be for a hand-in at the officer. Gear also needs the game's
+    /// own availability flag, which is documented for gear; a supply or provisioning row is judged on the
+    /// fact that you hold it, because the flag beside those rows is not explained anywhere.
+    /// </summary>
+    public bool Ready => Mission.Requested > 0
+                         && InBags >= Mission.Requested
+                         && (Mission.Kind != GcMissionKind.ExpertDelivery || Mission.TurnInAvailable);
 
     /// <summary>True when it exists but is not in the bags — the retainer-fetch case.</summary>
-    public bool NeedsFetch => !Ready && Mission.TurnInAvailable && Mission.Requested > 0 && Held >= Mission.Requested;
+    public bool NeedsFetch => !Ready
+                              && Held >= Mission.Requested
+                              && Mission.Requested > 0
+                              && (Mission.Kind != GcMissionKind.ExpertDelivery || Mission.TurnInAvailable);
 }
 
 /// <summary>
@@ -107,33 +116,30 @@ public static class GcDailies
         if (mission.Requested <= 0)
             return new GcMissionPlan(mission, inBags, inRetainers, "nothing requested");
 
-        if (!mission.TurnInAvailable)
-        {
-            // The flag's meaning is documented for gear; for supply and provisioning rows it is read but not
-            // explained, so the wording says who says so and the raw byte rides along for a later look.
-            return new GcMissionPlan(mission, inBags, inRetainers,
-                mission.Kind == GcMissionKind.ExpertDelivery
-                    ? "the game will not take this one"
-                    : $"the game's flag says this row is closed (raw {mission.AvailabilityRaw})");
-        }
+        // Gear's flag IS documented (0 = the game will take it), so it can decide there.
+        if (mission.Kind == GcMissionKind.ExpertDelivery && !mission.TurnInAvailable)
+            return new GcMissionPlan(mission, inBags, inRetainers, "the game will not take this one");
 
         if (inBags >= mission.Requested)
         {
             return new GcMissionPlan(mission, inBags, inRetainers,
-                $"ready in the bags — hand in {mission.Requested}"
-                + (mission.BonusReward ? " (bonus)" : string.Empty));
+                Flagged(mission, $"ready in the bags — hand in {mission.Requested}"
+                                 + (mission.BonusReward ? " (bonus)" : string.Empty)));
         }
 
         if (held >= mission.Requested)
-            return new GcMissionPlan(mission, inBags, inRetainers, "in a retainer — fetch it first");
+            return new GcMissionPlan(mission, inBags, inRetainers, Flagged(mission, "in a retainer — fetch it first"));
 
+        // Short is a fact (you do not hold it), and it stays a fact whatever the flag says: the daily state of
+        // a supply row is the game's business, and a verdict built on a byte nobody has explained would either
+        // send you crafting something already delivered or hide work that is still there.
         var short_ = mission.Requested - held;
-        return new GcMissionPlan(mission, inBags, inRetainers, mission.Kind switch
+        return new GcMissionPlan(mission, inBags, inRetainers, Flagged(mission, mission.Kind switch
         {
             GcMissionKind.Supply => $"short {short_} — a craft (Supply)",
             GcMissionKind.Provisioning => $"short {short_} — a gather (Provisioning)",
             _ => $"gear hand-in: {short_} more for a full delivery",
-        });
+        }));
     }
 
     /// <summary>How many rows of each kind the board carries — the tiles and the status line both want this.</summary>
@@ -154,6 +160,20 @@ public static class GcDailies
 
         return (supply, provisioning, expert);
     }
+
+    /// <summary>
+    /// Add the game's own availability flag to a verdict WITHOUT letting it change the verdict.
+    ///
+    /// For a supply or provisioning row the flag is read but not explained anywhere, and it is not ours to
+    /// interpret: showing it beside the facts means no claim is made and the evidence still reaches the player
+    /// (and the session log) instead of being thrown away or trusted.
+    /// </summary>
+    private static string Flagged(GcDailyMission mission, string verdict) =>
+        mission.TurnInAvailable
+            ? verdict
+            : mission.Kind == GcMissionKind.ExpertDelivery
+                ? verdict
+                : $"{verdict}  ·  game flag {mission.AvailabilityRaw}";
 
     /// <summary>Per-row plans for a whole board, with the bag and retainer counts resolved by the caller.</summary>
     public static IReadOnlyList<GcMissionPlan> PlanAll(

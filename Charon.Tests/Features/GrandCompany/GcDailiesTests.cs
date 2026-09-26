@@ -88,16 +88,34 @@ public class GcDailiesTests
     }
 
     [Fact]
-    public void SomethingAlreadyHandedIn_IsNotReportedAsShort()
+    public void ASupplyRowsFlagAnnotatesTheVerdictInsteadOfOverridingIt()
     {
-        // The game flips this flag once the daily delivery is made; telling the player to craft it again
-        // would be the most expensive kind of wrong.
-        var plan = GcDailies.Plan(Mission(requested: 1, available: false), inBags: 0, inRetainers: 0);
+        // The flag's meaning for supply rows is documented NOWHERE, so it must not decide the verdict: a
+        // "closed" reading that is really "you do not hold the item" would hide a day's work that is still
+        // there, and the reverse would send someone crafting something already delivered. Facts decide; the
+        // byte rides along beside them.
+        var plan = GcDailies.Plan(Mission(requested: 1, available: false) with { AvailabilityRaw = 1 }, 0, 0);
 
-        Assert.False(plan.Ready);
-        Assert.False(plan.NeedsFetch);
-        Assert.DoesNotContain("short", plan.Status);
-        Assert.Contains("the game's flag says this row is closed", plan.Status);
+        Assert.Contains("short 1 — a craft (Supply)", plan.Status);
+        Assert.Contains("game flag 1", plan.Status);
+    }
+
+    [Fact]
+    public void AnUnflaggedSupplyRow_CarriesNoFlagNoise()
+    {
+        var plan = GcDailies.Plan(Mission(requested: 1), inBags: 0, inRetainers: 0);
+
+        Assert.DoesNotContain("game flag", plan.Status);
+    }
+
+    [Fact]
+    public void AReadySupplyRow_AlsoCarriesTheFlagWhenItIsSet()
+    {
+        var plan = GcDailies.Plan(Mission(requested: 1, available: false) with { AvailabilityRaw = 7 }, 5, 0);
+
+        Assert.True(plan.Ready);
+        Assert.Contains("ready in the bags", plan.Status);
+        Assert.Contains("game flag 7", plan.Status);
     }
 
     [Fact]
@@ -116,7 +134,7 @@ public class GcDailiesTests
     {
         var plan = GcDailies.Plan(Mission(requested: 1, available: false) with { AvailabilityRaw = 3 }, 0, 0);
 
-        Assert.Contains("raw 3", plan.Status);
+        Assert.Contains("game flag 3", plan.Status);
     }
 
     [Fact]

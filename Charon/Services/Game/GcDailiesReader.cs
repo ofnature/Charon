@@ -46,6 +46,7 @@ public sealed unsafe class GcDailiesReader
 
     private GcBoard? _cached;
     private DateTime _cachedAtUtc = DateTime.MinValue;
+    private bool _loggedBoard;
 
     public GcDailiesReader(RetainerContentsReader contents, VentureSheetReader sheet, IPluginLog log)
     {
@@ -128,6 +129,17 @@ public sealed unsafe class GcDailiesReader
                     row.IsBonusReward,
                     row.IsTurnInAvailable,
                     row.TurnInAvailable));
+            }
+
+            // Once per session, the raw row state goes to the log. The availability byte's meaning for
+            // supply and provisioning rows is not documented anywhere, and the honest way to learn it is to
+            // look at what the game says beside what the board shows — not to guess and then word around it.
+            if (!_loggedBoard && missions.Count > 0)
+            {
+                _loggedBoard = true;
+                _log.Debug("[GC] board: {0}", string.Join(" | ", missions.Select(m =>
+                    $"{m.Job}#{m.Position} id={m.ItemId} req={m.Requested} own={m.Possessed} "
+                    + $"flag={m.AvailabilityRaw} bonus={(m.BonusReward ? 1 : 0)} avail={m.TurnInAvailable}")));
             }
 
             var counts = GcDailies.Counts(missions);
