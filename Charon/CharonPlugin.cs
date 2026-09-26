@@ -464,7 +464,7 @@ public sealed class CharonPlugin : IDalamudPlugin
             log);
 
 
-        _gcDailies = new GcDailiesReader(_retainerContents, log);
+        _gcDailies = new GcDailiesReader(_retainerContents, _ventureSheet, log);
 
         _mainWindow = new MainWindow(_config, SaveConfig, _whitelist, _daedalusIpc, _pillionManager, _inviteManager,
             _healWatch, _groupInvites, _fcChest, _gear, _followManager, ReadRawSeatOccupancy, () => _boardingStatus,

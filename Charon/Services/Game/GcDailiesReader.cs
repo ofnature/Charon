@@ -41,14 +41,16 @@ public sealed unsafe class GcDailiesReader
     private static readonly TimeSpan CacheFor = TimeSpan.FromSeconds(2);
 
     private readonly RetainerContentsReader _contents;
+    private readonly VentureSheetReader _sheet;
     private readonly IPluginLog _log;
 
     private GcBoard? _cached;
     private DateTime _cachedAtUtc = DateTime.MinValue;
 
-    public GcDailiesReader(RetainerContentsReader contents, IPluginLog log)
+    public GcDailiesReader(RetainerContentsReader contents, VentureSheetReader sheet, IPluginLog log)
     {
         _contents = contents;
+        _sheet = sheet;
         _log = log;
     }
 
@@ -99,7 +101,8 @@ public sealed unsafe class GcDailiesReader
 
             var open = agent->IsAddonShown();
             var missions = new List<GcDailyMission>();
-            var count = Math.Clamp(agent->NumItems, 0, 128);
+            var reported = agent->NumItems;
+            var count = Math.Clamp(reported, 0, 256);
 
             for (var i = 0; i < count; i++)
             {
@@ -107,24 +110,31 @@ public sealed unsafe class GcDailiesReader
                 if (row.ItemId == 0)
                     continue;
 
+                // The name comes from the item sheet, not from the row's own string: this struct holds its
+                // name as UI text (payload-coded), which renders as boxes, and the sheet is also what the
+                // rest of Charon shows for an item id.
+                var name = _sheet.ItemName(row.ItemId);
+
                 missions.Add(new GcDailyMission(
                     row.Position,
                     GcDailies.KindFor(row.Position),
                     GcDailies.JobFor(row.Position),
                     row.ItemId,
-                    row.ItemName.ToString(),
+                    name,
                     row.NumRequested,
                     row.ExpReward,
                     row.SealReward,
                     row.NumPossessed,
                     row.IsBonusReward,
-                    row.IsTurnInAvailable));
+                    row.IsTurnInAvailable,
+                    row.TurnInAvailable));
             }
 
+            var counts = GcDailies.Counts(missions);
             return new GcBoard(missions, seals, maxSeals, company, rank, agent->SelectedTab, open,
-                open
-                    ? $"{missions.Count} row(s) on the board"
-                    : $"{missions.Count} row(s) known — open the board at your GC officer to refresh them");
+                $"{counts.Supply} supply · {counts.Provisioning} provisioning · {counts.Expert} expert"
+                + $" (agent reports {reported})"
+                + (open ? string.Empty : " — open the board at your GC officer to refresh"));
         }
         catch (Exception ex)
         {

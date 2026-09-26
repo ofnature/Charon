@@ -3147,11 +3147,11 @@ public sealed class MainWindow : Window
         var scale = ImGuiHelpers.GlobalScale;
         var tileWidth = Math.Max(150f, (ImGui.GetContentRegionAvail().X / 3f) - (12f * scale));
         StatTile.Draw("Supply (DoH)", $"{supply.Count(p => p.Ready)}/{supply.Count}",
-            supply.Count == 0 ? "nothing requested today" : $"{supply.Count(p => p.Mission.TurnInAvailable)} still open",
+            supply.Count == 0 ? "nothing requested today" : $"{supply.Count} mission(s) requested",
             CharonTheme.AccentCyan, tileWidth);
         ImGui.SameLine();
         StatTile.Draw("Provisioning (DoL)", $"{provisioning.Count(p => p.Ready)}/{provisioning.Count}",
-            provisioning.Count == 0 ? "nothing requested today" : $"{provisioning.Count(p => p.Mission.TurnInAvailable)} still open",
+            provisioning.Count == 0 ? "nothing requested today" : $"{provisioning.Count} mission(s) requested",
             CharonTheme.AccentMint, tileWidth);
         ImGui.SameLine();
         StatTile.Draw("Expert Delivery", expert.Count.ToString(),

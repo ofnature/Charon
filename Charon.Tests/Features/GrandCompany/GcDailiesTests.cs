@@ -96,7 +96,40 @@ public class GcDailiesTests
 
         Assert.False(plan.Ready);
         Assert.False(plan.NeedsFetch);
-        Assert.Equal("already handed in", plan.Status);
+        Assert.DoesNotContain("short", plan.Status);
+        Assert.Contains("the game's flag says this row is closed", plan.Status);
+    }
+
+    [Fact]
+    public void AnExpertDeliveryRowTheGameRefuses_SaysSoWithoutMentioningDailyState()
+    {
+        // The flag IS documented for gear, so it can be stated plainly there — and must not borrow the
+        // supply wording, which hedges because its meaning for supply rows is not documented.
+        var plan = GcDailies.Plan(Mission(position: 12, requested: 1, available: false), inBags: 9, inRetainers: 0);
+
+        Assert.False(plan.Ready);
+        Assert.Equal("the game will not take this one", plan.Status);
+    }
+
+    [Fact]
+    public void TheRawAvailabilityByteRidesAlongForALaterLook()
+    {
+        var plan = GcDailies.Plan(Mission(requested: 1, available: false) with { AvailabilityRaw = 3 }, 0, 0);
+
+        Assert.Contains("raw 3", plan.Status);
+    }
+
+    [Fact]
+    public void CountsSplitTheBoardByItsOwnThreeTabs()
+    {
+        var counts = GcDailies.Counts(
+        [
+            Mission(position: 0), Mission(position: 7),
+            Mission(position: 8), Mission(position: 9), Mission(position: 10),
+            Mission(position: 11), Mission(position: 40),
+        ]);
+
+        Assert.Equal((2, 3, 2), counts);
     }
 
     [Fact]

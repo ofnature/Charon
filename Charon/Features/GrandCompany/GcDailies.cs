@@ -20,6 +20,10 @@ public enum GcMissionKind
 /// <param name="Position">The row's own index on the board: 0-7 supply, 8-10 provisioning, 11+ expert.</param>
 /// <param name="Possessed">What the GAME counts as held — inventory only, which is why it reads 0/0 while the item sits in a retainer.</param>
 /// <param name="TurnInAvailable">The game's flag, already inverted to "yes you can" (it stores 0 for available).</param>
+/// <param name="AvailabilityRaw">
+/// The byte that flag was read from, kept because its meaning for SUPPLY and PROVISIONING rows is not
+/// documented the way the expert-delivery one is — so the UI shows it rather than pretending to know.
+/// </param>
 public sealed record GcDailyMission(
     int Position,
     GcMissionKind Kind,
@@ -31,7 +35,8 @@ public sealed record GcDailyMission(
     int SealReward,
     int Possessed,
     bool BonusReward,
-    bool TurnInAvailable);
+    bool TurnInAvailable,
+    byte AvailabilityRaw = 0);
 
 /// <summary>One row's readiness, with the numbers already worked out.</summary>
 public sealed record GcMissionPlan(GcDailyMission Mission, int InBags, int InRetainers, string Status)
@@ -103,7 +108,14 @@ public static class GcDailies
             return new GcMissionPlan(mission, inBags, inRetainers, "nothing requested");
 
         if (!mission.TurnInAvailable)
-            return new GcMissionPlan(mission, inBags, inRetainers, "already handed in");
+        {
+            // The flag's meaning is documented for gear; for supply and provisioning rows it is read but not
+            // explained, so the wording says who says so and the raw byte rides along for a later look.
+            return new GcMissionPlan(mission, inBags, inRetainers,
+                mission.Kind == GcMissionKind.ExpertDelivery
+                    ? "the game will not take this one"
+                    : $"the game's flag says this row is closed (raw {mission.AvailabilityRaw})");
+        }
 
         if (inBags >= mission.Requested)
         {
@@ -122,6 +134,25 @@ public static class GcDailies
             GcMissionKind.Provisioning => $"short {short_} — a gather (Provisioning)",
             _ => $"gear hand-in: {short_} more for a full delivery",
         });
+    }
+
+    /// <summary>How many rows of each kind the board carries — the tiles and the status line both want this.</summary>
+    public static (int Supply, int Provisioning, int Expert) Counts(IEnumerable<GcDailyMission> missions)
+    {
+        var supply = 0;
+        var provisioning = 0;
+        var expert = 0;
+        foreach (var mission in missions)
+        {
+            switch (mission.Kind)
+            {
+                case GcMissionKind.Supply: supply++; break;
+                case GcMissionKind.Provisioning: provisioning++; break;
+                default: expert++; break;
+            }
+        }
+
+        return (supply, provisioning, expert);
     }
 
     /// <summary>Per-row plans for a whole board, with the bag and retainer counts resolved by the caller.</summary>
