@@ -694,6 +694,15 @@ public sealed class CharonPlugin : IDalamudPlugin
                             + (line.State == AllowanceState.Countdown ? $", {line.Hours}h {line.Minutes:00}m" : string.Empty)
                             + ")");
 
+            // What each window offered on the last pass: "the window is not open" and "it is open and the rows
+            // are unreadable" are different problems, and this is what tells them apart without a screenshot.
+            if (_allowances.LastProbe.Count > 0)
+            {
+                _chat.Print("[Charon] last scan:");
+                foreach (var probe in _allowances.LastProbe)
+                    _chat.Print($"  {probe}");
+            }
+
             return;
         }
 

@@ -72,6 +72,32 @@ public static class Allowances
     ];
 
     /// <summary>
+    /// The labels that identify the TIMERS WINDOW itself, as opposed to any window that happens to word-match a
+    /// single row. A window is only accepted while it shows at least one of these AND several labels at once.
+    /// </summary>
+    public static readonly string[] Signatures =
+    [
+        "Next Mission Allowance",
+        "Next Leve Allowance",
+        "Next Map Allowance",
+        "Fashion Report",
+        "The Masked Carnivale",
+        "Adventurer Squadron",
+        "Doman Enclave",
+        "Custom Deliveries",
+    ];
+
+    /// <summary>
+    /// Does a node's text CARRY this label? It has to START with it.
+    ///
+    /// "Contains" was loose enough to accept the wrong window: "No ventures in progress." contains the label
+    /// "Ventures", so a window that merely mentioned ventures counted as one of the Timers rows — which is how a
+    /// scan latched onto a different addon entirely and reported three unrelated lines as allowances.
+    /// </summary>
+    public static bool IsLabel(string text, string label) =>
+        text.TrimStart().StartsWith(label, StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
     /// Find a labelled line: the row carrying the label, and the value text on that row (or, when the window
     /// puts the value under the label, the next text node after it).
     /// </summary>
@@ -84,7 +110,7 @@ public static class Allowances
         for (var i = 0; i < rows.Count; i++)
         {
             var row = rows[i];
-            var labelNode = row.FirstOrDefault(t => t.Text.Contains(label, StringComparison.OrdinalIgnoreCase));
+            var labelNode = row.FirstOrDefault(t => t.Text is not null && IsLabel(t.Text, label));
             if (labelNode.Text is null)
                 continue;
 
@@ -132,7 +158,7 @@ public static class Allowances
             if (value is null && i + 1 < rows.Count)
             {
                 var next = rows[i + 1];
-                if (!next.Any(t => KnownLabels.Any(k => t.Text.Contains(k, StringComparison.OrdinalIgnoreCase))))
+                if (!next.Any(t => t.Text is not null && KnownLabels.Any(k => IsLabel(t.Text, k))))
                     value = next.OrderBy(t => t.X).Select(t => t.Text).FirstOrDefault(v => v.Length > 0);
             }
 

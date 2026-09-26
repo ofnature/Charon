@@ -46,6 +46,10 @@ public sealed class AllowanceReader
     private int _scans;
     private int _scanOffset;
     private DateTime _lastScanUtc = DateTime.MinValue;
+    private int _misses;
+
+    /// <summary>How many labels a window must show at once before it counts as the Timers window.</summary>
+    private const int MinLabels = 3;
 
     public AllowanceReader(WindowTextDump windows, IPluginLog log)
     {
@@ -58,6 +62,14 @@ public sealed class AllowanceReader
 
     /// <summary>How many windows the last scan looked inside — evidence, when nothing was found.</summary>
     public int LastScanCount { get; private set; }
+
+    /// <summary>
+    /// What each window offered during the last scan: text nodes found, labels matched, and how many of those
+    /// were the Timers window's own signature labels. This is the difference between "the window is not open"
+    /// and "it is open and this reader cannot see its rows", and it should not take a screenshot to tell them
+    /// apart.
+    /// </summary>
+    public IReadOnlyList<string> LastProbe { get; private set; } = [];
 
     /// <summary>When the lines below were read — nothing here is live.</summary>
     public DateTime SeenUtc { get; private set; } = DateTime.MinValue;
@@ -98,8 +110,22 @@ public sealed class AllowanceReader
     {
         if (_addon != null)
         {
-            if (IsOpen(_addon))
-                ReadFrom(_addon, nowUtc);
+            if (IsOpen(_addon) && ReadFrom(_addon, nowUtc))
+            {
+                _misses = 0;
+                return;
+            }
+
+            // A latched window that stops answering is not the Timers window any more — it was once a wrong
+            // guess, or it has been restructured. Look again rather than reporting that read forever.
+            if (++_misses >= 3)
+            {
+                _log.Information("[Allowances] '{0}' stopped answering — searching again.", _addon);
+                _addon = null;
+                Addon = string.Empty;
+                _misses = 0;
+                _scans = 0;
+            }
 
             return;
         }
@@ -113,13 +139,12 @@ public sealed class AllowanceReader
         _lastScanUtc = nowUtc;
         _scans++;
 
-        // The known name first: one window read against a hundred and eighteen, and the answer is the same.
-        if (ReadFrom(KnownAddon, nowUtc))
+        var probes = new List<string>();
+
+        // The known name first: one window read against a hundred and nineteen, and the answer is the same.
+        if (Probe(KnownAddon, nowUtc, probes))
         {
-            _addon = KnownAddon;
-            Addon = KnownAddon;
-            _log.Information("[Allowances] reading the allowance lines from '{0}' (the Timers window).",
-                KnownAddon);
+            Latch(KnownAddon);
             return;
         }
 
@@ -140,15 +165,14 @@ public sealed class AllowanceReader
         // whatever it is called — which is the property worth keeping, since the name is what fooled this.
         foreach (var name in Candidates.Concat(slice).Distinct(StringComparer.OrdinalIgnoreCase))
         {
-            if (ReadFrom(name, nowUtc))
+            if (Probe(name, nowUtc, probes))
             {
-                _addon = name;
-                Addon = name;
-                _log.Information("[Allowances] the allowance lines are in '{0}' — reading that window from now on.",
-                    name);
+                Latch(name);
                 return;
             }
         }
+
+        LastProbe = probes;
 
         if (!_loggedMiss && LastScanCount > 0)
         {
@@ -158,12 +182,18 @@ public sealed class AllowanceReader
         }
     }
 
-    /// <summary>Read one window: fills the lines when it holds the labels, and says whether it did.</summary>
-    private bool ReadFrom(string addon, DateTime nowUtc)
+    private void Latch(string addon)
+    {
+        _addon = addon;
+        Addon = addon;
+        _misses = 0;
+        _log.Information("[Allowances] the allowance lines are in '{0}' — reading that window from now on.", addon);
+    }
+
+    /// <summary>Read a window and record what it offered, whether or not it was accepted.</summary>
+    private bool Probe(string addon, DateTime nowUtc, List<string> probes)
     {
         var nodes = _windows.Read(addon).Select(n => (n.X, n.Y, n.Text)).ToList();
-        if (nodes.Count == 0)
-            return false;
 
         var lines = new List<AllowanceLine>();
         foreach (var label in Allowances.KnownLabels)
@@ -173,14 +203,27 @@ public sealed class AllowanceReader
                 lines.Add(line);
         }
 
-        // One label could be a coincidence; two means this is the window.
-        if (lines.Count < 2)
+        var signatures = lines.Count(l =>
+            Allowances.Signatures.Any(s => Allowances.IsLabel(l.Label, s)));
+
+        // Only windows with text are worth reporting: the client keeps a hundred and nineteen and most are HUD
+        // fragments, so a probe line for each would bury the one that matters.
+        if (nodes.Count > 0 && probes.Count < 8)
+            probes.Add($"{addon}: {nodes.Count} text node(s), {lines.Count} label(s), {signatures} signature(s)");
+
+        // A couple of labels can be a coincidence — an unrelated window mentions ventures and squadrons too,
+        // which is exactly how a scan latched onto one. The Timers window shows several AT ONCE, including at
+        // least one label that is only ever its own.
+        if (lines.Count < MinLabels || signatures < 1)
             return false;
 
         Lines = lines;
         SeenUtc = nowUtc;
         return true;
     }
+
+    /// <summary>Read the latched window: fills the lines when it still holds them, and says whether it did.</summary>
+    private bool ReadFrom(string addon, DateTime nowUtc) => Probe(addon, nowUtc, []);
 
     private bool IsOpen(string addon) => _windows.Read(addon).Count > 0;
 

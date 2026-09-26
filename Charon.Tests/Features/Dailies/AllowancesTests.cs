@@ -26,6 +26,29 @@ public class AllowancesTests
     ];
 
     /// <summary>
+    /// "Ventures" must not match the sentence "No ventures in progress." — that loose match is how a scan
+    /// accepted a different window as the Timers window and reported three unrelated lines as allowances.
+    /// </summary>
+    [Fact]
+    public void ALabelMustStartTheTextNotMerelyAppearInIt()
+    {
+        Assert.True(Allowances.IsLabel("Ventures", "Ventures"));
+        Assert.True(Allowances.IsLabel("Next Allied Society Daily Quest Allowance", "Next Allied Society"));
+        Assert.False(Allowances.IsLabel("No ventures in progress.", "Ventures"));
+        Assert.False(Allowances.IsLabel("Today's Remaining Allowances: 12", "Next Leve Allowance"));
+    }
+
+    /// <summary>The Timers window shows several labels at once, and they are what identify it.</summary>
+    [Fact]
+    public void TheWindowsOwnLinesAreTheOnesThatIdentifyIt()
+    {
+        var labels = Window.Select(n => n.Text).ToList();
+
+        Assert.True(labels.Count(t => Allowances.KnownLabels.Any(k => Allowances.IsLabel(t, k))) >= 3);
+        Assert.Contains(labels, t => Allowances.Signatures.Any(s => Allowances.IsLabel(t, s)));
+    }
+
+    /// <summary>
     /// The rows the reader actually sees come out of a list component, which reports component-relative
     /// positions — so the same visual line can sit a few pixels apart from its label. The label must still pick
     /// up its value, and the wider net must not reach into the row below.
