@@ -675,6 +675,34 @@ public sealed class CharonPlugin : IDalamudPlugin
             return;
         }
 
+        // "/charon gc" — every loaded Grand Company window with its rows. The request list (what is left to hand
+        // in) is a different addon from the delivery board, so this names it and prints its rows, including the
+        // label/value pairs the client passes as AtkValues.
+        if (trimmed.Equals("gc", StringComparison.OrdinalIgnoreCase))
+        {
+            var candidates = _windowText.LoadedAddons(visibleOnly: false)
+                .Where(n => n.Contains("Company", StringComparison.OrdinalIgnoreCase)
+                            || n.Contains("Supply", StringComparison.OrdinalIgnoreCase)
+                            || n.Contains("Mission", StringComparison.OrdinalIgnoreCase))
+                .ToList();
+
+            _chat.Print($"[Charon] {candidates.Count} Grand Company window(s) loaded");
+
+            foreach (var name in candidates)
+            {
+                var texts = _windowText.Read(name, requireVisible: false);
+                var pairs = Allowances.Pairs(_windowText.ValueTexts).Take(14).ToList();
+
+                _chat.Print($"[Charon] {name}: {texts.Count} text node(s), {pairs.Count} value pair(s)");
+                foreach (var node in texts.Take(5))
+                    _chat.Print($"  text ({node.X:0},{node.Y:0}) \"{node.Text}\"");
+                foreach (var pair in pairs)
+                    _chat.Print($"  pair \"{pair.Label}\" -> \"{pair.Value}\"");
+            }
+
+            return;
+        }
+
         // "/charon allowances" — what the Timers-window read actually produced: each line's label, the raw
         // value text it attached, and the state parsed from it. A state that comes back "not recognised" with
         // an empty value means the association failed, with a raw value means the wording did, and that is a

@@ -199,4 +199,41 @@ public class GcDailiesTests
 
         Assert.Equal("nothing is handable right now", GcDailies.Summarise(plans));
     }
+
+    /// <summary>
+    /// "Are today's hand-ins done?" is answered by the REQUEST LIST, not by the Timers window's countdown.
+    /// A countdown says when the list rolls over; rows say work remains; no rows say there is none — and only
+    /// while the list is actually open, because an unread list is unknown rather than empty.
+    /// </summary>
+    [Fact]
+    public void RowsStillRequestedAreWorkRemaining()
+    {
+        var plans = GcDailies.PlanAll(
+        [
+            Mission(position: 0, itemId: 1, requested: 1),
+            Mission(position: 1, itemId: 2, requested: 1),
+        ], id => id == 2 ? 4 : 0, _ => 0);
+
+        var summary = GcDailies.RequestSummary(plans, boardOpen: true);
+
+        Assert.Contains("2 item(s) still requested", summary);
+        Assert.Contains("1 handable now", summary);
+    }
+
+    [Fact]
+    public void AnEmptyRequestListIsTheThingThatMeansDone()
+    {
+        Assert.Equal("nothing left to hand in — the request list is empty",
+            GcDailies.RequestSummary([], boardOpen: true));
+    }
+
+    /// <summary>An unopened list is unknown, never done — that claim is what the countdown was misused for.</summary>
+    [Fact]
+    public void AListNobodyCouldReadIsNotAnEmptyList()
+    {
+        var summary = GcDailies.RequestSummary([], boardOpen: false);
+
+        Assert.Contains("unknown", summary);
+        Assert.DoesNotContain("nothing left", summary);
+    }
 }

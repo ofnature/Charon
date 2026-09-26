@@ -186,6 +186,29 @@ public static class GcDailies
             .OrderBy(p => p.Mission.Position)
             .ToList();
 
+    /// <summary>
+    /// What is still being REQUESTED — the answer to "is today done?", and the only place that answer lives.
+    ///
+    /// The request window lists what is left to hand in, so rows mean work remains and no rows mean there is
+    /// nothing left. That is deliberately separate from the Timers window's mission-allowance countdown, which
+    /// says when the list ROLLS OVER and nothing about what has been handed in — reading it as "done" is a claim
+    /// the game does not support. "No rows" only means done while the board is actually open: an unread board is
+    /// unknown, never empty.
+    /// </summary>
+    public static string RequestSummary(IReadOnlyList<GcMissionPlan> plans, bool boardOpen)
+    {
+        if (!boardOpen)
+            return "what is left to hand in is unknown — the request list has to be open to be read";
+
+        if (plans.Count == 0)
+            return "nothing left to hand in — the request list is empty";
+
+        var ready = plans.Count(p => p.Ready);
+        return ready == 0
+            ? $"{plans.Count} item(s) still requested, none handable yet"
+            : $"{plans.Count} item(s) still requested, {ready} handable now";
+    }
+
     /// <summary>The one-line summary for the section header: what is worth going to the officer for.</summary>
     public static string Summarise(IReadOnlyList<GcMissionPlan> plans)
     {

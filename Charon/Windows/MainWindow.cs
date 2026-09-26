@@ -3128,15 +3128,16 @@ public sealed class MainWindow : Window
         DrawStatusLine($"{GcDailies.GrandCompanyName(board.Company)} · rank {board.Rank} · "
                        + $"{board.Seals:N0} / {board.MaxSeals:N0} seals");
 
-        // The game's own allowance line decides whether the day's hand-ins are still open — it is the number
-        // the player reads off their own Timers window, and it is not a guess about an undocumented byte.
+        // The Timers window's mission-allowance line says when the request list ROLLS OVER. It is the number the
+        // player reads off their own window, and it is not a statement about what has been handed in — a
+        // countdown here does not mean today is done, which is exactly the claim this line used to make.
         if (board.AllowanceSeenUtc is { } seen)
         {
             var age = DateTime.UtcNow - seen;
             var verdict = board.DailiesOpen switch
             {
-                true => "today's hand-ins are open",
-                false => "nothing available until it expires — today's hand-ins look done",
+                true => "the request list is current",
+                false => "the request list rolls over when it expires",
                 _ => "state not recognised",
             };
 
@@ -3148,6 +3149,9 @@ public sealed class MainWindow : Window
         {
             DrawStatusLine($"Next mission allowance: {board.AllowanceStatus}", CharonTheme.TextMuted);
         }
+
+        // What is actually left, from the request list itself: rows are the work, no rows is the answer.
+        DrawStatusLine(GcDailies.RequestSummary(plans, board.Open), CharonTheme.TextSecondary);
 
         DrawStatusLine(GcDailies.Summarise(plans), CharonTheme.TextSecondary);
         DrawStatusLine(board.Status, CharonTheme.TextDisabled);
