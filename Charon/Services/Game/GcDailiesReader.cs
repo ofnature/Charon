@@ -19,7 +19,10 @@ public sealed record GcBoard(
     int Rank,
     int SelectedTab,
     bool Open,
-    string Status);
+    string Status,
+    string AllowanceText = "",
+    DateTime? AllowanceSeenUtc = null,
+    bool? DailiesOpen = null);
 
 /// <summary>
 /// Reads the Grand Company delivery board — Supply, Provisioning and Expert Delivery — from the game's own
@@ -42,16 +45,22 @@ public sealed unsafe class GcDailiesReader
 
     private readonly RetainerContentsReader _contents;
     private readonly VentureSheetReader _sheet;
+    private readonly AllowanceReader _allowances;
     private readonly IPluginLog _log;
 
     private GcBoard? _cached;
     private DateTime _cachedAtUtc = DateTime.MinValue;
     private bool _loggedBoard;
 
-    public GcDailiesReader(RetainerContentsReader contents, VentureSheetReader sheet, IPluginLog log)
+    public GcDailiesReader(
+        RetainerContentsReader contents,
+        VentureSheetReader sheet,
+        AllowanceReader allowances,
+        IPluginLog log)
     {
         _contents = contents;
         _sheet = sheet;
+        _allowances = allowances;
         _log = log;
     }
 
@@ -143,10 +152,14 @@ public sealed unsafe class GcDailiesReader
             }
 
             var counts = GcDailies.Counts(missions);
+            var allowance = _allowances.MissionAllowance;
             return new GcBoard(missions, seals, maxSeals, company, rank, agent->SelectedTab, open,
                 $"{counts.Supply} supply · {counts.Provisioning} provisioning · {counts.Expert} expert"
                 + $" (agent reports {reported})"
-                + (open ? string.Empty : " — open the board at your GC officer to refresh"));
+                + (open ? string.Empty : " — open the board at your GC officer to refresh"),
+                allowance?.Value ?? string.Empty,
+                _allowances.SeenUtc == DateTime.MinValue ? null : _allowances.SeenUtc,
+                _allowances.DailiesOpen);
         }
         catch (Exception ex)
         {

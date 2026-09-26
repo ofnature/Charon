@@ -217,6 +217,9 @@ public sealed class CharonPlugin : IDalamudPlugin
     /// <summary>Reads an open window's text so a layout can be RECORDED instead of guessed.</summary>
     private readonly WindowTextDump _windowText;
 
+    /// <summary>The game's own allowance lines, out of its Timers window.</summary>
+    private readonly AllowanceReader _allowances;
+
     /// <summary>In-game feedback for the commands (the log alone is not an answer anyone sees).</summary>
     private readonly IChatGui _chat;
 
@@ -470,8 +473,9 @@ public sealed class CharonPlugin : IDalamudPlugin
             log);
 
 
-        _gcDailies = new GcDailiesReader(_retainerContents, _ventureSheet, log);
         _windowText = new WindowTextDump(gameGui, log);
+        _allowances = new AllowanceReader(_windowText, log);
+        _gcDailies = new GcDailiesReader(_retainerContents, _ventureSheet, _allowances, log);
         _chat = chatGui;
 
         _mainWindow = new MainWindow(_config, SaveConfig, _whitelist, _daedalusIpc, _pillionManager, _inviteManager,
@@ -851,6 +855,7 @@ public sealed class CharonPlugin : IDalamudPlugin
         _qte.Update(now);
         _afkGuard.Update(now);
         _retainerContents.Update(now);
+        _allowances.Update(now);
         _saddlebag.Update(now);
         _saddlebagOverlay.IsOpen = _saddlebag.IsSaddlebagOpen();
         _commend.Update();

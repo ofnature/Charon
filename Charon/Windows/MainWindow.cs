@@ -3127,6 +3127,29 @@ public sealed class MainWindow : Window
 
         DrawStatusLine($"{GcDailies.GrandCompanyName(board.Company)} · rank {board.Rank} · "
                        + $"{board.Seals:N0} / {board.MaxSeals:N0} seals");
+
+        // The game's own allowance line decides whether the day's hand-ins are still open — it is the number
+        // the player reads off their own Timers window, and it is not a guess about an undocumented byte.
+        if (board.AllowanceSeenUtc is { } seen)
+        {
+            var age = DateTime.UtcNow - seen;
+            var verdict = board.DailiesOpen switch
+            {
+                true => "today's hand-ins are open",
+                false => "nothing available until it expires — today's hand-ins look done",
+                _ => "state not recognised",
+            };
+
+            DrawStatusLine($"Next mission allowance: {board.AllowanceText} ({verdict})"
+                           + $", read {(age.TotalMinutes < 1 ? "just now" : $"{age.TotalMinutes:0} min ago")}",
+                CharonTheme.TextSecondary);
+        }
+        else
+        {
+            DrawStatusLine("Next mission allowance: open the game's Timers window once and Charon reads the "
+                           + "game's own answer for the day.", CharonTheme.TextMuted);
+        }
+
         DrawStatusLine(GcDailies.Summarise(plans), CharonTheme.TextSecondary);
         DrawStatusLine(board.Status, CharonTheme.TextDisabled);
         ImGui.Spacing();
