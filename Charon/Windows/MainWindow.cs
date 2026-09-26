@@ -15,6 +15,7 @@ using Charon.Features.GroupManagement;
 using Charon.Features.HealWatch;
 using Charon.Features.Leveling;
 using Charon.Features.Loot;
+using Charon.Features.GrandCompany;
 using Charon.Features.Retainers;
 using Charon.Features.Weeklies;
 using Charon.Services;
@@ -50,6 +51,7 @@ public sealed class MainWindow : Window
         TrustedList,
         GilCapping,
         Retainers,
+        GcDailies,
         Weeklies,
         DomanDonate,
         Tweaks,
@@ -83,6 +85,9 @@ public sealed class MainWindow : Window
 
     /// <summary>The retainer contents store: what each retainer holds, and the two passes that use it.</summary>
     private readonly RetainerContentsReader _retainerContents;
+
+    /// <summary>The Grand Company delivery board (Supply / Provisioning / Expert Delivery).</summary>
+    private readonly GcDailiesReader _gcDailies;
 
     /// <summary>Live state for the TWEAKS toggle: the timer it saw and whether a nudge landed.</summary>
     private readonly AfkGuard _afkGuard;
@@ -196,6 +201,7 @@ public sealed class MainWindow : Window
         RetainerPlanner retainerPlanner,
         Action openRetainerBoard,
         RetainerContentsReader retainerContents,
+        GcDailiesReader gcDailies,
         AfkGuard afkGuard,
         Func<bool> isFreeTrial,
         LootWatcher lootWatcher,
@@ -247,6 +253,7 @@ public sealed class MainWindow : Window
         _retainerPlanner = retainerPlanner;
         _openRetainerBoard = openRetainerBoard;
         _retainerContents = retainerContents;
+        _gcDailies = gcDailies;
         _afkGuard = afkGuard;
         _isFreeTrial = isFreeTrial;
         _lootWatcher = lootWatcher;
@@ -467,6 +474,12 @@ public sealed class MainWindow : Window
                 readyRetainers > 0 ? readyRetainers.ToString() : null, CharonTheme.AccentMint))
             _section = Section.Retainers;
 
+        DrawCategoryHeader("Grand Company");
+        var gcReady = _gcDailies.Plans(_gcDailies.Read()).Count(p => p.Ready);
+        if (SidebarTab.Draw("Dailies", FontAwesomeIcon.ClipboardCheck, _section == Section.GcDailies,
+                gcReady > 0 ? gcReady.ToString() : null, CharonTheme.AccentMint))
+            _section = Section.GcDailies;
+
         DrawCategoryHeader("Weeklies");
         // A count badge = something is still left to do before a reset — a glance says "go spend it".
         var chores = WeeklyChoresLeft();
@@ -515,6 +528,7 @@ public sealed class MainWindow : Window
             case Section.TrustedList: DrawTrustedSection(); break;
             case Section.GilCapping: DrawGilCappingSection(); break;
             case Section.Retainers: DrawRetainersSection(); break;
+            case Section.GcDailies: DrawGcDailiesSection(); break;
             case Section.Weeklies: DrawWeekliesSection(); break;
             case Section.DomanDonate: DrawDomanSection(); break;
             case Section.Tweaks: DrawTweaksSection(); break;
@@ -3095,6 +3109,120 @@ public sealed class MainWindow : Window
     /// Stay-logged-in: the toggle, the threshold, and — the part worth having on screen — the client's
     /// own idle timer, so "am I safe" is a number rather than a feeling.
     /// </summary>
+    /// <summary>
+    /// The daily Grand Company board: the game's three delivery tabs, what each one asks for today, and where
+    /// that item actually is — bags or a retainer.
+    ///
+    /// Read-only by design. The board's rows are read from the agent that owns them, so this works while the
+    /// window is open or shut; handing in happens at the officer, where the game wants a mission SELECTED
+    /// first and Charon does not click rows in a list whose selection mechanism it has never verified. The
+    /// turn-in fill (TWEAKS → auto-select turn-ins) fills the delivery window once the game opens it.
+    /// </summary>
+    private void DrawGcDailiesSection()
+    {
+        DrawPageHeader("Grand Company Dailies", "supply, provisioning and expert delivery — what the day asks for");
+
+        var board = _gcDailies.Read();
+        var plans = _gcDailies.Plans(board);
+
+        DrawStatusLine($"{GcDailies.GrandCompanyName(board.Company)} · rank {board.Rank} · "
+                       + $"{board.Seals:N0} / {board.MaxSeals:N0} seals");
+        DrawStatusLine(GcDailies.Summarise(plans), CharonTheme.TextSecondary);
+        DrawStatusLine(board.Status, CharonTheme.TextDisabled);
+        ImGui.Spacing();
+
+        if (board.Missions.Count == 0)
+        {
+            CharonTheme.HelpMarker("The board's rows are read from the game while you are at a Grand Company\n"
+                                   + "officer: ask to submit supplies, provisioning or gear, and they fill in here.\n"
+                                   + "Nothing about this page is a click on your behalf.");
+            return;
+        }
+
+        // The tab counts, by the client's own three-way split.
+        var supply = plans.Where(p => p.Mission.Kind == GcMissionKind.Supply).ToList();
+        var provisioning = plans.Where(p => p.Mission.Kind == GcMissionKind.Provisioning).ToList();
+        var expert = plans.Where(p => p.Mission.Kind == GcMissionKind.ExpertDelivery).ToList();
+
+        var scale = ImGuiHelpers.GlobalScale;
+        var tileWidth = Math.Max(150f, (ImGui.GetContentRegionAvail().X / 3f) - (12f * scale));
+        StatTile.Draw("Supply (DoH)", $"{supply.Count(p => p.Ready)}/{supply.Count}",
+            supply.Count == 0 ? "nothing requested today" : $"{supply.Count(p => p.Mission.TurnInAvailable)} still open",
+            CharonTheme.AccentCyan, tileWidth);
+        ImGui.SameLine();
+        StatTile.Draw("Provisioning (DoL)", $"{provisioning.Count(p => p.Ready)}/{provisioning.Count}",
+            provisioning.Count == 0 ? "nothing requested today" : $"{provisioning.Count(p => p.Mission.TurnInAvailable)} still open",
+            CharonTheme.AccentMint, tileWidth);
+        ImGui.SameLine();
+        StatTile.Draw("Expert Delivery", expert.Count.ToString(),
+            "gear hand-ins — unlimited, SealBreaker's loop", CharonTheme.AccentAmber, tileWidth);
+
+        ImGui.Spacing();
+
+        if (!ImGui.BeginTable("gcRows", 8,
+                ImGuiTableFlags.BordersInnerV | ImGuiTableFlags.RowBg | ImGuiTableFlags.SizingFixedFit))
+            return;
+
+        ImGui.TableSetupColumn("For", ImGuiTableColumnFlags.WidthFixed, 52f);
+        ImGui.TableSetupColumn("Item", ImGuiTableColumnFlags.WidthStretch);
+        ImGui.TableSetupColumn("Req", ImGuiTableColumnFlags.WidthFixed, 36f);
+        ImGui.TableSetupColumn("Exp", ImGuiTableColumnFlags.WidthFixed, 84f);
+        ImGui.TableSetupColumn("Seals", ImGuiTableColumnFlags.WidthFixed, 54f);
+        ImGui.TableSetupColumn("Bags", ImGuiTableColumnFlags.WidthFixed, 44f);
+        ImGui.TableSetupColumn("Retainers", ImGuiTableColumnFlags.WidthFixed, 66f);
+        ImGui.TableSetupColumn("Status", ImGuiTableColumnFlags.WidthFixed, 250f);
+        ImGui.TableHeadersRow();
+
+        foreach (var plan in plans)
+        {
+            var mission = plan.Mission;
+
+            ImGui.TableNextRow();
+
+            ImGui.TableNextColumn();
+            Styling.Text(mission.Job.Length > 0
+                ? mission.Job
+                : mission.Kind == GcMissionKind.ExpertDelivery ? "gear" : "—", CharonTheme.TextDim);
+
+            ImGui.TableNextColumn();
+            Styling.Text(mission.ItemName + (mission.BonusReward ? "  ★" : string.Empty),
+                plan.Ready ? CharonTheme.TextStrong : CharonTheme.TextSecondary);
+
+            ImGui.TableNextColumn();
+            Styling.Text(mission.Requested.ToString(), CharonTheme.TextDim);
+
+            ImGui.TableNextColumn();
+            Styling.Text(mission.ExpReward > 0 ? mission.ExpReward.ToString("N0") : "—", CharonTheme.TextDim);
+
+            ImGui.TableNextColumn();
+            Styling.Text(mission.SealReward > 0 ? mission.SealReward.ToString("N0") : "—", CharonTheme.TextDim);
+
+            ImGui.TableNextColumn();
+            Styling.Text(plan.InBags.ToString(), plan.InBags >= mission.Requested && mission.Requested > 0
+                ? CharonTheme.AccentMint
+                : CharonTheme.TextDim);
+
+            // The column the game's own board cannot show: its possessed count only ever sees the bags.
+            ImGui.TableNextColumn();
+            Styling.Text(plan.InRetainers > 0 ? plan.InRetainers.ToString() : "—",
+                plan.NeedsFetch ? CharonTheme.AccentAmber : CharonTheme.TextDim);
+
+            ImGui.TableNextColumn();
+            Styling.Text(plan.Status, plan.Ready
+                ? CharonTheme.AccentMint
+                : plan.NeedsFetch ? CharonTheme.AccentAmber : CharonTheme.TextMuted);
+        }
+
+        ImGui.EndTable();
+
+        ImGui.Spacing();
+        DrawStatusLine("Hand in at the officer: pick the mission there and the delivery window's fill "
+                       + "(TWEAKS → auto-select turn-ins) puts the item in for you. Selecting the mission is "
+                       + "yours — Charon does not click rows in a list it has not verified.",
+            CharonTheme.TextMuted);
+        DrawStatusLine(_gcDailies.Status, CharonTheme.TextDisabled);
+    }
+
     private void DrawAfkGuardBlock()
     {
         var guard = _config.AfkGuardEnabled;

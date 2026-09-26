@@ -211,6 +211,9 @@ public sealed class CharonPlugin : IDalamudPlugin
     /// <summary>What each retainer holds, as last seen — the store Hephaestus asks for over IPC.</summary>
     private readonly RetainerContentsReader _retainerContents;
 
+    /// <summary>The Grand Company delivery board: Supply, Provisioning and Expert Delivery.</summary>
+    private readonly GcDailiesReader _gcDailies;
+
     private readonly RetainerContentsIpc _retainerContentsIpc;
 
     private readonly RetainersWindow _retainersWindow;
@@ -461,6 +464,8 @@ public sealed class CharonPlugin : IDalamudPlugin
             log);
 
 
+        _gcDailies = new GcDailiesReader(_retainerContents, log);
+
         _mainWindow = new MainWindow(_config, SaveConfig, _whitelist, _daedalusIpc, _pillionManager, _inviteManager,
             _healWatch, _groupInvites, _fcChest, _gear, _followManager, ReadRawSeatOccupancy, () => _boardingStatus,
             () => $"{_followStatus} · offer: {_teleportOffer.Status} · boss AI: {_bossAi.Status}",
@@ -497,6 +502,7 @@ public sealed class CharonPlugin : IDalamudPlugin
             _retainerPlanner,
             OpenRetainerBoard,
             _retainerContents,
+            _gcDailies,
             _afkGuard,
             () => _condition[ConditionFlag.OnFreeTrial],
             _lootWatcher,

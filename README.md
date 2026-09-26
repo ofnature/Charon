@@ -162,6 +162,15 @@ Venture chores without handing over your character. Open a summoning bell and a 
 - **A venture board at a glance** — every retainer with *ready*, *idle*, or the time left. Timers the game has not sent yet show as *unknown* rather than guessing, so you are never walked to a bell for nothing.
 - **It gives up out loud.** A click that changes nothing four times over stops the run and says so, instead of hammering a menu that is not responding.
 
+## Grand Company Dailies
+
+The Supply / Provisioning / Expert Delivery board, read as data — and answered with what the game's own board cannot tell you.
+
+- **Where the item actually is.** The board's own column counts your *inventory* only, so a row reads `0/0` while the item sits in a retainer. This page shows **bags and retainers separately** and says which to do something about: *ready in the bags*, *in a retainer — fetch it*, *short 1 — a craft (Supply)*, *short 2 — a gather (Provisioning)*.
+- **Nothing already done is called short.** A capped row says *already handed in*, from the game's own availability flag, so you never get sent to craft something you delivered an hour ago.
+- **Bonus rows are marked** (★), and the EXP and seals each row is worth are read per row, not estimated.
+- **Read-only.** Handing in wants the mission *selected* at the officer, and Charon does not click rows in a list whose selection mechanism it has not verified. Once the game opens the delivery window, the turn-in fill (TWEAKS) puts the item in for you.
+
 ## Gil Tools
 
 Money errands for unattended toons, under the GIL section:
