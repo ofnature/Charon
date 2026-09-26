@@ -91,6 +91,17 @@ public static class GcDailies
         _ => "no Grand Company",
     };
 
+    /// <summary>
+    /// Which tab of the delivery window a row belongs to: 0 Supply, 1 Provisioning, 2 Expert Delivery. The
+    /// window's own tab index, so a row can be matched against the tab the player is looking at.
+    /// </summary>
+    public static int TabOfPosition(int position) => KindFor(position) switch
+    {
+        GcMissionKind.Supply => 0,
+        GcMissionKind.Provisioning => 1,
+        _ => 2,
+    };
+
     public static GcMissionKind KindFor(int position) => position switch
     {
         < ProvisioningOffset => GcMissionKind.Supply,
@@ -185,19 +196,6 @@ public static class GcDailies
             .Select(m => Plan(m, inBags(m.ItemId), inRetainers(m.ItemId)))
             .OrderBy(p => p.Mission.Position)
             .ToList();
-
-    /// <summary>The game's own sentence for "no more hand-ins today", verbatim from the delivery window.</summary>
-    public const string DeliveriesClosedMarker = "no more deliveries are being accepted";
-
-    /// <summary>
-    /// Does the delivery window SAY no more deliveries are being accepted today?
-    ///
-    /// This is the game stating the fact, rather than this reader inferring it: the window prints the sentence,
-    /// and it is the same statement the player reads off it. Reading a countdown as "done" was the inference
-    /// that got this wrong once already.
-    /// </summary>
-    public static bool DeliveriesClosed(IEnumerable<string> lines) =>
-        lines.Any(l => l.Contains(DeliveriesClosedMarker, StringComparison.OrdinalIgnoreCase));
 
     /// <summary>
     /// The sentence the delivery window is saying about today's hand-ins, if it is saying one.

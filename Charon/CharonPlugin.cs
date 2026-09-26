@@ -686,6 +686,14 @@ public sealed class CharonPlugin : IDalamudPlugin
                             || n.Contains("Mission", StringComparison.OrdinalIgnoreCase))
                 .ToList();
 
+            var board = _gcDailies.Read();
+            _chat.Print($"[Charon] board: {board.Missions.Count} row(s), open={board.Open}, "
+                        + $"tab={board.SelectedTab}, seals={board.Seals:N0}/{board.MaxSeals:N0} — {board.Status}");
+
+            foreach (var mission in board.Missions.Take(6))
+                _chat.Print($"  row #{mission.Position} {mission.Kind} item {mission.ItemId} "
+                            + $"requested={mission.Requested} possessed={mission.Possessed}");
+
             _chat.Print($"[Charon] {candidates.Count} Grand Company window(s) loaded");
 
             foreach (var name in candidates)

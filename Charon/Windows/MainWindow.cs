@@ -3150,20 +3150,16 @@ public sealed class MainWindow : Window
             DrawStatusLine($"Next mission allowance: {board.AllowanceStatus}", CharonTheme.TextMuted);
         }
 
-        // What is actually left. When the window is open it says so itself — "No more deliveries are being
-        // accepted today." — and the game's own sentence is the answer, not a count inferred from rows.
-        if (board.DeliveriesClosed)
-        {
-            DrawStatusLine("today's hand-ins are done — the game says no more deliveries are being accepted today",
-                CharonTheme.TextSecondary);
-        }
-        else
-        {
-            DrawStatusLine(GcDailies.RequestSummary(plans, board.Open), CharonTheme.TextSecondary);
-        }
+        // The ROWS decide, and nothing else. A sentence being present in the window's value array is not proof
+        // that it is on screen — the client fills values for every tab when the window opens, so
+        // "No more deliveries are being accepted today." sits in there while the Supply tab is showing eight
+        // rows with nothing handed in. Trusting that string is what made this page claim the day was done.
+        DrawStatusLine(GcDailies.RequestSummary(plans, board.Open), CharonTheme.TextSecondary);
 
-        if (board.Notice.Length > 0 && !board.DeliveriesClosed)
-            DrawStatusLine($"the delivery window says: \"{board.Notice}\"", CharonTheme.TextMuted);
+        // The window's own sentence is shown only when the tab being LOOKED AT is empty, which is when the game
+        // is actually showing it — "You possess no applicable items." is the Expert Delivery tab saying it.
+        if (board.Notice.Length > 0 && board.SelectedTabEmpty)
+            DrawStatusLine($"the window says: \"{board.Notice}\"", CharonTheme.TextMuted);
 
         DrawStatusLine(GcDailies.Summarise(plans), CharonTheme.TextSecondary);
         DrawStatusLine(board.Status, CharonTheme.TextDisabled);

@@ -238,11 +238,14 @@ public class GcDailiesTests
     }
 
     /// <summary>
-    /// The delivery window states the day's state in words, and those words are the answer. Both strings below
-    /// are verbatim from a live dump of GrandCompanySupplyList (they arrive as a value pair, not text nodes).
+    /// The window's sentence is reported as a NOTICE and nothing more. Both strings below are verbatim from a
+    /// live dump of GrandCompanySupplyList, and the second one proves the point: it sits in the value array
+    /// while the Supply tab is showing eight rows with nothing handed in, because the client fills values for
+    /// every tab at setup. A verdict built on a string's presence is a verdict on nothing — which is why
+    /// RequestSummary asks the ROWS.
     /// </summary>
     [Fact]
-    public void TheDeliveryWindowsOwnSentenceSaysTodayIsDone()
+    public void TheWindowsSentenceIsANoticeNotAVerdict()
     {
         string[] window =
         [
@@ -254,8 +257,23 @@ public class GcDailiesTests
             "Seals",
         ];
 
-        Assert.True(GcDailies.DeliveriesClosed(window));
         Assert.Equal("You possess no applicable items.", GcDailies.Notice(window));
+    }
+
+    /// <summary>
+    /// The window's tabs, by the client's own row numbering: 0-7 supply, 8-10 provisioning, 11+ expert. This is
+    /// what lets "the tab you are looking at is empty" be asked of the rows.
+    /// </summary>
+    [Theory]
+    [InlineData(0, 0)]
+    [InlineData(7, 0)]
+    [InlineData(8, 1)]
+    [InlineData(10, 1)]
+    [InlineData(11, 2)]
+    [InlineData(20, 2)]
+    public void RowsBelongToTheTabTheClientNumbersThemUnder(int position, int tab)
+    {
+        Assert.Equal(tab, GcDailies.TabOfPosition(position));
     }
 
     /// <summary>
@@ -272,6 +290,5 @@ public class GcDailiesTests
         ];
 
         Assert.Null(GcDailies.Notice(window));
-        Assert.False(GcDailies.DeliveriesClosed(window));
     }
 }

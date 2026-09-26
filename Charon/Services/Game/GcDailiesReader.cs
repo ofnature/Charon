@@ -24,7 +24,7 @@ public sealed record GcBoard(
     DateTime? AllowanceSeenUtc = null,
     bool? DailiesOpen = null,
     string AllowanceStatus = "",
-    bool DeliveriesClosed = false,
+    bool SelectedTabEmpty = false,
     string Notice = "");
 
 /// <summary>
@@ -178,8 +178,12 @@ public sealed unsafe class GcDailiesReader
             // The window's own words, when it is open: the game stating the day's state beats this reader
             // inferring it from a countdown, which is the mistake the verdict line made once already.
             var windowLines = open ? BoardLines() : [];
-            var closed = GcDailies.DeliveriesClosed(windowLines);
-            var notice = GcDailies.Notice(windowLines) ?? string.Empty;
+            var notice = open ? GcDailies.Notice(windowLines) ?? string.Empty : string.Empty;
+
+            // Empty is a property of the tab on screen, never of the value array: Supply can hold eight rows
+            // while the Expert tab — the one showing "You possess no applicable items." — is the visible one.
+            var tabRows = missions.Count(m => GcDailies.TabOfPosition(m.Position) == agent->SelectedTab);
+            var tabEmpty = open && missions.Count > 0 && tabRows == 0;
 
             return new GcBoard(missions, seals, maxSeals, company, rank, agent->SelectedTab, open,
                 $"{counts.Supply} supply · {counts.Provisioning} provisioning · {counts.Expert} expert"
@@ -189,7 +193,7 @@ public sealed unsafe class GcDailiesReader
                 _allowances.SeenUtc == DateTime.MinValue ? null : _allowances.SeenUtc,
                 _allowances.DailiesOpen,
                 _allowances.Status,
-                closed,
+                tabEmpty,
                 notice);
         }
         catch (Exception ex)
