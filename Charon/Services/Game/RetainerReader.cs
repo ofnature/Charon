@@ -83,7 +83,10 @@ public sealed unsafe class RetainerReader
                         retainer->Level,
                         retainer->ItemCount,
                         retainer->Gil,
-                        retainer->ClassJob));
+                        retainer->ClassJob,
+                        // The game's SORTED index — the same number the retainer list takes when it opens one, and
+                        // therefore the only way to aim a run at a particular retainer.
+                        (int)i));
                 }
 
                 if (missingTimer && utcNow - _timersRequestedUtc > TimerRequestEvery)

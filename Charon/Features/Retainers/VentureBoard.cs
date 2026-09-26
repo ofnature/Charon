@@ -20,7 +20,8 @@ public sealed record RetainerVenture(
     byte Level,
     byte ItemCount,
     uint Gil,
-    byte JobId = 0);
+    byte JobId = 0,
+    int Index = -1);
 
 /// <summary>What a retainer is doing right now. Unknown is a real answer, not a failure.</summary>
 public enum VentureState

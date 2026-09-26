@@ -155,8 +155,14 @@ public sealed class RetainersWindow : Window
             ImGui.TableNextRow();
             ImGui.TableNextColumn();
             var open = _expanded == key;
-            if (ImGui.Selectable(row.Name + "##sel" + key, open, ImGuiSelectableFlags.SpanAllColumns))
+            // NOT SpanAllColumns: that stretched the selectable's rect over the Actions column as well, and ImGui
+            // keeps the hover locked to the item that claimed it — so only the bottom sliver of a button that
+            // stuck out below the row's text line could be clicked. The name is the toggle.
+            if (ImGui.Selectable(row.Name + "##sel" + key, open))
                 _expanded = open ? string.Empty : key;
+
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip(open ? "Hide the venture list" : "Choose which venture this retainer runs");
 
             ImGui.TableNextColumn();
             ImGui.TextColored(CharonTheme.TextDim, _planner.Profile(row).Job.Length > 0
@@ -240,9 +246,9 @@ public sealed class RetainersWindow : Window
 
         if (Buttons.Action(ready ? "Collect" : "Collect##idle", ready, 76f))
         {
-            // Collect means collect: the runner's reassign path keeps the venture already chosen.
-            _runner.Plan(0);
-            _runner.Arm();
+            // Collect THIS retainer: open it at the bell by its own index, collect the report, then send it out
+            // again on the venture the planner has for it. One press, one retainer's whole round trip.
+            _runner.ArmFor(row.Index, _planner.PlanTaskId(row, key));
         }
 
         ImGui.SameLine();

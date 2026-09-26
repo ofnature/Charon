@@ -75,6 +75,17 @@ public sealed unsafe class VentureRunner
     public bool Armed { get; private set; }
 
     /// <summary>
+    /// The retainer a run was aimed at, by the game's own SORTED index — the number the retainer list takes when
+    /// it opens one, and the number <c>RetainerReader</c> walks with <c>GetRetainerBySortedIndex</c>. -1 means the
+    /// old behaviour: whoever is put in front of the bell gets served.
+    /// </summary>
+    public int TargetIndex { get; private set; } = -1;
+
+    private bool _targetOpened;
+    private bool _targetSent;
+    private int _selectAttempts;
+
+    /// <summary>
     /// The venture the next retainer should be sent on, as planned by the window (0 = no plan: the runner
     /// then only ever reassigns or takes quick exploration, which is exactly what it did before).
     /// </summary>
@@ -88,10 +99,29 @@ public sealed unsafe class VentureRunner
     public void Arm()
     {
         Armed = true;
+        TargetIndex = -1;
+        _targetOpened = false;
+        _targetSent = false;
+        _selectAttempts = 0;
         _lastSessionUtc = DateTime.UtcNow;
         _repeats = 0;
         _lastStep = string.Empty;
         Status = "armed";
+    }
+
+    /// <summary>
+    /// Aim a run at ONE retainer: open it at the bell, do its round trip, then stop.
+    ///
+    /// This is the difference between "collect all" (serve whoever is at the bell, one at a time, for as long as
+    /// the player is there) and pressing Collect on a row: that retainer, its report collected, and sent out again
+    /// on <paramref name="taskId"/>, then done.
+    /// </summary>
+    public void ArmFor(int sortedIndex, uint taskId)
+    {
+        Arm();
+        TargetIndex = sortedIndex;
+        Plan(taskId);
+        Status = $"armed for retainer #{sortedIndex}";
     }
 
     /// <summary>
@@ -110,6 +140,9 @@ public sealed unsafe class VentureRunner
     public void Stop(string reason = "stopped")
     {
         Armed = false;
+        TargetIndex = -1;
+        _targetOpened = false;
+        _targetSent = false;
         WantedTaskId = 0; // a stopped operation leaves no queued intention behind
         _repeats = 0;
         _lastStep = string.Empty;
@@ -128,6 +161,24 @@ public sealed unsafe class VentureRunner
             var listOpen = RetainerListOpen;
             if (screen != VentureScreen.None || listOpen)
                 _lastSessionUtc = nowUtc;
+
+            // A run aimed at one retainer: open it first, then serve it like any other.
+            if (TargetIndex >= 0)
+            {
+                if (screen != VentureScreen.None)
+                    _targetOpened = true;
+
+                // Finished: the send has gone out and the game is back at the retainer list. Without this the run
+                // would carry on down the list, which is what "Collect all" is for, not a single row's button.
+                if (_targetOpened && _targetSent && screen == VentureScreen.None && listOpen)
+                {
+                    Stop("done — collected and sent out");
+                    return;
+                }
+
+                if (!_targetOpened && screen == VentureScreen.None && listOpen && TrySelectTarget(nowUtc))
+                    return;
+            }
 
             if (screen == VentureScreen.None)
             {
@@ -170,6 +221,10 @@ public sealed unsafe class VentureRunner
             _lastActionUtc = nowUtc;
             if (Execute(decision))
             {
+                // A send is what marks the targeted round trip as done: collecting alone leaves the retainer idle.
+                if (decision.Action is VentureAction.Reassign or VentureAction.PickVenture or VentureAction.Assign)
+                    _targetSent = true;
+
                 Status = decision.Reason;
                 _log.Debug("Ventures: {0}", decision.Reason);
             }
@@ -183,6 +238,42 @@ public sealed unsafe class VentureRunner
             _log.Warning(ex, "Venture runner threw");
             Stop("threw (see log)");
         }
+    }
+
+    /// <summary>
+    /// Open the retainer this run was aimed at, through the game's own retainer list callback.
+    ///
+    /// The call is <c>RetainerList.Select(index)</c> as ECommons implements it — four ints on the list addon with
+    /// updateState TRUE: (2, index, 0, 0) — where the index is the game's SORTED index. That number is the only
+    /// handle Charon has on which retainer opens, which is why the board carries it. Bounded attempts, because a
+    /// list that will not take the selection must be reported rather than clicked at forever.
+    /// </summary>
+    private bool TrySelectTarget(DateTime nowUtc)
+    {
+        if (nowUtc - _lastActionUtc < ActionThrottle)
+            return false;
+
+        if (_selectAttempts >= MaxRepeats)
+        {
+            Stop("gave up: the retainer list did not take the selection");
+            return false;
+        }
+
+        var list = (AtkUnitBase*)_gameGui.GetAddonByName("RetainerList").Address;
+        if (list == null)
+            return false;
+
+        _selectAttempts++;
+        _lastActionUtc = nowUtc;
+        Status = $"opening retainer #{TargetIndex}";
+
+        var values = stackalloc AtkValue[4];
+        values[0].SetInt(2);
+        values[1].SetInt(TargetIndex);
+        values[2].SetInt(0);
+        values[3].SetInt(0);
+        list->FireCallback(4, values, true);
+        return true;
     }
 
     private bool Execute(VentureDecision decision)
