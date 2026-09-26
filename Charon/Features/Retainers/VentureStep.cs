@@ -17,6 +17,13 @@ public enum VentureScreen
 
     /// <summary>RetainerTaskResult — the finished venture's report.</summary>
     TaskResult,
+
+    /// <summary>
+    /// RetainerTaskList — the venture picker, open for the retainer currently being served. This is where
+    /// a PLANNED venture gets chosen, which is the one click AutoRetainer never makes: it either reassigns
+    /// the venture already there or takes quick exploration.
+    /// </summary>
+    TaskList,
 }
 
 public enum VentureAction
@@ -35,6 +42,9 @@ public enum VentureAction
 
     /// <summary>Confirm the new venture assignment.</summary>
     Assign,
+
+    /// <summary>Choose the planned venture in the venture list (see <c>VentureStep.Decide</c>'s wantedTaskId).</summary>
+    PickVenture,
 }
 
 public sealed record VentureDecision(VentureAction Action, int EntryIndex, string Reason)
@@ -95,7 +105,8 @@ public static class VentureStep
         bool reassignEnabled,
         bool confirmEnabled,
         bool assignEnabled,
-        VentureMenuText text)
+        VentureMenuText text,
+        uint wantedTaskId = 0)
     {
         if (!armed)
             return VentureDecision.Nothing("not armed");
@@ -118,6 +129,14 @@ public static class VentureStep
                 return assignEnabled
                     ? new VentureDecision(VentureAction.Assign, -1, "confirming the venture")
                     : VentureDecision.Nothing("waiting for the assign button");
+
+            case VentureScreen.TaskList:
+                // The picker is open. With a plan we choose it; with no plan we do nothing rather than
+                // clicking whatever happens to be first in the list — that would assign a venture nobody
+                // asked for, at a venture-token cost.
+                return wantedTaskId == 0
+                    ? VentureDecision.Nothing("no venture planned for this retainer")
+                    : new VentureDecision(VentureAction.PickVenture, -1, $"picking planned venture {wantedTaskId}");
 
             case VentureScreen.Menu:
                 // Order matters: collect before assigning, or a finished venture's rewards would be

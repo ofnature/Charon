@@ -9,13 +9,18 @@ namespace Charon.Features.Retainers;
 /// venture is assigned; <paramref name="CompleteUtc"/> null means the game has not handed over a
 /// timer yet, which is NOT the same as "ready" and must never be rendered as one.
 /// </summary>
+/// <param name="JobId">
+/// The retainer's ClassJob row id — what decides which ventures it may run. Defaulted so the record
+/// stays constructible in tests without a client.
+/// </param>
 public sealed record RetainerVenture(
     string Name,
     uint VentureId,
     DateTime? CompleteUtc,
     byte Level,
     byte ItemCount,
-    uint Gil);
+    uint Gil,
+    byte JobId = 0);
 
 /// <summary>What a retainer is doing right now. Unknown is a real answer, not a failure.</summary>
 public enum VentureState

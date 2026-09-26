@@ -74,6 +74,12 @@ public sealed unsafe class VentureRunner
     /// <summary>Armed by an explicit button press only. Never persisted, never automatic.</summary>
     public bool Armed { get; private set; }
 
+    /// <summary>
+    /// The venture the next retainer should be sent on, as planned by the window (0 = no plan: the runner
+    /// then only ever reassigns or takes quick exploration, which is exactly what it did before).
+    /// </summary>
+    public uint WantedTaskId { get; private set; }
+
     /// <summary>Whether the bell's retainer list is on screen right now.</summary>
     public bool RetainerListOpen => IsVisible("RetainerList");
 
@@ -88,9 +94,23 @@ public sealed unsafe class VentureRunner
         Status = "armed";
     }
 
+    /// <summary>
+    /// Set (or clear, with 0) the venture the next served retainer should be sent on. A new plan resets the
+    /// repeat guard, because "the same click twice" means something different once the intention changed.
+    /// The plan is an INTENTION, not a queue: it is read on the tick that the picker is actually open and
+    /// dropped by <see cref="Stop"/>.
+    /// </summary>
+    public void Plan(uint taskId)
+    {
+        WantedTaskId = taskId;
+        _repeats = 0;
+        _lastStep = string.Empty;
+    }
+
     public void Stop(string reason = "stopped")
     {
         Armed = false;
+        WantedTaskId = 0; // a stopped operation leaves no queued intention behind
         _repeats = 0;
         _lastStep = string.Empty;
         Status = reason;
@@ -125,7 +145,7 @@ public sealed unsafe class VentureRunner
                 return;
             }
 
-            var decision = VentureStep.Decide(Armed, screen, entries, reassign, confirm, assign, Text());
+            var decision = VentureStep.Decide(Armed, screen, entries, reassign, confirm, assign, Text(), WantedTaskId);
             if (decision.Action == VentureAction.None)
             {
                 Status = decision.Reason;
@@ -184,6 +204,20 @@ public sealed unsafe class VentureRunner
                 var result = (AddonRetainerTaskResult*)_gameGui.GetAddonByName("RetainerTaskResult").Address;
                 return result != null && AtkClickHelper.ClickButton(&result->AtkUnitBase, result->ReassignButton);
 
+            case VentureAction.PickVenture:
+            {
+                // VERIFIED shape (AutoRetainer): two ints on the list addon, updateState FALSE.
+                var list = (AtkUnitBase*)_gameGui.GetAddonByName("RetainerTaskList").Address;
+                if (list == null || WantedTaskId == 0)
+                    return false;
+
+                var values = stackalloc AtkValue[2];
+                values[0].SetInt(11);
+                values[1].SetInt((int)WantedTaskId);
+                list->FireCallback(2, values, false);
+                return true;
+            }
+
             case VentureAction.Confirm:
                 var done = (AddonRetainerTaskResult*)_gameGui.GetAddonByName("RetainerTaskResult").Address;
                 return done != null && AtkClickHelper.ClickButton(&done->AtkUnitBase, done->ConfirmButton);
@@ -213,6 +247,11 @@ public sealed unsafe class VentureRunner
             assign = ask->AssignButton != null && ask->AssignButton->IsEnabled;
             return VentureScreen.TaskAsk;
         }
+
+        // The venture picker outranks the retainer's own menu: the menu is closed while it is up.
+        var list = (AtkUnitBase*)_gameGui.GetAddonByName("RetainerTaskList").Address;
+        if (list != null && list->IsVisible)
+            return VentureScreen.TaskList;
 
         var menu = (AddonSelectString*)_gameGui.GetAddonByName("SelectString").Address;
         if (menu != null && menu->AtkUnitBase.IsVisible)

@@ -82,7 +82,8 @@ public sealed unsafe class RetainerReader
                         complete,
                         retainer->Level,
                         retainer->ItemCount,
-                        retainer->Gil));
+                        retainer->Gil,
+                        retainer->ClassJob));
                 }
 
                 if (missingTimer && utcNow - _timersRequestedUtc > TimerRequestEvery)

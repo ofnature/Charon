@@ -17,8 +17,38 @@ public sealed class VentureStepTests
         bool reassign = false,
         bool confirm = false,
         bool assign = false,
-        VentureMenuText? text = null) =>
-        VentureStep.Decide(armed, screen, entries ?? [], reassign, confirm, assign, text ?? Text);
+        VentureMenuText? text = null,
+        uint wantedTaskId = 0) =>
+        VentureStep.Decide(armed, screen, entries ?? [], reassign, confirm, assign, text ?? Text, wantedTaskId);
+
+    [Fact]
+    public void VenturePicker_WithAPlan_ChoosesIt()
+    {
+        var d = Decide(screen: VentureScreen.TaskList, wantedTaskId: 903);
+
+        Assert.Equal(VentureAction.PickVenture, d.Action);
+        Assert.Contains("903", d.Reason);
+    }
+
+    [Fact]
+    public void VenturePicker_WithNoPlan_DoesNothing()
+    {
+        // Clicking whatever is listed first would assign a venture nobody asked for, and charge for it.
+        var d = Decide(screen: VentureScreen.TaskList, wantedTaskId: 0);
+
+        Assert.Equal(VentureAction.None, d.Action);
+        Assert.Equal("no venture planned for this retainer", d.Reason);
+    }
+
+    [Fact]
+    public void APlan_DoesNotDisturbTheOtherScreens()
+    {
+        // The report still wins over the plan: a finished venture's rewards are collected first, or they
+        // sit in the report while the retainer is sent straight back out.
+        var d = Decide(screen: VentureScreen.TaskResult, reassign: true, wantedTaskId: 903);
+
+        Assert.Equal(VentureAction.Reassign, d.Action);
+    }
 
     [Fact]
     public void Disarmed_DoesNothing_WhateverIsOnScreen()
