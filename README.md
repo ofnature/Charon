@@ -172,6 +172,16 @@ The Supply / Provisioning / Expert Delivery board, read as data — and answered
 - **Bonus rows are marked** (★), and the EXP and seals each row is worth are read per row, not estimated.
 - **Read-only.** Handing in wants the mission *selected* at the officer, and Charon does not click rows in a list whose selection mechanism it has not verified. Once the game opens the delivery window, the turn-in fill (TWEAKS) puts the item in for you.
 
+## Consumables
+
+Items that exist only to be used, used.
+
+- **Untradable only, verified kinds only.** Today that is the MGP family — voucher, bronze, gold and platinum cards — which credit the Gold Saucer directly and cannot be sold or traded, so using one loses nothing. The page shows what a full run is worth before you press anything.
+- **It is an allowlist, not "anything untradable."** The game reports an ordinary potion as *not unlocked* exactly like a genuinely unlearned mount, so a blanket rule would drink your potions and eat your food. A kind gets added with evidence from the sheets, never by inference.
+- **A tradable copy is left alone** even when its kind is allowed — that one has a market value, and using it would destroy it.
+- **Manual by default**, with a per-item Use button. The automatic toggle is off until you switch it on, because consuming something unprompted is opt-in; it then works out of combat, not while busy, one every 1.5s.
+- **A use that does nothing is noticed.** Success is judged by the stack actually shrinking, not by the game accepting the call, and anything that fails to leave the bags is skipped for the session instead of retried forever.
+
 ## Gil Tools
 
 Money errands for unattended toons, under the GIL section:

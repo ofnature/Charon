@@ -28,7 +28,7 @@ namespace Charon;
 
 public sealed class CharonPlugin : IDalamudPlugin
 {
-    public const string PluginVersion = "0.1.43";
+    public const string PluginVersion = "0.1.44";
     private const string CommandName = "/charon";
 
     /// <summary>
@@ -97,6 +97,7 @@ public sealed class CharonPlugin : IDalamudPlugin
     private readonly LevelingIpc _levelingIpc;
     private readonly WeekliesReader _weeklies;
     private readonly RetainerReader _retainers;
+    private readonly ConsumableUser _consumables;
     private readonly VentureRunner _ventureRunner;
     private bool _ventureWasArmed;
     private readonly TextAdvancer _textAdvance;
@@ -414,6 +415,8 @@ public sealed class CharonPlugin : IDalamudPlugin
         _ddReader = new DeepDungeonReader(log);
         _weeklies = new WeekliesReader(log);
         _retainers = new RetainerReader(log);
+        _consumables = new ConsumableUser(dataManager, _condition,
+            () => _config.UseConsumablesEnabled, log);
         _ventureRunner = new VentureRunner(gameGui, dataManager, log);
         _retainerContents = new RetainerContentsReader(
             gameGui,
@@ -539,6 +542,7 @@ public sealed class CharonPlugin : IDalamudPlugin
             _weeklies,
             _retainers,
             _ventureRunner,
+            _consumables,
             _retainerPlanner,
             OpenRetainerBoard,
             _retainerContents,
@@ -1182,6 +1186,7 @@ public sealed class CharonPlugin : IDalamudPlugin
         _quickKill.Update(now);
         _spawnScanner.Update(now);
         _bossAi.Update(now);
+        _consumables.Update(now);
         _ventureRunner.Update(now);
 
         // Edge-triggered, never forced every frame - driving IsOpen from state each tick is what

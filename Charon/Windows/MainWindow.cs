@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Numerics;
@@ -14,6 +14,7 @@ using Charon.Features.Gear;
 using Charon.Features.GroupManagement;
 using Charon.Features.HealWatch;
 using Charon.Features.Leveling;
+using Charon.Features.Consumables;
 using Charon.Features.Loot;
 using Charon.Features.GrandCompany;
 using Charon.Features.Retainers;
@@ -50,6 +51,7 @@ public sealed class MainWindow : Window
         Loot,
         TrustedList,
         GilCapping,
+        Consumables,
         Retainers,
         GcDailies,
         Weeklies,
@@ -129,6 +131,7 @@ public sealed class MainWindow : Window
     private readonly WeekliesReader _weeklies;
     private readonly RetainerReader _retainers;
     private readonly VentureRunner _ventureRunner;
+    private readonly ConsumableUser _consumables;
     private readonly Func<bool> _isFreeTrial;
     private readonly LootWatcher _lootWatcher;
     private readonly CollectionScanner _collection;
@@ -200,6 +203,7 @@ public sealed class MainWindow : Window
         WeekliesReader weeklies,
         RetainerReader retainers,
         VentureRunner ventureRunner,
+        ConsumableUser consumables,
         RetainerPlanner retainerPlanner,
         Action openRetainerBoard,
         RetainerContentsReader retainerContents,
@@ -255,6 +259,7 @@ public sealed class MainWindow : Window
         _weeklies = weeklies;
         _retainers = retainers;
         _ventureRunner = ventureRunner;
+        _consumables = consumables;
         _retainerPlanner = retainerPlanner;
         _openRetainerBoard = openRetainerBoard;
         _retainerContents = retainerContents;
@@ -473,6 +478,11 @@ public sealed class MainWindow : Window
         if (SidebarTab.Draw("FT Gil Capping", FontAwesomeIcon.Coins, _section == Section.GilCapping,
                 _gilSeller.Busy ? "busy" : null))
             _section = Section.GilCapping;
+        // Badge = stacks sitting in the bags doing nothing, which is the whole point of the page.
+        var usableItems = _consumables.GetUsable().Sum(i => i.Quantity);
+        if (SidebarTab.Draw("Consumables", FontAwesomeIcon.Ticket, _section == Section.Consumables,
+                usableItems > 0 ? usableItems.ToString() : null, CharonTheme.AccentMint))
+            _section = Section.Consumables;
         // The badge is retainers sitting READY at the bell: the one number worth seeing from here.
         var readyRetainers = ReadyRetainerCount();
         if (SidebarTab.Draw("Retainers", FontAwesomeIcon.Bell, _section == Section.Retainers,
@@ -532,6 +542,7 @@ public sealed class MainWindow : Window
             case Section.Loot: DrawLootSection(); break;
             case Section.TrustedList: DrawTrustedSection(); break;
             case Section.GilCapping: DrawGilCappingSection(); break;
+            case Section.Consumables: DrawConsumablesSection(); break;
             case Section.Retainers: DrawRetainersSection(); break;
             case Section.GcDailies: DrawGcDailiesSection(); break;
             case Section.Weeklies: DrawWeekliesSection(); break;
@@ -2439,6 +2450,74 @@ public sealed class MainWindow : Window
                        + "and Allied Society dailies run through Odysseus.", CharonTheme.TextDisabled);
     }
 
+    // --- GIL: Consumables ---
+
+    /// <summary>
+    /// The use-it-and-it-is-gone items sitting in the bags. Only VERIFIED kinds appear, and only
+    /// untradable copies: an item with no market value costs nothing to use, which is the whole
+    /// argument for the page. Using is still a click by default.
+    /// </summary>
+    private void DrawConsumablesSection()
+    {
+        DrawPageHeader("Consumables", "untradable items that exist only to be used");
+
+        var rows = _consumables.GetUsable();
+        var total = _consumables.TotalValue();
+
+        ImGui.TextColored(CharonTheme.TextSecondary, ConsumablePolicy.Summarize(rows, total));
+        CharonTheme.HelpMarker("Items whose only purpose is to be consumed, and which cannot be sold\n"
+                               + "or traded — so using one loses nothing. Today that is the MGP\n"
+                               + "card family (voucher, bronze, gold, platinum), which credit the\n"
+                               + "Gold Saucer directly.\n\n"
+                               + "The list is an allowlist of verified item actions, not \"anything\n"
+                               + "untradable\" - that is what stops it drinking your potions.");
+
+        var auto = _config.UseConsumablesEnabled;
+        if (ImGui.Checkbox("Use them automatically", ref auto))
+        {
+            _config.UseConsumablesEnabled = auto;
+            _save();
+        }
+        CharonTheme.HelpMarker("Off by default — consuming something unprompted is opt-in, even\n"
+                               + "when the item has nothing to lose. Out of combat and not busy,\n"
+                               + "one every 1.5s, and anything the game refuses is skipped for\n"
+                               + "the session.");
+
+        if (rows.Count > 0 && ImGui.BeginTable("consumableRows", 3,
+                ImGuiTableFlags.BordersInnerV | ImGuiTableFlags.RowBg | ImGuiTableFlags.SizingFixedFit
+                | ImGuiTableFlags.ScrollY, new Vector2(0, 200)))
+        {
+            ImGui.TableSetupColumn("Item", ImGuiTableColumnFlags.WidthStretch);
+            ImGui.TableSetupColumn("Held", ImGuiTableColumnFlags.WidthFixed, 60f);
+            ImGui.TableSetupColumn("##action", ImGuiTableColumnFlags.WidthFixed, 64f);
+            ImGui.TableHeadersRow();
+
+            foreach (var row in rows)
+            {
+                ImGui.TableNextRow();
+                ImGui.TableNextColumn();
+                ImGui.TextUnformatted(row.Name);
+                if (row.Value > 0 && ImGui.IsItemHovered())
+                    ImGui.SetTooltip($"{row.Value:N0} each — {(long)row.Value * row.Quantity:N0} in this stack");
+                ImGui.TableNextColumn();
+                ImGui.TextColored(CharonTheme.TextSecondary, row.Quantity.ToString());
+                ImGui.TableNextColumn();
+                if (ImGui.SmallButton($"Use##use{row.Container}_{row.Slot}"))
+                    _consumables.TryUse(row);
+            }
+
+            ImGui.EndTable();
+        }
+
+        ImGui.Spacing();
+        if (ImGui.Button("Refresh"))
+            _consumables.ResetRefusals();
+        CharonTheme.HelpMarker("Rescans the bags and retries anything the game refused earlier.");
+
+        ImGui.Spacing();
+        DrawStatusLine(_consumables.Status, CharonTheme.TextDisabled);
+    }
+
     // --- GIL: FT Gil Capping ---
 
     /// <summary>
@@ -3382,6 +3461,7 @@ public sealed class MainWindow : Window
         DrawStatusLine($"Trade: {ScrambleIn(_tradeStatus())}");
         DrawStatusLine($"Gear: {_gearStatus()}");
         DrawStatusLine($"Collect: {_collectStatus()}");
+        DrawStatusLine($"Consumables: {_consumables.Status}");
         DrawStatusLine($"Sprint: {_sprintStatus()}");
         DrawStatusLine($"Nav: {_navStatus()}");
         DrawStatusLine($"QoL: {_qolStatus()}");

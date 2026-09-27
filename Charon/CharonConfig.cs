@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using Charon.Features.GrandCompany;
 using Dalamud.Configuration;
@@ -230,7 +230,14 @@ public sealed class CharonConfig : IPluginConfiguration
     /// because an unlearned one can be worth millions and collecting consumes it. Off by default:
     /// consuming items unprompted is opt-in.
     /// </summary>
-    public bool AutoCollectEnabled { get; set; } = false;
+    public bool AutoCollectEnabled { get; set; } = false;
+
+    /// <summary>
+    /// Use untradable consumables (the MGP card family) without being asked. Default OFF for the
+    /// same reason auto-collect is: consuming something unprompted is opt-in, even when the item
+    /// has no market value to lose.
+    /// </summary>
+    public bool UseConsumablesEnabled { get; set; } = false;
 
     // Fleet Leader
     /// <summary>
