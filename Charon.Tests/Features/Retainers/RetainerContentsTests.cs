@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using Charon.Features.Retainers;
@@ -108,6 +108,21 @@ public class RetainerContentsTests
         };
 
         Assert.Empty(RetainerContents.PlanRefresh(bags, All, Now));
+    }
+
+    [Fact]
+    public void AForcedRefreshTakesEveryone_HoweverRecentlySeen()
+    {
+        // The player's "Refresh all" means ALL. It refused with "all 2 retainer(s) are current"
+        // five minutes after a capture, which read as the button doing nothing. Forcing is the
+        // same planner with a zero window, so there is still only one rule.
+        var bags = new List<RetainerBag>
+        {
+            Bag("T'sala", Now.AddMinutes(-5)),
+            Bag("T'sola", Now.AddMinutes(-4)),
+        };
+
+        Assert.Equal(2, RetainerContents.PlanRefresh(bags, All, Now, staleAfterMinutes: 0).Count);
     }
 
     [Fact]

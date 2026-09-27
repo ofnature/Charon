@@ -28,7 +28,7 @@ namespace Charon;
 
 public sealed class CharonPlugin : IDalamudPlugin
 {
-    public const string PluginVersion = "0.1.46";
+    public const string PluginVersion = "0.1.47";
     private const string CommandName = "/charon";
 
     /// <summary>
@@ -99,6 +99,7 @@ public sealed class CharonPlugin : IDalamudPlugin
     private readonly RetainerReader _retainers;
     private readonly ConsumableUser _consumables;
     private readonly FleetItemService _fleetItems;
+    private readonly RetainerSelector _retainerSelector;
     private readonly VentureRunner _ventureRunner;
     private bool _ventureWasArmed;
     private readonly TextAdvancer _textAdvance;
@@ -442,6 +443,16 @@ public sealed class CharonPlugin : IDalamudPlugin
         // without either window being open.
         _chestContents = new ChestContentsReader(gameGui, _config, () => _jobLevels.LocalContentId, SaveConfig, log);
 
+        // Selection only: it opens the retainer a pass is waiting for at a bell the player is
+        // ALREADY at, and never walks anyone to one.
+        _retainerSelector = new RetainerSelector(
+            gameGui, dataManager,
+            () => _config.RetainerAutoSelectEnabled,
+            () => _retainerContents.WantedRetainer,
+            () => _retainerContents.OpenRetainer,
+            () => _retainerContents.RetainerAtBell,
+            log);
+
         // Built after BOTH stores: it reads them through lambdas, so the call is lazy, but a field
         // captured before it is assigned is still a nullable warning and the baseline is zero.
         _fleetItems = new FleetItemService(_relay, _condition,
@@ -556,6 +567,7 @@ public sealed class CharonPlugin : IDalamudPlugin
             _ventureRunner,
             _consumables,
             _fleetItems,
+            _retainerSelector,
             _retainerPlanner,
             OpenRetainerBoard,
             _retainerContents,
@@ -587,7 +599,9 @@ public sealed class CharonPlugin : IDalamudPlugin
             _retainerContents,
             _ventureRunner,
             () => _objectTable.LocalPlayer?.Name.TextValue ?? string.Empty,
-            () => _jobLevels.LocalContentId);
+            () => _jobLevels.LocalContentId,
+            () => _config.RetainerAutoSelectEnabled,
+            () => _retainerSelector.Status);
         _retainersWindow.IsOpen = _config.RetainerWindowVisible; // Dalamud windows default to OPEN
         _retainerWindowShown = _config.RetainerWindowVisible;
         _windowSystem.AddWindow(_retainersWindow);
@@ -1188,6 +1202,7 @@ public sealed class CharonPlugin : IDalamudPlugin
         _qte.Update(now);
         _afkGuard.Update(now);
         _retainerContents.Update(now);
+        _retainerSelector.Update(now);
         _chestContents.Update(now);
         _allowances.Update(now);
         _windowText.UpdateWatch(now, message => _chat.Print(message));

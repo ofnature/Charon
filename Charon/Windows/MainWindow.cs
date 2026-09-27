@@ -133,6 +133,7 @@ public sealed class MainWindow : Window
     private readonly VentureRunner _ventureRunner;
     private readonly ConsumableUser _consumables;
     private readonly FleetItemService _fleetItems;
+    private readonly RetainerSelector _retainerSelector;
     private readonly Func<bool> _isFreeTrial;
     private readonly LootWatcher _lootWatcher;
     private readonly CollectionScanner _collection;
@@ -206,6 +207,7 @@ public sealed class MainWindow : Window
         VentureRunner ventureRunner,
         ConsumableUser consumables,
         FleetItemService fleetItems,
+        RetainerSelector retainerSelector,
         RetainerPlanner retainerPlanner,
         Action openRetainerBoard,
         RetainerContentsReader retainerContents,
@@ -263,6 +265,7 @@ public sealed class MainWindow : Window
         _ventureRunner = ventureRunner;
         _consumables = consumables;
         _fleetItems = fleetItems;
+        _retainerSelector = retainerSelector;
         _retainerPlanner = retainerPlanner;
         _openRetainerBoard = openRetainerBoard;
         _retainerContents = retainerContents;
@@ -2763,6 +2766,30 @@ public sealed class MainWindow : Window
         DrawStatusLine($"{rows.Count} retainers · {rows.Count(RetainerReady)} ready · {ventures.Count} ventures known"
                        + $" · {prices.Count(p => p.Value > 0)} item prices known");
         DrawStatusLine($"reader: {_retainers.Status} · catalog: {_retainerPlanner.Status}", CharonTheme.TextDisabled);
+        DrawStatusLine($"at the bell: {_retainerSelector.Status}", CharonTheme.TextDisabled);
+        ImGui.Spacing();
+
+        using (var bell = SettingsGroup.Begin("At the bell"))
+        {
+            var autoSelect = _config.RetainerAutoSelectEnabled;
+            if (bell.Toggle("Open the retainer a pass is waiting for",
+                    "While you are standing at a bell, Charon opens whichever retainer a refresh or "
+                    + "fetch is waiting on, and leaves the one it has finished with — every retainer is "
+                    + "reachable from the same bell, so it never walks you anywhere. With no bell open it "
+                    + "does nothing at all. Off by default.",
+                    ref autoSelect))
+            {
+                _config.RetainerAutoSelectEnabled = autoSelect;
+                _retainerSelector.Reset();
+                _save();
+            }
+        }
+
+        // Debug builds only: TracePanel is [Conditional("DEBUG")], so a Release build drops this call
+        // entirely. The list's raw values ride along in the copy — they are how its row layout was read.
+        TracePanel.Draw("Last steps at the bell", _retainerSelector.Trace,
+            [("RetainerList values", _retainerSelector.ListLayout)]);
+
         ImGui.Spacing();
 
         using (var group = SettingsGroup.Begin("Surfaces"))
@@ -2950,7 +2977,7 @@ public sealed class MainWindow : Window
                 }
                 else if (Buttons.Action("Refresh all", true, 200f))
                 {
-                    _retainerContents.ArmRefresh();
+                    _retainerContents.ArmRefresh(force: true);
                 }
             });
         }
@@ -3466,6 +3493,7 @@ public sealed class MainWindow : Window
         DrawStatusLine($"Collect: {_collectStatus()}");
         DrawStatusLine($"Consumables: {_consumables.Status}");
         DrawStatusLine($"Fleet items: {_fleetItems.Status}");
+        DrawStatusLine($"Retainer select: {_retainerSelector.Status}");
         DrawStatusLine($"Sprint: {_sprintStatus()}");
         DrawStatusLine($"Nav: {_navStatus()}");
         DrawStatusLine($"QoL: {_qolStatus()}");

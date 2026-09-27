@@ -418,6 +418,13 @@ public sealed class CharonConfig : IPluginConfiguration
     public bool RetainerIpcExecuteEnabled { get; set; } = false;
 
     /// <summary>
+    /// While you are AT a bell, let Charon open the retainer a running pass is waiting for, and
+    /// leave the one it is finished with. Default OFF. This never takes the character anywhere:
+    /// with no bell window open it does nothing at all.
+    /// </summary>
+    public bool RetainerAutoSelectEnabled { get; set; } = false;
+
+    /// <summary>
     /// When each character (by content id) last donated at the Doman Enclave — or was OBSERVED
     /// with an empty weekly budget, which counts the same. Checked against the Tuesday 08:00 UTC
     /// reset so a used-up toon skips the trip entirely.

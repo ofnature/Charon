@@ -67,6 +67,10 @@ public sealed unsafe class RetainerContentsReader
 
     private bool _fetchArmed;
     private FetchState _fetchState = FetchState.Idle;
+    private string? _lastRefreshTarget;
+
+    /// <summary>Whether THIS refresh pass has seen the roster non-empty — after that, empty means reloading.</summary>
+    private bool _refreshRosterSeen;
     private readonly List<FetchRequest> _pending = new();
     private uint _itemId;
     private int _wanted;
@@ -105,6 +109,59 @@ public sealed unsafe class RetainerContentsReader
     public string LastResult { get; private set; } = "nothing fetched yet";
 
     public bool FetchBusy => _fetchArmed;
+
+    /// <summary>Which retainer's BAGS are open right now, or null.</summary>
+    public string? OpenRetainer => OpenRetainerName();
+
+    /// <summary>
+    /// Which retainer we are standing in front of at a bell, whatever window is up: their menu,
+    /// their bags, or neither yet. Selecting a retainer CLOSES the list, so "which window is
+    /// open" cannot identify them on its own — the summoned retainer object can.
+    /// </summary>
+    public string? RetainerAtBell
+    {
+        get
+        {
+            if (!_condition[ConditionFlag.OccupiedSummoningBell])
+                return null;
+
+            var player = _objectTable.LocalPlayer;
+            if (player == null)
+                return null;
+
+            return _objectTable
+                .Where(o => o.ObjectKind == ObjectKind.Retainer)
+                .OrderBy(o => (o.Position - player.Position).LengthSquared())
+                .Select(o => o.Name.TextValue)
+                .FirstOrDefault(n => !string.IsNullOrWhiteSpace(n));
+        }
+    }
+
+    /// <summary>
+    /// The retainer a running pass is WAITING for, or null. This is what turns "open T'sola at a
+    /// bell" from an instruction to the player into something Charon can act on itself once they
+    /// are standing at one.
+    /// </summary>
+    public string? WantedRetainer
+    {
+        get
+        {
+            if (_fetchArmed)
+                return _plannedRetainer;
+
+            if (!_refreshArmed)
+                return null;
+
+            // Mid-dismissal the roster is reloading and reads empty; answer with the last target
+            // rather than "nobody", or the selector idles at exactly the moment the list comes back.
+            var rows = _retainers.Read(DateTime.UtcNow);
+            if (RetainerRoster.Classify(_retainers.Loaded, rows.Count, _refreshRosterSeen) == RosterState.NotLoaded)
+                return _lastRefreshTarget;
+
+            _lastRefreshTarget = rows.Select(r => r.Name).FirstOrDefault(n => !_refreshSeen.Contains(Key(n)));
+            return _lastRefreshTarget;
+        }
+    }
 
     /// <summary>
     /// The fetch as a VALUE, for callers that must tell "waiting for a human to reach a bell" from
@@ -231,7 +288,13 @@ public sealed unsafe class RetainerContentsReader
     /// does not select retainers (the list's selection is not a mechanism this repo has ever verified), so
     /// the pass reports which retainer to open next and finishes when they are all in.
     /// </summary>
-    public bool ArmRefresh()
+    /// <param name="force">
+    /// True for the player's own "Refresh all" button, which means ALL: re-read every retainer,
+    /// however recently seen. False for another plugin's RequestRefresh, which only wants what is
+    /// unknown or older than the staleness window — a crafter asks because it is SHORT, and
+    /// re-reading a retainer captured a minute ago would only cost it a bell cycle.
+    /// </param>
+    public bool ArmRefresh(bool force = false)
     {
         var now = DateTime.UtcNow;
         var all = _retainers.Read(now).Select(r => (Key(r.Name), r.Name)).ToList();
@@ -241,7 +304,9 @@ public sealed unsafe class RetainerContentsReader
             return false;
         }
 
-        var plan = RetainerContents.PlanRefresh(Bags(), all, now);
+        // Forcing is the same planner with a zero window, so there is one rule, not two.
+        var plan = RetainerContents.PlanRefresh(
+            Bags(), all, now, force ? 0 : RetainerContents.DefaultStaleAfterMinutes);
         if (plan.Count == 0)
         {
             Status = $"nothing to refresh — all {all.Count} retainer(s) are current";
@@ -250,6 +315,8 @@ public sealed unsafe class RetainerContentsReader
 
         _refreshArmed = true;
         _refreshSeen.Clear();
+        _refreshRosterSeen = false;
+        _lastRefreshTarget = null;
         Status = $"refresh 0/{all.Count} — open {plan[0].Name} at a bell ({plan[0].Reason})";
         return true;
     }
@@ -258,11 +325,22 @@ public sealed unsafe class RetainerContentsReader
     {
         var now = DateTime.UtcNow;
         var names = _retainers.Read(now).Select(r => r.Name).ToList();
-        if (names.Count == 0)
+
+        // The roster RELOADS while a retainer is being dismissed; mid-cycle that read comes back
+        // empty. Only a LOADED roster can say "none" — this stopped a live refresh halfway once.
+        if (names.Count > 0)
+            _refreshRosterSeen = true;
+
+        switch (RetainerRoster.Classify(_retainers.Loaded, names.Count, _refreshRosterSeen))
         {
-            _refreshArmed = false;
-            Status = "refresh stopped — no retainers on this character";
-            return;
+            case RosterState.NotLoaded:
+                Status = "refresh waiting — the retainer list is reloading";
+                return;
+
+            case RosterState.Empty:
+                _refreshArmed = false;
+                Status = "refresh stopped — no retainers on this character";
+                return;
         }
 
         var done = names.Count(n => _refreshSeen.Contains(Key(n)));

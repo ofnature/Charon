@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Numerics;
@@ -30,6 +30,8 @@ public sealed class RetainersWindow : Window
     private readonly RetainerPlanner _planner;
     private readonly RetainerContentsReader _contents;
     private readonly VentureRunner _runner;
+    private readonly Func<bool> _autoSelect;
+    private readonly Func<string> _selectorStatus;
     private readonly Func<string> _characterName;
     private readonly Func<ulong> _contentId;
 
@@ -45,13 +47,17 @@ public sealed class RetainersWindow : Window
         RetainerContentsReader contents,
         VentureRunner runner,
         Func<string> characterName,
-        Func<ulong> contentId)
+        Func<ulong> contentId,
+        Func<bool> autoSelect,
+        Func<string> selectorStatus)
         : base("Charon — Retainers##CharonRetainers")
     {
         BgAlpha = CharonTheme.PanelAlpha;
         _retainers = retainers;
         _planner = planner;
         _contents = contents;
+        _autoSelect = autoSelect;
+        _selectorStatus = selectorStatus;
         _runner = runner;
         _characterName = characterName;
         _contentId = contentId;
@@ -386,10 +392,14 @@ public sealed class RetainersWindow : Window
         else
         {
             if (Buttons.Action("Refresh all", true, 110f))
-                _contents.ArmRefresh();
+                _contents.ArmRefresh(force: true);
 
             ImGui.SameLine();
-            ImGui.TextColored(CharonTheme.TextMuted, "open each retainer at a bell — Charon never picks one for you");
+            // With selection on, Charon DOES pick the next retainer while you stand at a bell — so
+            // the hint says what it is doing rather than a rule that no longer holds.
+            ImGui.TextColored(CharonTheme.TextMuted, _autoSelect()
+                ? $"at the bell, Charon opens each one — {_selectorStatus()}"
+                : "open each retainer at a bell — Charon never picks one for you");
         }
 
         ImGui.SameLine();
