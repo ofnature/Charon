@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using Dalamud.Plugin;
 using Dalamud.Plugin.Ipc;
 using Dalamud.Plugin.Services;
@@ -36,6 +36,9 @@ public sealed class RetainerContentsIpc : IDisposable
     private readonly ICallGateProvider<uint, int, bool, bool> _requestFetch;
     private readonly ICallGateProvider<string> _fetchStatus;
     private readonly ICallGateProvider<bool> _fetchBusy;
+    private readonly ICallGateProvider<string, bool> _requestFetchList;
+    private readonly ICallGateProvider<string> _getFetchStatus;
+    private readonly ICallGateProvider<bool> _stop;
 
     private readonly RetainerContentsReader _contents;
     private readonly Func<bool> _executeEnabled;
@@ -58,6 +61,9 @@ public sealed class RetainerContentsIpc : IDisposable
         _requestFetch = pluginInterface.GetIpcProvider<uint, int, bool, bool>("Charon.Retainers.RequestFetch");
         _fetchStatus = pluginInterface.GetIpcProvider<string>("Charon.Retainers.FetchStatus");
         _fetchBusy = pluginInterface.GetIpcProvider<bool>("Charon.Retainers.FetchBusy");
+        _requestFetchList = pluginInterface.GetIpcProvider<string, bool>("Charon.Retainers.RequestFetchList");
+        _getFetchStatus = pluginInterface.GetIpcProvider<string>("Charon.Retainers.GetFetchStatusJson");
+        _stop = pluginInterface.GetIpcProvider<bool>("Charon.Retainers.Stop");
 
         _getContents.RegisterFunc(GetContents);
         _getItem.RegisterFunc(GetItem);
@@ -66,6 +72,9 @@ public sealed class RetainerContentsIpc : IDisposable
         _requestFetch.RegisterFunc(RequestFetch);
         _fetchStatus.RegisterFunc(() => _contents.Status);
         _fetchBusy.RegisterFunc(() => _executeEnabled() && _contents.FetchBusy);
+        _requestFetchList.RegisterFunc(RequestFetchList);
+        _getFetchStatus.RegisterFunc(GetFetchStatus);
+        _stop.RegisterFunc(Stop);
     }
 
     /// <summary>The last thing a caller asked of us, for the Debug line.</summary>
@@ -125,6 +134,53 @@ public sealed class RetainerContentsIpc : IDisposable
         return armed;
     }
 
+    /// <summary>
+    /// A whole shopping list in one call, so a caller does not pay a bell visit per item. Refused
+    /// for the same reasons a single fetch is, plus a list that asks for nothing.
+    /// </summary>
+    private bool RequestFetchList(string json)
+    {
+        if (!_executeEnabled())
+        {
+            Status = "RequestFetchList → refused (execution disabled)";
+            return false;
+        }
+
+        if (_contents.Busy)
+        {
+            Status = "RequestFetchList → refused (busy)";
+            return false;
+        }
+
+        var armed = _contents.ArmFetchList(json);
+        Status = $"RequestFetchList → {(armed ? "armed" : "refused")}";
+        _log.Debug("[Retainers] IPC fetch list requested → {0}", armed);
+        return armed;
+    }
+
+    /// <summary>
+    /// The fetch as structured state. READ-ONLY, so it answers whether or not execution is
+    /// enabled: a caller has to be able to see "refused (execution disabled)" without guessing.
+    /// </summary>
+    private string GetFetchStatus()
+    {
+        Status = "GetFetchStatusJson";
+        return _contents.Report.ToJson();
+    }
+
+    /// <summary>
+    /// Cancels whatever is armed, including the rest of a list. Always allowed — refusing to STOP
+    /// because execution is switched off would strand a pass that was armed while it was on.
+    /// </summary>
+    private bool Stop()
+    {
+        var wasBusy = _contents.Busy;
+        _contents.Stop("stopped by another plugin");
+        Status = $"Stop → {(wasBusy ? "cancelled" : "nothing was running")}";
+        _log.Debug("[Retainers] IPC stop (was busy: {0})", wasBusy);
+        return wasBusy;
+    }
+
     public void Dispose()
     {
         _getContents.UnregisterFunc();
@@ -134,5 +190,8 @@ public sealed class RetainerContentsIpc : IDisposable
         _requestFetch.UnregisterFunc();
         _fetchStatus.UnregisterFunc();
         _fetchBusy.UnregisterFunc();
+        _requestFetchList.UnregisterFunc();
+        _getFetchStatus.UnregisterFunc();
+        _stop.UnregisterFunc();
     }
 }

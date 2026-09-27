@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json;
@@ -66,6 +66,8 @@ public sealed unsafe class RetainerContentsReader
     private bool _refreshArmed;
 
     private bool _fetchArmed;
+    private FetchState _fetchState = FetchState.Idle;
+    private readonly List<FetchRequest> _pending = new();
     private uint _itemId;
     private int _wanted;
     private bool _hqOnly;
@@ -103,6 +105,14 @@ public sealed unsafe class RetainerContentsReader
     public string LastResult { get; private set; } = "nothing fetched yet";
 
     public bool FetchBusy => _fetchArmed;
+
+    /// <summary>
+    /// The fetch as a VALUE, for callers that must tell "waiting for a human to reach a bell" from
+    /// "moving" without parsing the prose status. Queued counts items still to come from a list.
+    /// </summary>
+    public FetchReport Report => new(
+        _fetchState, _plannedRetainer ?? string.Empty, _itemId, _wanted,
+        _movedNq, _movedHq, _pending.Count, Status);
 
     public bool RefreshBusy => _refreshArmed;
 
@@ -276,6 +286,7 @@ public sealed unsafe class RetainerContentsReader
         var plan = RetainerContents.PlanFetch(Bags(), itemId, quantity, highQuality);
         if (!plan.Possible)
         {
+            _fetchState = FetchState.Refused;
             Status = $"fetch refused — {plan.Refusal}";
             LastResult = Status;
             _log.Debug("[Retainers] fetch refused: {0}", plan.Refusal ?? "unknown");
@@ -292,12 +303,16 @@ public sealed unsafe class RetainerContentsReader
         _failedMoves = 0;
         _pendingMove = null;
         _lastActionUtc = DateTime.MinValue;
+        _fetchState = FetchState.WaitingForPerson;
         Status = $"fetch armed — open {plan.Retainer} at a bell";
         return true;
     }
 
     public void Stop(string reason = "stopped")
     {
+        // A list is an intention, not a queue that survives a stop.
+        _pending.Clear();
+        _fetchState = FetchState.Idle;
         _fetchArmed = false;
         _refreshArmed = false;
         _pendingMove = null;
@@ -363,6 +378,7 @@ public sealed unsafe class RetainerContentsReader
             _fetchArmed, open, _plannedRetainer, _itemId, remaining, _hqOnly, 0, 0, ReadSlots(), FreePlayerSlots(), null);
 
         Status = decision.Reason;
+        _fetchState = open == _plannedRetainer ? FetchState.Moving : FetchState.WaitingForPerson;
 
         switch (decision.Action)
         {
@@ -418,6 +434,67 @@ public sealed unsafe class RetainerContentsReader
         _pendingMove = null;
         Status = reason;
         LastResult = reason;
+
+        // Delivered anything = done; nothing = refused. The caller needs that distinction, and
+        // "moved fewer than asked" is still done — the numbers say how many.
+        _fetchState = _movedNq + _movedHq > 0 ? FetchState.Done : FetchState.Refused;
+
+        StartNextFromList();
+    }
+
+    /// <summary>
+    /// Arms the next item of a list, re-planned against the live store exactly like a lone fetch.
+    /// An item the store now refuses is DROPPED rather than stalling the rest, since the whole
+    /// point of the list is one bell visit; the refusal stays in LastResult for the caller.
+    /// </summary>
+    private void StartNextFromList()
+    {
+        while (_pending.Count > 0)
+        {
+            var next = _pending[0];
+            _pending.RemoveAt(0);
+            if (ArmFetch(next.ItemId, next.Quantity, next.HighQuality))
+                return;
+
+            _log.Debug("[Retainers] list: skipping {0} — {1}", next.ItemId, Status);
+        }
+    }
+
+    /// <summary>
+    /// A whole shopping list in one arming, so a caller does not pay a bell visit per item. The
+    /// list is held as an INTENTION: each entry is planned only when its turn comes, and Stop
+    /// clears whatever is left.
+    /// </summary>
+    public bool ArmFetchList(string? json)
+    {
+        var items = FetchList.Parse(json, out var refusal);
+        if (items.Count == 0)
+        {
+            _fetchState = FetchState.Refused;
+            Status = $"fetch list refused — {refusal}";
+            LastResult = Status;
+            return false;
+        }
+
+        if (Busy)
+        {
+            Status = "fetch list refused — another pass is still running";
+            return false;
+        }
+
+        _pending.Clear();
+        _pending.AddRange(items);
+        StartNextFromList();
+
+        if (!_fetchArmed)
+        {
+            Status = $"fetch list refused — {LastResult}";
+            return false;
+        }
+
+        if (refusal != null)
+            _log.Debug("[Retainers] list accepted with a note: {0}", refusal);
+        return true;
     }
 
     // ------------------------------------------------------------------- reads ---

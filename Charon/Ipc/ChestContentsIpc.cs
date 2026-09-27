@@ -1,8 +1,9 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json;
 using Charon.Features.Containers;
+using Charon.Services.Game;
 using Charon.Features.Retainers;
 using Dalamud.Plugin;
 using Dalamud.Plugin.Ipc;
@@ -37,6 +38,11 @@ public sealed class ChestContentsIpc : IDisposable
     private readonly ICallGateProvider<uint, string> _getItem;
 
     private readonly Func<ChestSnapshot?> _chest;
+    private readonly ICallGateProvider<uint, int, bool, bool> _requestFetch;
+    private readonly ICallGateProvider<bool> _fetchBusy;
+    private readonly ICallGateProvider<string> _fetchStatus;
+    private readonly FcChestManager _fcChest;
+    private readonly Func<bool> _executeEnabled;
     private readonly Func<IReadOnlyList<RetainerBag>> _retainers;
     private readonly IPluginLog _log;
 
@@ -44,9 +50,21 @@ public sealed class ChestContentsIpc : IDisposable
         IDalamudPluginInterface pluginInterface,
         Func<ChestSnapshot?> chest,
         Func<IReadOnlyList<RetainerBag>> retainers,
+        FcChestManager fcChest,
+        Func<bool> executeEnabled,
         IPluginLog log)
     {
         _chest = chest;
+        _fcChest = fcChest;
+        _executeEnabled = executeEnabled;
+
+        _requestFetch = pluginInterface.GetIpcProvider<uint, int, bool, bool>("Charon.Chest.RequestFetch");
+        _fetchBusy = pluginInterface.GetIpcProvider<bool>("Charon.Chest.FetchBusy");
+        _fetchStatus = pluginInterface.GetIpcProvider<string>("Charon.Chest.FetchStatus");
+
+        _requestFetch.RegisterFunc(RequestFetch);
+        _fetchBusy.RegisterFunc(() => _executeEnabled() && _fcChest.Busy);
+        _fetchStatus.RegisterFunc(() => _fcChest.LastOperation);
         _retainers = retainers;
         _log = log;
 
@@ -64,6 +82,9 @@ public sealed class ChestContentsIpc : IDisposable
     /// Every place Charon knows this item is, across both stores. The point of the gate: a crafter asking "do we
     /// already have any of this" should not have to know which plugin read which window.
     /// </summary>
+    /// <summary>The last thing a caller asked of us, for the Debug line.</summary>
+    public string Status { get; private set; } = "no calls yet";
+
     private string ItemJson(uint itemId)
     {
         var now = DateTime.UtcNow;
@@ -124,10 +145,68 @@ public sealed class ChestContentsIpc : IDisposable
         }
     }
 
+    /// <summary>
+    /// Withdraw from the FC chest for another plugin. The chest is the source BEFORE retainers in
+    /// a crafter's order, and unlike a retainer it needs no bell — only the chest window open.
+    ///
+    /// HQ-ONLY IS REFUSED, not silently substituted: the underlying withdraw drains NQ first and
+    /// then HQ, so it cannot promise HQ units, and handing a crafter NQ when it asked for HQ would
+    /// quietly cost it quality. <paramref name="highQuality"/> false means "any quality", the same
+    /// meaning the retainer fetch gives it.
+    /// </summary>
+    private bool RequestFetch(uint itemId, int quantity, bool highQuality)
+    {
+        if (!_executeEnabled())
+        {
+            Status = "RequestFetch → refused (execution disabled)";
+            return false;
+        }
+
+        if (highQuality)
+        {
+            Status = "RequestFetch → refused (HQ-only withdraw is not supported)";
+            return false;
+        }
+
+        if (itemId == 0 || quantity <= 0)
+        {
+            Status = "RequestFetch → refused (nothing asked for)";
+            return false;
+        }
+
+        if (_fcChest.Busy)
+        {
+            Status = "RequestFetch → refused (busy)";
+            return false;
+        }
+
+        // The store says WHICH page holds it; the withdraw itself re-reads the live page, so a
+        // stale snapshot costs a refusal rather than a wrong move.
+        var pages = ChestContents.Find(_chest(), itemId);
+        if (pages.Count == 0)
+        {
+            Status = $"RequestFetch → refused (no page is known to hold {itemId})";
+            return false;
+        }
+
+        var page = pages.OrderByDescending(p => p.Nq + p.Hq).First().Page;
+        var queued = _fcChest.StartWithdrawAmount(page, itemId, quantity);
+        var started = queued > 0;
+
+        Status = started
+            ? $"RequestFetch → {itemId} x{quantity} from page {page}: {queued} move(s)"
+            : $"RequestFetch → refused ({_fcChest.LastOperation})";
+        _log.Debug("[Chest] IPC fetch {0} x{1} page {2} → {3} move(s)", itemId, quantity, page, queued);
+        return started;
+    }
+
     public void Dispose()
     {
         _getContents.UnregisterFunc();
         _status.UnregisterFunc();
         _getItem.UnregisterFunc();
+        _requestFetch.UnregisterFunc();
+        _fetchBusy.UnregisterFunc();
+        _fetchStatus.UnregisterFunc();
     }
 }

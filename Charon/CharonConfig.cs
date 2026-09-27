@@ -239,6 +239,13 @@ public sealed class CharonConfig : IPluginConfiguration
     /// </summary>
     public bool UseConsumablesEnabled { get; set; } = false;
 
+    /// <summary>
+    /// Let another plugin withdraw from the FC chest over IPC. Default OFF, its own switch rather
+    /// than the retainer one: the chest is shared with the whole free company, so consenting to a
+    /// caller moving YOUR retainer's items is not the same as consenting to it moving the FC's.
+    /// </summary>
+    public bool ChestIpcExecuteEnabled { get; set; } = false;
+
     // Fleet Leader
     /// <summary>
     /// Character designated as fleet leader — the only toon whose fleet commands (currently Leave
