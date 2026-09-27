@@ -43,6 +43,9 @@ public sealed class ChestContentsIpc : IDisposable
     private readonly ICallGateProvider<string> _fetchStatus;
     private readonly FcChestManager _fcChest;
     private readonly Func<bool> _executeEnabled;
+    private readonly ICallGateProvider<uint, bool> _askFleet;
+    private readonly ICallGateProvider<string> _fleetResult;
+    private readonly FleetItemService _fleetItems;
     private readonly Func<IReadOnlyList<RetainerBag>> _retainers;
     private readonly IPluginLog _log;
 
@@ -52,11 +55,19 @@ public sealed class ChestContentsIpc : IDisposable
         Func<IReadOnlyList<RetainerBag>> retainers,
         FcChestManager fcChest,
         Func<bool> executeEnabled,
+        FleetItemService fleetItems,
         IPluginLog log)
     {
         _chest = chest;
         _fcChest = fcChest;
         _executeEnabled = executeEnabled;
+        _fleetItems = fleetItems;
+
+        _askFleet = pluginInterface.GetIpcProvider<uint, bool>("Charon.Containers.AskFleet");
+        _fleetResult = pluginInterface.GetIpcProvider<string>("Charon.Containers.GetFleetJson");
+
+        _askFleet.RegisterFunc(AskFleet);
+        _fleetResult.RegisterFunc(FleetResult);
 
         _requestFetch = pluginInterface.GetIpcProvider<uint, int, bool, bool>("Charon.Chest.RequestFetch");
         _fetchBusy = pluginInterface.GetIpcProvider<bool>("Charon.Chest.FetchBusy");
@@ -200,6 +211,28 @@ public sealed class ChestContentsIpc : IDisposable
         return started;
     }
 
+    /// <summary>
+    /// Asks every box on the LAN who holds an item. ASYNCHRONOUS on purpose: the answers come
+    /// back over a few seconds, so this returns whether the question went out, and the caller
+    /// polls GetFleetJson. Reading is free — no execute switch — because asking moves nothing.
+    /// </summary>
+    private bool AskFleet(uint itemId)
+    {
+        var id = _fleetItems.Ask(itemId, DateTime.UtcNow);
+        Status = id.Length > 0 ? $"AskFleet {itemId}" : $"AskFleet {itemId} → refused";
+        return id.Length > 0;
+    }
+
+    /// <summary>
+    /// The fleet's answer so far. `complete` says whether the window has closed; until it has,
+    /// a box that has not replied is simply MISSING, never counted as holding none.
+    /// </summary>
+    private string FleetResult()
+    {
+        Status = "GetFleetJson";
+        return Safe(() => _fleetItems.Report(DateTime.UtcNow).ToJson());
+    }
+
     public void Dispose()
     {
         _getContents.UnregisterFunc();
@@ -208,5 +241,7 @@ public sealed class ChestContentsIpc : IDisposable
         _requestFetch.UnregisterFunc();
         _fetchBusy.UnregisterFunc();
         _fetchStatus.UnregisterFunc();
+        _askFleet.UnregisterFunc();
+        _fleetResult.UnregisterFunc();
     }
 }

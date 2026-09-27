@@ -182,6 +182,16 @@ Items that exist only to be used, used.
 - **Manual by default**, with a per-item Use button. The automatic toggle is off until you switch it on, because consuming something unprompted is opt-in; it then works out of combat, not while busy, one every 1.5s.
 - **A use that does nothing is noticed.** Success is judged by the stack actually shrinking, not by the game accepting the call, and anything that fails to leave the bags is skipped for the session instead of retried forever.
 
+## Fleet Item Search
+
+"Who has this item?", answered across every box — including ones on a different PC.
+
+- **It crosses machines, which nothing else here does.** Plugin-to-plugin IPC only reaches the same game client, and an item database keeps its file on one computer. Charon already has a LAN relay between your boxes, so it asks over that: every client replies with what it can see, and the asker merges the answers.
+- **Live bags, plus the chest and retainer snapshots**, each answer stamped with the *oldest* source behind it — your bags are current, a retainer nobody has opened in months is not, and the honest number is the worse of the two.
+- **A silent box is silent, never empty.** The result says how many boxes answered and whether the window has closed. A box might be zoning, loading, or simply off, and treating that as "they have none" is how you craft something the fleet already owns.
+- **Free trial toons are counted but marked unreachable.** They cannot trade, use the market board or join a free company, so their stacks are real but nothing can ever move them.
+- Read-only, and available to other plugins over IPC (`Charon.Containers.AskFleet`, then `Charon.Containers.GetFleetJson`). Asking moves nothing.
+
 ## Gil Tools
 
 Money errands for unattended toons, under the GIL section:

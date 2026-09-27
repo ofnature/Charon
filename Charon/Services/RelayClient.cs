@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using Dalamud.Plugin;
 using Dalamud.Plugin.Ipc;
 using Dalamud.Plugin.Services;
@@ -34,6 +34,9 @@ public sealed class RelayClient : IDisposable
 
     /// <summary>Assemble-party triggers (roadmap #1 — not yet implemented).</summary>
     public const string AssembleChannel = "charon.assemble";
+
+    /// <summary>Fleet-wide item search: "who has this?", answered across MACHINES.</summary>
+    public const string ItemsChannel = "charon.items";
 
     private readonly ICallGateSubscriber<string, string, object?> _publish;
     private readonly ICallGateSubscriber<string, string, object?> _message;

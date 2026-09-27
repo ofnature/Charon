@@ -132,6 +132,7 @@ public sealed class MainWindow : Window
     private readonly RetainerReader _retainers;
     private readonly VentureRunner _ventureRunner;
     private readonly ConsumableUser _consumables;
+    private readonly FleetItemService _fleetItems;
     private readonly Func<bool> _isFreeTrial;
     private readonly LootWatcher _lootWatcher;
     private readonly CollectionScanner _collection;
@@ -204,6 +205,7 @@ public sealed class MainWindow : Window
         RetainerReader retainers,
         VentureRunner ventureRunner,
         ConsumableUser consumables,
+        FleetItemService fleetItems,
         RetainerPlanner retainerPlanner,
         Action openRetainerBoard,
         RetainerContentsReader retainerContents,
@@ -260,6 +262,7 @@ public sealed class MainWindow : Window
         _retainers = retainers;
         _ventureRunner = ventureRunner;
         _consumables = consumables;
+        _fleetItems = fleetItems;
         _retainerPlanner = retainerPlanner;
         _openRetainerBoard = openRetainerBoard;
         _retainerContents = retainerContents;
@@ -3462,6 +3465,7 @@ public sealed class MainWindow : Window
         DrawStatusLine($"Gear: {_gearStatus()}");
         DrawStatusLine($"Collect: {_collectStatus()}");
         DrawStatusLine($"Consumables: {_consumables.Status}");
+        DrawStatusLine($"Fleet items: {_fleetItems.Status}");
         DrawStatusLine($"Sprint: {_sprintStatus()}");
         DrawStatusLine($"Nav: {_navStatus()}");
         DrawStatusLine($"QoL: {_qolStatus()}");

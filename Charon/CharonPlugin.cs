@@ -28,7 +28,7 @@ namespace Charon;
 
 public sealed class CharonPlugin : IDalamudPlugin
 {
-    public const string PluginVersion = "0.1.45";
+    public const string PluginVersion = "0.1.46";
     private const string CommandName = "/charon";
 
     /// <summary>
@@ -98,6 +98,7 @@ public sealed class CharonPlugin : IDalamudPlugin
     private readonly WeekliesReader _weeklies;
     private readonly RetainerReader _retainers;
     private readonly ConsumableUser _consumables;
+    private readonly FleetItemService _fleetItems;
     private readonly VentureRunner _ventureRunner;
     private bool _ventureWasArmed;
     private readonly TextAdvancer _textAdvance;
@@ -441,12 +442,21 @@ public sealed class CharonPlugin : IDalamudPlugin
         // without either window being open.
         _chestContents = new ChestContentsReader(gameGui, _config, () => _jobLevels.LocalContentId, SaveConfig, log);
 
+        // Built after BOTH stores: it reads them through lambdas, so the call is lazy, but a field
+        // captured before it is assigned is still a nullable warning and the baseline is zero.
+        _fleetItems = new FleetItemService(_relay, _condition,
+            () => _objectTable.LocalPlayer?.Name.TextValue ?? string.Empty,
+            () => _chestContents.Local,
+            () => _retainerContents.Bags(),
+            log);
+
         _chestIpc = new ChestContentsIpc(
             pluginInterface,
             () => _chestContents.Local,
             () => _retainerContents.Bags(),
             _fcChest,
             () => _config.ChestIpcExecuteEnabled,
+            _fleetItems,
             log);
 
         _retainerContentsIpc = new RetainerContentsIpc(
@@ -545,6 +555,7 @@ public sealed class CharonPlugin : IDalamudPlugin
             _retainers,
             _ventureRunner,
             _consumables,
+            _fleetItems,
             _retainerPlanner,
             OpenRetainerBoard,
             _retainerContents,
@@ -2483,6 +2494,8 @@ public sealed class CharonPlugin : IDalamudPlugin
             OnFollowCommandReceived(json);
         else if (channel == RelayClient.FleetChannel)
             OnFleetCommandReceived(json);
+        else if (channel == RelayClient.ItemsChannel)
+            _fleetItems.OnRelayMessage(channel, json);
     }
 
     /// <summary>Fleet channel dispatch: leader designation, or a fleet-wide command.</summary>
