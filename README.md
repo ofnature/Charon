@@ -4,7 +4,7 @@
 
 # Charon
 
-**The ferryman for your fleet.** A Dalamud plugin for FFXIV, companion to [Daedalus](https://github.com/ofnature/Daedalus) — party assembly, auto pillion with smart seat scanning, whitelisted auto group invite, follow teleport, fleet follow, duty-pop and trade automation, a heal-watch babysitter for leveling alts, automatic gear upgrades, fleet-leader commands, collectible sweeping, FC chest management, gil-cap selling, Doman Enclave donations, a weekly-chores board, a power-levelling carry and a mob spawn watchlist.
+**The ferryman for your fleet.** A Dalamud plugin for FFXIV, companion to [Daedalus](https://github.com/ofnature/Daedalus) — party assembly, auto pillion with smart seat scanning, whitelisted auto group invite, follow teleport, fleet follow, duty-pop and trade automation, a heal-watch babysitter for leveling alts, automatic gear upgrades, fleet-leader commands, collectible sweeping, FC chest management, gil-cap selling, Doman Enclave donations, a weekly-chores board, a power-levelling carry, deep dungeon trap and hoard maps shared across the fleet, and a mob spawn watchlist.
 
 Built for multibox setups: invite the fleet, group up, mount up, teleport out, follow you around, keep the bots alive, and manage the FC chest — without touching seven other keyboards.
 
@@ -229,10 +229,16 @@ Groundwork for SealBreaker's leveling mode: `Charon.Leveling.*` gates expose eve
 
 Palace of the Dead, Heaven-on-High, Eureka Orthos and Pilgrim's Traverse support, shown only while actually inside one:
 
-- **Floor map window** — the full 5×5 room layout with connections, passage, return, chest markers and party positions, *including rooms the game hasn't revealed yet* (drawn dim), plus a **heading arrow** marking the room you're in and the way you're facing. Read straight from the game's own floor state — the Pomander of Sight view, permanently, read-only.
+- **Floor window** — the full 5×5 room layout with connections, passage, return, chest markers and party positions, *including rooms the game hasn't revealed yet* (drawn dim), plus a **heading arrow** marking the room you're in and the way you're facing. Above the map, a floor panel in the style of [NecroLens](https://github.com/Jukkales/NecroLens): the **respawn countdown**, whether traps are active, revealed or removed, passage and return progress, the **time spent on each floor** of the set, and the **floor effects** in force — with a green (+) when one is already queued for the next floor.
+- **Pomander tracking** — every pomander the party uses is recorded from the game's own log data (not chat text, so any client language works), and tied to the right floor: Affluence, Flight, Alteration and Devotion count for the *next* floor, the rest for the one they were used on.
+- **Likely trap and hoard spots** — every floor set draws its traps and hoards from a fixed pool of positions, so every place one has ever appeared is a place one may appear again. Likely traps show as orange rings near you; likely hoard spots as cyan **triple rings** anywhere on the floor. Rings appear only in rooms this floor actually has (room boxes read from the game's own layout files — BossMod's approach, BSD-3) and disappear once Sight, Safety or Intuition has told you the truth.
+  - **Palace Pal's data, imported** — Palace Pal is decommissioned, but its saved spots are still on your PC; Charon reads them once (read-only) — 19,000+ spots on the install it was built against.
+  - **Shared across the fleet** — every trap or hoard a box reveals is broadcast to the rest over the Daedalus LAN relay, and a box entering a floor set asks the fleet for what it is missing. A PC with no Palace Pal history gets the other PC's, and Pilgrim's Traverse — which Palace Pal never covered — fills in as you play.
+- **A line to the hoard** — once Intuition reveals the Accursed Hoard, a line runs from you to it, at any distance.
 - **ESP overlay** (ported from [NecroLens](https://github.com/Jukkales/NecroLens), MIT) — chests, passage, return, revealed traps, and mob aggro ranges drawn over the world. Aggro shapes follow how each mob notices you: circle = proximity, circle with a core = sound, facing cone = sight — from NecroLens's curated dataset of ~700 mobs. Patrols get a facing arrow. Mobs already in combat draw nothing.
-- **Coffers open themselves** — bronze, silver, gold and dug-up hoards, which the game models differently from overworld chests and so were previously ignored. A silver coffer is left alone below 77% HP, because those can be trap chests and the damage kills unattended toons.
-- Traps draw at any distance once revealed — but an unrevealed trap is server-side and exists in no plugin's world until a Pomander of Sight reveals it.
+- **Mimics flagged** — the coffer colour that can be a mimic on the current floor set (silver on floors 31–60, gold above) is labelled **"(mimic?)"** in red, and the known mimic coffer reads **MIMIC?**.
+- **Coffers open themselves** — bronze, silver, gold and dug-up hoards — *except* the colour that can be a mimic on this floor set, which is left for you to decide. A silver coffer is also left alone below 77% HP, because those can be trap chests and the damage kills unattended toons.
+- Traps draw at any distance once revealed — but an unrevealed trap is server-side and exists in no plugin's world until a Pomander of Sight reveals it. That is what the likely-spot rings are for.
 - Boss fights stay the boss AI's job, exactly as with Fleet Follow — Charon adds the pieces it doesn't have.
 
 ## Spawn Tracker

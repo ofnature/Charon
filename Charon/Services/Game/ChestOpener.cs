@@ -30,6 +30,9 @@ public sealed unsafe class ChestOpener
     private readonly InteractHelper _interact;
     private readonly Func<bool> _enabled;
     private readonly Func<float> _openRange;
+
+    /// <summary>The deep dungeon's InstanceContent row (0 outside one) — decides which coffer colour can be a mimic.</summary>
+    private readonly Func<uint> _deepDungeonContentId;
     private readonly IPluginLog _log;
 
     private DateTime _lastScanUtc = DateTime.MinValue;
@@ -40,8 +43,10 @@ public sealed unsafe class ChestOpener
     private static readonly TimeSpan CofferRetry = TimeSpan.FromSeconds(10);
 
     public ChestOpener(IObjectTable objectTable, ICondition condition, IDataManager dataManager,
-        InteractHelper interact, Func<bool> enabled, Func<float> openRange, IPluginLog log)
+        InteractHelper interact, Func<bool> enabled, Func<float> openRange, IPluginLog log,
+        Func<uint> deepDungeonContentId)
     {
+        _deepDungeonContentId = deepDungeonContentId;
         _objectTable = objectTable;
         _condition = condition;
         _dataManager = dataManager;
@@ -150,6 +155,8 @@ public sealed unsafe class ChestOpener
     /// models as EventObj rather than Treasure. Rules are NecroLens's (MIT), which are stricter
     /// than the overworld ones for good reason:
     /// - the mimic coffer id is never touched;
+    /// - the coffer colour that can be a MIMIC on this floor set is never auto-opened
+    ///   (<see cref="FloorClock.MimicCoffer"/> — silver on floors 31-60, gold above);
     /// - a SILVER coffer is left alone below 77% HP — silver coffers can be trap chests, and the
     ///   damage has killed unattended toons;
     /// - per-type interact reach (bronze 3.1y, the rest 4.4y), taken together with the user's own
@@ -162,17 +169,25 @@ public sealed unsafe class ChestOpener
         var baseId = obj.BaseId;
         float reach;
         var silver = false;
+        CofferKind? kind = null;
 
         if (DeepDungeonIds.BronzeChests.Contains(baseId))
         {
             reach = 3.1f;
+            kind = CofferKind.Bronze;
         }
         else if (baseId == DeepDungeonIds.SilverChest)
         {
             reach = 4.4f;
             silver = true;
+            kind = CofferKind.Silver;
         }
-        else if (baseId == DeepDungeonIds.GoldChest || baseId == DeepDungeonIds.AccursedHoardCoffer)
+        else if (baseId == DeepDungeonIds.GoldChest)
+        {
+            reach = 4.4f;
+            kind = CofferKind.Gold;
+        }
+        else if (baseId == DeepDungeonIds.AccursedHoardCoffer)
         {
             reach = 4.4f;
         }
@@ -183,6 +198,14 @@ public sealed unsafe class ChestOpener
 
         if (distance > MathF.Min(_openRange(), reach))
             return false;
+
+        // A bronze-set mimic is its own object (never ours), so only a silver or gold set's own colour is
+        // a risk — and that risk is the whole coffer colour: nothing tells a mimic from a real one.
+        if (kind is CofferKind.Silver or CofferKind.Gold && kind == FloorClock.MimicCoffer(_deepDungeonContentId()))
+        {
+            Status = $"holding — {kind.ToString()!.ToLowerInvariant()} coffers can be mimics on this floor set; open it yourself";
+            return false;
+        }
 
         if (silver && local is ICharacter character && character.MaxHp > 0
             && character.CurrentHp <= character.MaxHp * 0.77f)

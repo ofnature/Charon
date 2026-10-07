@@ -77,4 +77,16 @@ public sealed class FloorMapTests
         Assert.True(FloorMap.Build(rooms)[3].Exists);
         Assert.Single(FloorMap.Build(rooms).Where(c => c.Exists));
     }
+
+    [Theory]
+    [InlineData(0, "0/11")]
+    [InlineData(7, "7/11")]
+    [InlineData(11, "open")]
+    [InlineData(12, "open")]
+    public void CairnProgressIsACountToEleven_NotAPercent(int progress, string expected)
+    {
+        // An open passage used to read "Passage 11%".
+        Assert.Equal(expected, FloorMap.CairnText(progress));
+        Assert.Equal(progress >= 11, FloorMap.CairnActive(progress));
+    }
 }

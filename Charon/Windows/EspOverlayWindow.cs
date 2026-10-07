@@ -35,13 +35,28 @@ public sealed class EspOverlayWindow : Window
     private readonly Func<bool> _showChests;
     private readonly Func<bool> _showTraps;
     private readonly Func<bool> _showMobNames;
+    private readonly Func<bool> _showHoardLine;
+    private readonly Func<Vector3, IReadOnlyList<Spot>> _likelySpots;
+    private readonly Func<uint> _contentId;
+
+    /// <summary>How far out likely TRAP spots are drawn: the ones that matter are the ones you could walk
+    /// onto. Hoard spots have no cap — they are destinations, and a floor set holds only a few hundred.</summary>
+    public const float LikelyTrapRange = 40f;
+
+    public const float LikelyHoardRange = float.MaxValue;
+
+    /// <summary>Palace Pal's own marker radius for both kinds.</summary>
+    private const float LikelySpotRadius = 1.7f;
+
+    private static readonly float[] LikelyHoardRings = [LikelySpotRadius, 1.15f, 0.6f];
 
     /// <summary>EventObj base ids we have no entry for, logged once each — how the tables grow.</summary>
     private readonly HashSet<uint> _unknownIds = new();
 
     public EspOverlayWindow(IObjectTable objectTable, IGameGui gameGui, IClientState clientState,
         IPluginLog log, MobDatabase mobs, Func<bool> showMobs, Func<bool> showChests,
-        Func<bool> showTraps, Func<bool> showMobNames)
+        Func<bool> showTraps, Func<bool> showMobNames, Func<bool> showHoardLine,
+        Func<Vector3, IReadOnlyList<Spot>> likelySpots, Func<uint> contentId)
         : base("##CharonDeepDungeonEsp")
     {
         _objectTable = objectTable;
@@ -53,6 +68,9 @@ public sealed class EspOverlayWindow : Window
         _showChests = showChests;
         _showTraps = showTraps;
         _showMobNames = showMobNames;
+        _showHoardLine = showHoardLine;
+        _likelySpots = likelySpots;
+        _contentId = contentId;
 
         Flags = ImGuiWindowFlags.NoDecoration | ImGuiWindowFlags.NoBackground
                 | ImGuiWindowFlags.NoInputs | ImGuiWindowFlags.NoSavedSettings
@@ -80,6 +98,26 @@ public sealed class EspOverlayWindow : Window
         var drawList = ImGui.GetWindowDrawList();
         var inPotd = DeepDungeonIds.PotdMaps.Contains(_clientState.MapId);
         int mobs = 0, chests = 0, traps = 0;
+        var mimicColour = FloorClock.MimicCoffer(_contentId());
+        var hoardDistance = -1f;
+
+        // Likely spots first, so anything real draws over them. Outlines only — a filled ring is
+        // something the game has actually shown us, an outline is history saying "maybe here".
+        var likely = _likelySpots(local.Position);
+        foreach (var spot in likely)
+        {
+            var at = new Vector3(spot.X, spot.Y, spot.Z);
+            if (spot.Kind == SpotKind.Trap)
+            {
+                DrawWorldCircle(drawList, at, LikelySpotRadius, LikelyTrapColor, filled: false);
+                continue;
+            }
+
+            // Hoard spots are a TRIPLE ring (user, 2026-10-06): a single outline read as one more trap
+            // guess among the orange ones. Three concentric rings are unmistakable at any distance.
+            foreach (var radius in LikelyHoardRings)
+                DrawWorldCircle(drawList, at, radius, LikelyHoardColor, filled: false);
+        }
 
         foreach (var obj in _objectTable)
         {
@@ -96,6 +134,12 @@ public sealed class EspOverlayWindow : Window
             }
 
             var visual = Classify(obj.BaseId);
+
+            // The colour that can be a mimic on this floor set (silver 31-60, gold above) says so — the
+            // same rule that stops auto-open touching it (FloorClock.MimicCoffer).
+            if ((obj.BaseId == DeepDungeonIds.SilverChest && mimicColour == CofferKind.Silver)
+                || (obj.BaseId == DeepDungeonIds.GoldChest && mimicColour == CofferKind.Gold))
+                visual = visual with { Color = MimicCofferColor, Label = $"{visual.Label} (mimic?)" };
             if (visual.Kind == FloorKind.None)
             {
                 // An unrecognised EventObj is either scenery or an id we don't know yet (a newer
@@ -104,6 +148,16 @@ public sealed class EspOverlayWindow : Window
                 if (obj.ObjectKind == ObjectKind.EventObj && _unknownIds.Add(obj.BaseId))
                     _log.Info("Deep dungeon ESP: unrecognised EventObj {0} '{1}'", obj.BaseId, obj.Name.TextValue);
                 continue;
+            }
+
+            // The hoard gets a line from us, at ANY distance: Intuition reveals it rooms away, which is
+            // exactly where the 35y highlight range would hide it. Its marker skips that cap too.
+            var isHoard = obj.BaseId is DeepDungeonIds.AccursedHoard or DeepDungeonIds.AccursedHoardCoffer;
+            if (isHoard)
+            {
+                hoardDistance = distance;
+                if (_showHoardLine())
+                    DrawWorldLine(drawList, local.Position, obj.Position, ImGui.GetColorU32(visual.Color));
             }
 
             // Traps carry their OWN toggle and no distance cap — NecroLens draws them wherever
@@ -116,7 +170,7 @@ public sealed class EspOverlayWindow : Window
             }
             else
             {
-                if (!_showChests() || distance > ChestDrawRange)
+                if (!_showChests() || (distance > ChestDrawRange && !isHoard))
                     continue;
                 chests++;
             }
@@ -124,7 +178,8 @@ public sealed class EspOverlayWindow : Window
             DrawFloorObject(drawList, obj, visual);
         }
 
-        Status = $"{mobs} mobs · {chests} chests/waypoints · {traps} traps"
+        Status = $"{mobs} mobs · {chests} chests/waypoints · {traps} traps · {likely.Count} likely spots"
+                 + (hoardDistance >= 0 ? $" · hoard {hoardDistance:0}y" : "")
                  + (_unknownIds.Count > 0 ? $" · {_unknownIds.Count} unknown ids (see log)" : "");
     }
 
@@ -216,6 +271,12 @@ public sealed class EspOverlayWindow : Window
         _ => new(FloorKind.None, 0f, default, ""),
     };
 
+    /// <summary>The mimic chest's own red, so a maybe-mimic coffer reads as the same danger.</summary>
+    private static readonly Vector4 MimicCofferColor = new(1f, 0.30f, 0.30f, 0.95f);
+
+    private static readonly uint LikelyTrapColor = ImGui.ColorConvertFloat4ToU32(new Vector4(1f, 0.55f, 0.25f, 0.55f));
+    private static readonly uint LikelyHoardColor = ImGui.ColorConvertFloat4ToU32(new Vector4(0.30f, 0.85f, 1f, 0.85f));
+
     private void DrawFloorObject(ImDrawListPtr drawList, IGameObject obj, FloorVisual visual)
     {
         var packed = ImGui.GetColorU32(visual.Color);
@@ -229,6 +290,36 @@ public sealed class EspOverlayWindow : Window
     }
 
     // --- NecroLens's projection helpers: world-radius shapes, point-by-point WorldToScreen ---
+
+    /// <summary>
+    /// A world-space line, projected in pieces. A single screen-space line fails the moment one end is
+    /// behind the camera (its projection is garbage), so the line is sampled and only the stretches in
+    /// FRONT of the camera are drawn — turn away from the hoard and the line still points toward it.
+    /// </summary>
+    private void DrawWorldLine(ImDrawListPtr drawList, Vector3 from, Vector3 to, uint color)
+    {
+        const int segments = 32;
+        var drawing = false;
+
+        for (var i = 0; i <= segments; i++)
+        {
+            var point = Vector3.Lerp(from, to, (float)i / segments);
+            if (_gameGui.WorldToScreen(point, out var screen, out _))
+            {
+                drawList.PathLineTo(screen);
+                drawing = true;
+            }
+            else if (drawing)
+            {
+                drawList.PathStroke(color, ImDrawFlags.None, 2.5f);
+                drawing = false;
+            }
+        }
+
+        if (drawing)
+            drawList.PathStroke(color, ImDrawFlags.None, 2.5f);
+        drawList.PathClear();
+    }
 
     private void DrawWorldCircle(ImDrawListPtr drawList, Vector3 center, float radius, uint color, bool filled)
     {

@@ -8,8 +8,10 @@ namespace Charon.Features.DeepDungeon;
 ///
 /// The game keeps each floor as a 5×5 room grid (`InstanceContentDeepDungeon.MapData`, 25
 /// entries — the same data BossMod's DeepDungeonState mirrors in production, which is what
-/// validates the layout). Each cell carries connection bits, Passage/Return markers, Home (the
-/// room you are in) and Revealed. The connection bits exist for UNREVEALED rooms too — that is
+/// validates the layout). Each cell carries connection bits, Passage/Return markers, Home and
+/// Revealed. Home is NOT the room you are in: it is the room the game marks with its green flag on
+/// its own floor map (seen live 2026-10-06 — Home outlined one room while the player stood on the
+/// Cairn of Passage two rooms east). Where we are comes from the party table instead. The connection bits exist for UNREVEALED rooms too — that is
 /// the whole point of drawing this: the full layout is knowable before it is explored.
 /// </summary>
 public static class FloorMap
@@ -57,6 +59,19 @@ public static class FloorMap
     }
 
     /// <summary>How many rooms exist on the floor / how many the game has revealed.</summary>
+    /// <summary>
+    /// The cairn progress counters are a COUNT toward 11, not a percentage: a cairn is active once its
+    /// counter reaches 11 (BossMod's DeepDungeonState: <c>PassageActive => PassageProgress >= 11</c>).
+    /// Printing the raw value with a "%" made an open passage read "11%" (user-reported 2026-10-06).
+    /// </summary>
+    public const int CairnActiveAt = 11;
+
+    public static bool CairnActive(int progress) => progress >= CairnActiveAt;
+
+    /// <summary>"open", or how far along it is — e.g. "7/11".</summary>
+    public static string CairnText(int progress) =>
+        CairnActive(progress) ? "open" : $"{System.Math.Max(0, progress)}/{CairnActiveAt}";
+
     public static (int Known, int Revealed) Counts(IReadOnlyList<Cell> cells)
     {
         int known = 0, revealed = 0;

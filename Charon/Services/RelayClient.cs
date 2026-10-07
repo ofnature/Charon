@@ -38,6 +38,9 @@ public sealed class RelayClient : IDisposable
     /// <summary>Fleet-wide item search: "who has this?", answered across MACHINES.</summary>
     public const string ItemsChannel = "charon.items";
 
+    /// <summary>Deep-dungeon trap/hoard spots: live sightings and catch-up answers (SpotMessage JSON).</summary>
+    public const string SpotsChannel = "charon.spots";
+
     private readonly ICallGateSubscriber<string, string, object?> _publish;
     private readonly ICallGateSubscriber<string, string, object?> _message;
     private readonly IPluginLog _log;

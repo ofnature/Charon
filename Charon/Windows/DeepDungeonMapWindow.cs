@@ -21,13 +21,15 @@ public sealed class DeepDungeonMapWindow : Window
 
     private readonly DeepDungeonReader _reader;
     private readonly IObjectTable _objectTable;
+    private readonly PomanderTracker _pomanders;
 
-    public DeepDungeonMapWindow(DeepDungeonReader reader, IObjectTable objectTable)
+    public DeepDungeonMapWindow(DeepDungeonReader reader, IObjectTable objectTable, PomanderTracker pomanders)
         : base("Charon — Deep Dungeon##CharonDeepDungeonMap")
     {
         BgAlpha = CharonTheme.PanelAlpha;
         _reader = reader;
         _objectTable = objectTable;
+        _pomanders = pomanders;
 
         Flags = ImGuiWindowFlags.AlwaysAutoResize;
         RespectCloseHotkey = false;
@@ -49,8 +51,16 @@ public sealed class DeepDungeonMapWindow : Window
         ImGui.TextColored(CharonTheme.Accent, $"Floor {snapshot.Floor}");
         ImGui.SameLine();
         ImGui.TextColored(CharonTheme.TextSecondary, $"· {known} rooms · {revealed} revealed");
-        ImGui.TextColored(CharonTheme.TextSecondary,
-            $"Passage {snapshot.PassageProgress}% · Return {snapshot.ReturnProgress}%");
+        DrawFloorPanel(snapshot);
+
+        // Pomanders in force here, and the ones already queued for the next floor (Affluence, Flight,
+        // Alteration and Devotion act on the floor AFTER the one they were used on).
+        var here = PomanderLog.Describe(_pomanders.Uses.ActiveOn(snapshot.Floor));
+        var next = PomanderLog.Describe(_pomanders.Uses.Pending(snapshot.Floor));
+        if (here.Length > 0)
+            ImGui.TextColored(CharonTheme.TextSecondary, $"Used: {here}");
+        if (next.Length > 0)
+            ImGui.TextColored(CharonTheme.StatusYellow, $"Used for next floor: {next}");
         ImGui.Spacing();
 
         var drawList = ImGui.GetWindowDrawList();
@@ -118,10 +128,6 @@ public sealed class DeepDungeonMapWindow : Window
                 drawList.AddRect(topLeft, bottomRight, ImGui.GetColorU32(CharonTheme.TextDisabled), 4f);
 
             var center = (topLeft + bottomRight) / 2f;
-            if (cell.IsPassage)
-                drawList.AddText(center - new Vector2(4f, 8f), ImGui.GetColorU32(CharonTheme.StatusGreen), "P");
-            else if (cell.IsReturn)
-                drawList.AddText(center - new Vector2(4f, 8f), ImGui.GetColorU32(CharonTheme.StatusYellow), "R");
 
             // Chest pips along the bottom edge of the room.
             var pip = 0;
@@ -151,11 +157,107 @@ public sealed class DeepDungeonMapWindow : Window
 
             if (local != null && cell.Index == localRoom)
                 DrawHeading(drawList, center, local.Rotation);
+
+            // Cairn markers sit in the top-right corner and draw AFTER the arrow: in the middle of the
+            // room they were hidden by it exactly when you stood at the cairn. Bright = active, dim = not
+            // yet — the same answer as the line above the map.
+            var marker = topLeft + new Vector2(CellSize - 11f, 1f);
+            if (cell.IsPassage)
+            {
+                drawList.AddText(marker, ImGui.GetColorU32(FloorMap.CairnActive(snapshot.PassageProgress)
+                    ? CharonTheme.StatusGreen : CharonTheme.TextDisabled), "P");
+                marker.Y += 14f;
+            }
+
+            if (cell.IsReturn)
+                drawList.AddText(marker, ImGui.GetColorU32(FloorMap.CairnActive(snapshot.ReturnProgress)
+                    ? CharonTheme.StatusYellow : CharonTheme.TextDisabled), "R");
         }
 
         ImGui.Dummy(new Vector2(FloorMap.GridSize * pitch, FloorMap.GridSize * pitch));
-        ImGui.TextColored(CharonTheme.TextDisabled,
-            "P passage · R return · arrow: you · dots: chests (bottom) / party (top)");
+        ImGui.PushStyleColor(ImGuiCol.Text, CharonTheme.TextDisabled);
+        ImGui.TextWrapped(
+            "P passage · R return (bright = open) · outline: the game's flag room · arrow: you · dots: chests (bottom) / party (top)");
+        ImGui.PopStyleColor();
+    }
+
+    /// <summary>
+    /// NecroLens's floor panel (MIT, adapted — see <see cref="FloorClock"/>): respawn countdown, trap and
+    /// cairn status, the time spent on each floor of the set, and the floor effects with "(+)" marking one
+    /// already queued for the next floor.
+    /// </summary>
+    private void DrawFloorPanel(DeepDungeonReader.Snapshot snapshot)
+    {
+        var now = DateTime.UtcNow;
+        var clock = _pomanders.Clock;
+
+        var interval = FloorClock.RespawnSeconds(snapshot.ContentId);
+        if (interval is int seconds && FloorClock.HasRespawns(snapshot.ContentId, snapshot.Floor) && clock.Floor == snapshot.Floor)
+        {
+            var left = FloorClock.SecondsToRespawn(clock.FloorStartUtc, now, seconds);
+            ImGui.TextColored(left <= 10 ? CharonTheme.StatusYellow : CharonTheme.TextSecondary,
+                $"Respawns in {FloorClock.Format(TimeSpan.FromSeconds(left))} (every {seconds}s)");
+        }
+        else
+        {
+            ImGui.TextColored(CharonTheme.TextDisabled, interval == null ? "Respawns: unknown floor set" : "No respawns on this floor");
+        }
+
+        var active = _pomanders.Uses.ActiveOn(snapshot.Floor);
+        var traps = FloorClock.Traps(active);
+        ImGui.TextColored(CharonTheme.TextSecondary, "Traps:");
+        ImGui.SameLine();
+        ImGui.TextColored(traps switch
+        {
+            TrapStatus.Inactive => CharonTheme.StatusGreen,
+            TrapStatus.Visible => CharonTheme.StatusYellow,
+            _ => CharonTheme.StatusRed,
+        }, traps.ToString());
+        ImGui.SameLine();
+        ImGui.TextColored(CharonTheme.TextSecondary, " · Passage");
+        ImGui.SameLine();
+        var passageOpen = FloorMap.CairnActive(snapshot.PassageProgress);
+        ImGui.TextColored(passageOpen ? CharonTheme.StatusGreen : CharonTheme.StatusRed, FloorMap.CairnText(snapshot.PassageProgress));
+        ImGui.SameLine();
+        ImGui.TextColored(CharonTheme.TextSecondary, $"· Return {FloorMap.CairnText(snapshot.ReturnProgress)}");
+
+        var pending = _pomanders.Uses.Pending(snapshot.Floor);
+        if (ImGui.BeginTable("##ddPanel", 3, ImGuiTableFlags.SizingFixedFit))
+        {
+            ImGui.TableSetupColumn("a");
+            ImGui.TableSetupColumn("b");
+            ImGui.TableSetupColumn("effects");
+
+            var floors = FloorClock.FloorSet(snapshot.Floor);
+            for (var row = 0; row < 6; row++)
+            {
+                ImGui.TableNextRow();
+                for (var col = 0; col < 2; col++)
+                {
+                    ImGui.TableNextColumn();
+                    var i = col * 5 + row;
+                    if (row < 5)
+                        DrawFloorTime(floors[i], clock.TimeOn(floors[i], now), floors[i] == snapshot.Floor);
+                }
+
+                ImGui.TableNextColumn();
+                var (name, items) = FloorClock.Effects[row];
+                ImGui.TextColored(FloorClock.Has(active, items) ? CharonTheme.TextPrimary : CharonTheme.TextDisabled, name);
+                if (FloorClock.Has(pending, items))
+                {
+                    ImGui.SameLine();
+                    ImGui.TextColored(CharonTheme.StatusGreen, "(+)");
+                }
+            }
+
+            ImGui.EndTable();
+        }
+    }
+
+    private static void DrawFloorTime(int floor, TimeSpan? time, bool current)
+    {
+        var text = $"{floor:000}: {(time is { } t ? FloorClock.Format(t) : "--:--")}";
+        ImGui.TextColored(current ? CharonTheme.StatusYellow : time == null ? CharonTheme.TextDisabled : CharonTheme.TextSecondary, text);
     }
 
     /// <summary>

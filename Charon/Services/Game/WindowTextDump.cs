@@ -31,6 +31,9 @@ public sealed unsafe class WindowTextDump
     private readonly IGameGui _gameGui;
     private readonly IPluginLog _log;
 
+    /// <summary>Whether the current <see cref="Read"/> descends into list rows — see its walkRows parameter.</summary>
+    private bool _walkRows;
+
     public WindowTextDump(IGameGui gameGui, IPluginLog log)
     {
         _gameGui = gameGui;
@@ -186,9 +189,17 @@ public sealed unsafe class WindowTextDump
     /// Every text node in the addon, in tree order, with its screen position. <paramref name="requireVisible"/>
     /// is the default because most reads are about what the player can see — but a search for a phrase wants
     /// every loaded window, including one mid-open whose visibility flag has not caught up.
+    /// <para><paramref name="walkRows"/> descends into a tree list's row renderers. It is OFF for every automatic
+    /// read and ON only for an explicit <c>/charon text</c> dump: the background allowance scan walks whatever
+    /// windows are loaded, and a list the game is rebuilding (a dropdown opening — the Reputation tab's expansion
+    /// picker crashed the game this way, 2026-09-27) is the one place that walk is dangerous. Nothing automatic
+    /// needs the rows — the Timers window's come from its value array.</para>
     /// </summary>
-    public IReadOnlyList<(int Index, float X, float Y, string Text)> Read(string addonName, bool requireVisible = true)
+    public IReadOnlyList<(int Index, float X, float Y, string Text)> Read(
+        string addonName, bool requireVisible = true, bool walkRows = false)
     {
+        _walkRows = walkRows;
+
         var lines = new List<(int, float, float, string)>();
 
         try
@@ -379,13 +390,6 @@ public sealed unsafe class WindowTextDump
     }
 
     /// <summary>
-    /// The node type of a tree-list component, from a known-good dump of the Timers window. The SDK documents the
-    /// node type enum's members but not their numbers, and reading a component as a list when it is not one is a
-    /// wild pointer read — so this descent is limited to the type we have actually seen.
-    /// </summary>
-    private const int TreeListNodeType = 1011;
-
-    /// <summary>
     /// Walk a list component's item renderers. They are NOT children of the component's node list: the rows live
     /// in the renderer objects, each with its own UldManager, which is why a window showing eleven rows can report
     /// four text nodes.
@@ -459,9 +463,9 @@ public sealed unsafe class WindowTextDump
                 // rows inside itself, in its own UldManager. That is why the Timers window reported three text
                 // nodes while showing eleven rows — the rows are one component deep, and this is the descent.
                 //
-                // The test is the SDK's own cast, NOT `Type == NodeType.Component`: the type field carries the
-                // component's KIND, which is numbered from 1000 up (RadioButton 1004, Slider 1005, DropDown 1009,
-                // TreeList 1011), so comparing against the base value matched nothing and no descent happened.
+                // The test is the SDK's own cast, NOT `Type == NodeType.Component`: a component node's type is
+                // 1000 + the id of its component in THAT WINDOW'S layout file, so comparing against the base value
+                // matched nothing and no descent happened.
                 var componentNode = node->GetAsAtkComponentNode();
                 if (componentNode->Component != null)
                 {
@@ -478,9 +482,14 @@ public sealed unsafe class WindowTextDump
                     // A tree/list component keeps its ROWS as item renderers, which are none of the above: each
                     // renderer is a component with its own UldManager, and the row's text lives in there. Without
                     // this, the Timers window reports four text nodes (its title and three placeholders) while
-                    // showing eleven rows. 1011 is the tree-list node type — the value comes from a known-good
-                    // dump of that window, since the enum's members are not documented with their numbers.
-                    if ((int)node->Type == TreeListNodeType)
+                    // showing eleven rows.
+                    //
+                    // The kind is asked of the COMPONENT, never read off the node type. Node type 1011 was the tree
+                    // list in the Timers window only because that is its layout-file id THERE; in another window
+                    // 1011 was a list-item renderer, and calling a tree list's GetItemCount on it crashed the game
+                    // from the automatic allowance scan. An access violation cannot be caught — the check is the
+                    // only protection.
+                    if (_walkRows && componentNode->Component->GetComponentType() == ComponentType.TreeList)
                         WalkRenderers((AtkComponentTreeList*)componentNode->Component, lines, seen, types, depth);
                 }
             }
@@ -541,7 +550,7 @@ public sealed unsafe class WindowTextDump
 
         // Ordered by row then column, so the table structure is visible in the log as rows rather than as
         // whatever order the node tree happens to be in.
-        var ordered = Read(addonName)
+        var ordered = Read(addonName, walkRows: true)
             .OrderBy(l => Math.Round(l.Y / 4f))
             .ThenBy(l => l.X)
             .ToList();

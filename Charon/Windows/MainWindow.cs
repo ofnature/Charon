@@ -93,6 +93,7 @@ public sealed class MainWindow : Window
 
     /// <summary>Live state for the TWEAKS toggle: the timer it saw and whether a nudge landed.</summary>
     private readonly AfkGuard _afkGuard;
+    private readonly PalaceSpotService _palaceSpots;
 
     private string _retainerFarmInput = string.Empty;
     private readonly WhitelistService _whitelist;
@@ -222,7 +223,8 @@ public sealed class MainWindow : Window
         FollowCommands followCommands,
         Func<string, string?> reportedFollowLeader,
         FleetCommands fleetCommands,
-        Func<bool, string> handOffToHephaestus)
+        Func<bool, string> handOffToHephaestus,
+        PalaceSpotService palaceSpots)
         : base("Charon##CharonMain")
     {
         BgAlpha = CharonTheme.PanelAlpha;
@@ -271,6 +273,7 @@ public sealed class MainWindow : Window
         _retainerContents = retainerContents;
         _gcDailies = gcDailies;
         _afkGuard = afkGuard;
+        _palaceSpots = palaceSpots;
         _isFreeTrial = isFreeTrial;
         _lootWatcher = lootWatcher;
         _collection = collection;
@@ -3201,7 +3204,16 @@ public sealed class MainWindow : Window
                 _config.DeepDungeonEspChests = espChests;
                 _save();
             }
-            CharonTheme.HelpMarker("Coffers, hoards, passage and return, within 35 yalms.");
+            CharonTheme.HelpMarker("Coffers, passage and return within 35 yalms; hoards at any distance.");
+
+            var espHoardLine = _config.DeepDungeonEspHoardLine;
+            if (ImGui.Checkbox("Line to the hoard##ddesp", ref espHoardLine))
+            {
+                _config.DeepDungeonEspHoardLine = espHoardLine;
+                _save();
+            }
+            CharonTheme.HelpMarker("Once an accursed hoard is in the world (an Intuition pomander\n"
+                                   + "reveals it), a line runs from you to it — at any distance.");
 
             var espTraps = _config.DeepDungeonEspTraps;
             if (ImGui.Checkbox("Traps##ddesp", ref espTraps))
@@ -3215,6 +3227,42 @@ public sealed class MainWindow : Window
                                    + "reveals them they do not exist in the world at all, so no\n"
                                    + "plugin can draw them (NecroLens can't either). Without Sight\n"
                                    + "the first you know of a landmine is the chat line.");
+
+            ImGui.Spacing();
+            ImGui.TextColored(CharonTheme.TextSecondary, "Likely spots");
+            CharonTheme.HelpMarker("Every place a trap or hoard has been seen on this floor set —\n"
+                                   + "imported from Palace Pal, plus every one the fleet sees from\n"
+                                   + "now on, drawn as outlines: traps within 40 yalms, hoards anywhere on\n"
+                                   + "the floor — only in rooms this floor actually has. Hidden once the\n"
+                                   + "floor is settled: Sight or Safety for traps, Intuition for the hoard.");
+
+            var likelyTraps = _config.DeepDungeonEspLikelyTraps;
+            if (ImGui.Checkbox("Likely trap spots##ddesp", ref likelyTraps))
+            {
+                _config.DeepDungeonEspLikelyTraps = likelyTraps;
+                _save();
+            }
+
+            ImGui.SameLine();
+            var likelyHoards = _config.DeepDungeonEspLikelyHoards;
+            if (ImGui.Checkbox("Likely hoard spots##ddesp", ref likelyHoards))
+            {
+                _config.DeepDungeonEspLikelyHoards = likelyHoards;
+                _save();
+            }
+
+            ImGui.TextColored(CharonTheme.TextDisabled, $"{_palaceSpots.KnownSpots:N0} spots known on this machine");
+            if (_palaceSpots.PalacePalFileExists)
+            {
+                ImGui.SameLine();
+                if (ImGui.SmallButton("Import from Palace Pal##ddesp"))
+                    _palaceSpots.ImportFromPalacePal();
+                CharonTheme.HelpMarker("Reads Palace Pal's saved spots (read-only). Safe to press again —\n"
+                                       + "spots already known are not added twice.");
+            }
+
+            if (_palaceSpots.ImportStatus.Length > 0)
+                ImGui.TextColored(CharonTheme.TextDisabled, _palaceSpots.ImportStatus);
             ImGui.Unindent();
         }
     }

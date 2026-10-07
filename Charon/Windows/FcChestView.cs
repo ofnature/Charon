@@ -39,6 +39,19 @@ internal static class FcChestView
         }
     }
 
+    private const string WithdrawAllButOneLabel = "All but 1";
+    private const string ExactAmountLabel = "…";
+
+    /// <summary>The width the action cell's buttons actually need (SmallButton = text + horizontal frame padding).</summary>
+    private static float ActionColumnWidth(bool exactAmount)
+    {
+        var style = ImGui.GetStyle();
+        var width = ImGui.CalcTextSize(WithdrawAllButOneLabel).X + style.FramePadding.X * 2f;
+        if (exactAmount)
+            width += style.ItemSpacing.X + ImGui.CalcTextSize(ExactAmountLabel).X + style.FramePadding.X * 2f;
+        return width;
+    }
+
     private static void DrawScaledBody(CharonConfig config, Action save, FcChestManager fcChest, float scale)
     {
         var page = Math.Clamp(config.LastSelectedChestPage, 1, 5);
@@ -174,7 +187,10 @@ internal static class FcChestView
                 ImGui.TableSetupColumn("Item", ImGuiTableColumnFlags.WidthStretch);
                 ImGui.TableSetupColumn("Qty", ImGuiTableColumnFlags.WidthFixed, 60f * scale);
                 ImGui.TableSetupColumn("Stacks", ImGuiTableColumnFlags.WidthFixed, 50f * scale);
-                ImGui.TableSetupColumn("##act", ImGuiTableColumnFlags.WidthFixed, 130f * scale);
+                // Sized from the buttons it holds, not a guessed constant: a fixed 130px cut "Withdraw all but 1"
+                // short and pushed the exact-amount "…" button out of the table entirely. CalcTextSize already
+                // reflects SetWindowFontScale, so this follows the Text Size slider on its own.
+                ImGui.TableSetupColumn("##act", ImGuiTableColumnFlags.WidthFixed, ActionColumnWidth(fcChest.QuantityMovesAvailable));
                 ImGui.TableSetupScrollFreeze(0, 1);
                 ImGui.TableHeadersRow();
 
@@ -182,7 +198,7 @@ internal static class FcChestView
                 {
                     ImGui.TableNextRow();
                     ImGui.TableNextColumn();
-                    ImGui.TextUnformatted(row.Name);
+                    ImGui.TextWrapped(row.Name);
                     ImGui.TableNextColumn();
                     ImGui.TextColored(CharonTheme.TextSecondary, $"×{row.TotalQuantity}");
                     ImGui.TableNextColumn();
@@ -202,7 +218,7 @@ internal static class FcChestView
                         // ImGui's stack (throws every frame after).
                         var busy = fcChest.Busy;
                         if (busy) ImGui.BeginDisabled();
-                        if (ImGui.SmallButton($"Withdraw all but 1##wd{row.ItemId}") && !busy)
+                        if (ImGui.SmallButton($"{WithdrawAllButOneLabel}##wd{row.ItemId}") && !busy)
                             fcChest.StartWithdrawItem(page, row.ItemId);
                         if (busy) ImGui.EndDisabled();
                         if (ImGui.IsItemHovered())
@@ -214,7 +230,7 @@ internal static class FcChestView
                         {
                             ImGui.SameLine();
                             if (busy) ImGui.BeginDisabled();
-                            if (ImGui.SmallButton($"…##wdq{row.ItemId}") && !busy)
+                            if (ImGui.SmallButton($"{ExactAmountLabel}##wdq{row.ItemId}") && !busy)
                             {
                                 _withdrawAmount = Math.Min(_withdrawAmount, row.TotalQuantity);
                                 if (_withdrawAmount < 1)

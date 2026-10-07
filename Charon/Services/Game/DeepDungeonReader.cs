@@ -21,7 +21,7 @@ public sealed unsafe class DeepDungeonReader
 
     public sealed record Snapshot(
         bool Active, int Floor, int PassageProgress, int ReturnProgress,
-        ushort[] Rooms, ChestMark[] Chests, PartyMark[] Party);
+        ushort[] Rooms, ChestMark[] Chests, PartyMark[] Party, uint ContentId = 0);
 
     private static readonly Snapshot Inactive =
         new(false, 0, 0, 0, [], [], []);
@@ -62,8 +62,10 @@ public sealed unsafe class DeepDungeonReader
             for (var i = 0; i < party.Length; i++)
                 party[i] = new PartyMark(content->Party[i].EntityId, content->Party[i].RoomIndex);
 
+            // ContentId is the InstanceContent row (60001 = Palace of the Dead 1-10), which keys the
+            // respawn table in FloorClock.
             _cache = new Snapshot(true, content->Floor,
-                content->PassageProgress, content->ReturnProgress, rooms, chests, party);
+                content->PassageProgress, content->ReturnProgress, rooms, chests, party, content->ContentId);
 
             var cells = Charon.Features.DeepDungeon.FloorMap.Build(rooms);
             var (known, revealed) = Charon.Features.DeepDungeon.FloorMap.Counts(cells);

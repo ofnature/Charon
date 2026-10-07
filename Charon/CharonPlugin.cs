@@ -28,7 +28,7 @@ namespace Charon;
 
 public sealed class CharonPlugin : IDalamudPlugin
 {
-    public const string PluginVersion = "0.1.47";
+    public const string PluginVersion = "0.1.48";
     private const string CommandName = "/charon";
 
     /// <summary>
@@ -94,6 +94,8 @@ public sealed class CharonPlugin : IDalamudPlugin
     private readonly PillionRidersWindow _pillionRidersWindow;
     private readonly DeepDungeonMapWindow _ddMapWindow;
     private readonly EspOverlayWindow _ddEsp;
+    private readonly PalaceSpotService _palaceSpots;
+    private readonly PomanderTracker _pomanders;
     private readonly LevelingIpc _levelingIpc;
     private readonly WeekliesReader _weeklies;
     private readonly RetainerReader _retainers;
@@ -402,8 +404,11 @@ public sealed class CharonPlugin : IDalamudPlugin
             HasDonatedThisWeek, RecordDonatedThisWeek,
             ReadDomanEnclaveCache, WriteDomanEnclaveCache,
             (op, ok, detail) => _levelingIpc.PublishCompleted(op, ok, detail), log);
+        // The reader is built first: the chest opener asks it which coffer colour can be a mimic.
+        _ddReader = new DeepDungeonReader(log);
         _chests = new ChestOpener(_objectTable, _condition, dataManager, _interact,
-            () => _config.AutoOpenChestsEnabled, () => _config.ChestOpenRange, log);
+            () => _config.AutoOpenChestsEnabled, () => _config.ChestOpenRange, log,
+            () => _ddReader.GetSnapshot().ContentId);
         _qte = new QteSolver(gameGui, gameConfig, () => _config.AutoQteEnabled, log);
         // Shares the context-menu machinery with the sellers — one of them at a time.
         _saddlebag = new SaddlebagEntruster(gameGui, dataManager,
@@ -414,7 +419,9 @@ public sealed class CharonPlugin : IDalamudPlugin
             () => _config.CommendHideChat, () => _config.CommendExcludeDeaths, log);
         _turnIn = new TurnInFiller(gameGui,
             () => _config.AutoTurnInEnabled, () => _config.AutoTurnInConfirm, log);
-        _ddReader = new DeepDungeonReader(log);
+        _pomanders = new PomanderTracker(chatGui, dataManager, log, _ddReader);
+        _palaceSpots = new PalaceSpotService(pluginInterface, _objectTable, _clientState, chatGui, dataManager,
+            log, _ddReader, _config, SaveConfig, _relay, () => _objectTable.LocalPlayer?.Name.TextValue ?? string.Empty);
         _weeklies = new WeekliesReader(log);
         _retainers = new RetainerReader(log);
         _consumables = new ConsumableUser(dataManager, _condition,
@@ -547,7 +554,7 @@ public sealed class CharonPlugin : IDalamudPlugin
             () => _sprintStatus,
             () => $"{_nav.ProviderName}: {(_nav.IsAvailable ? "ready" : "not ready/installed")}"
                   + $" · path {(_nav.IsPathRunning ? "running" : "idle")}",
-            () => $"chests: {_chests.Status} · ATM: {_qte.Status} · saddlebag: {_saddlebag.Status} · commend: {_commend.Status} · turn-in: {_turnIn.Status} · talk: {_textAdvance.Status} · spawns: {_spawnScanner.Status} · quick kill: {_quickKill.Status} · chest search: {_chestSearch!.Status} · DD: {_ddReader.Status} · ESP: {(_ddEsp!.IsOpen ? _ddEsp.Status : "closed")}",
+            () => $"chests: {_chests.Status} · ATM: {_qte.Status} · saddlebag: {_saddlebag.Status} · commend: {_commend.Status} · turn-in: {_turnIn.Status} · talk: {_textAdvance.Status} · spawns: {_spawnScanner.Status} · quick kill: {_quickKill.Status} · chest search: {_chestSearch!.Status} · DD: {_ddReader.Status} · ESP: {(_ddEsp!.IsOpen ? _ddEsp.Status : "closed")} · spots: {_palaceSpots.Status} · pomanders: {_pomanders.Status}",
             () => _lootWatcher.Status,
             // Reading the line IS the refresh: the reader is lazy (nothing local polls it — it
             // exists for IPC), so without this nudge Debug would say "not read yet" forever.
@@ -582,7 +589,8 @@ public sealed class CharonPlugin : IDalamudPlugin
             new MainWindow.FollowCommands(CommandFollow, CommandStopFollow, CommandFollowAll, CommandStopFollowAll),
             GetReportedFollowLeader,
             new MainWindow.FleetCommands(CommandSetFleetLeader, CommandFleetLeaveDuty),
-            HandOffToHephaestus);
+            HandOffToHephaestus,
+            _palaceSpots);
         _mainWindow.IsOpen = _config.MainWindowVisible;
         _windowSystem.AddWindow(_mainWindow);
 
@@ -619,7 +627,7 @@ public sealed class CharonPlugin : IDalamudPlugin
         _saddlebagOverlay = new SaddlebagOverlay(gameGui, _saddlebag);
         _windowSystem.AddWindow(_saddlebagOverlay);
 
-        _ddMapWindow = new DeepDungeonMapWindow(_ddReader, _objectTable);
+        _ddMapWindow = new DeepDungeonMapWindow(_ddReader, _objectTable, _pomanders);
         _windowSystem.AddWindow(_ddMapWindow);
 
         _domanWindow = new DomanWindow(_config, SaveConfig, _doman, _gilSeller);
@@ -646,7 +654,11 @@ public sealed class CharonPlugin : IDalamudPlugin
         _ddEsp = new EspOverlayWindow(_objectTable, gameGui, _clientState, log,
             new Charon.Features.DeepDungeon.MobDatabase(),
             () => _config.DeepDungeonEspMobs, () => _config.DeepDungeonEspChests,
-            () => _config.DeepDungeonEspTraps, () => _config.DeepDungeonEspMobNames);
+            () => _config.DeepDungeonEspTraps, () => _config.DeepDungeonEspMobNames,
+            () => _config.DeepDungeonEspHoardLine,
+            center => _palaceSpots.Near(center, EspOverlayWindow.LikelyTrapRange, EspOverlayWindow.LikelyHoardRange,
+                _config.DeepDungeonEspLikelyTraps, _config.DeepDungeonEspLikelyHoards),
+            () => _ddReader.GetSnapshot().ContentId);
         _windowSystem.AddWindow(_ddEsp);
 
         _commandManager.AddHandler(CommandName, new CommandInfo(OnCommand)
@@ -694,6 +706,8 @@ public sealed class CharonPlugin : IDalamudPlugin
 
         _relay.OnMessage -= OnRelayMessage;
         _commend.Dispose();
+        _palaceSpots.Dispose();
+        _pomanders.Dispose();
         _doman.Dispose();
         _fcChest.Dispose();
         _chestSearch.Dispose();
@@ -1248,6 +1262,8 @@ public sealed class CharonPlugin : IDalamudPlugin
         var ddActive = _ddReader.GetSnapshot().Active;
         _ddMapWindow.IsOpen = _config.DeepDungeonMapEnabled && ddActive;
         _ddEsp.IsOpen = _config.DeepDungeonEspEnabled && ddActive;
+        _palaceSpots.Update(now);
+        _pomanders.Update();
         // The riders window follows the mount: open while driving a multi-seat mount, gone on
         // dismount (the occupancy read is the tick-cached snapshot — no rescan).
         _pillionRidersWindow.IsOpen = _config.PillionRidersWindowEnabled && ReadRawSeatOccupancy().Count > 0;
@@ -2511,6 +2527,8 @@ public sealed class CharonPlugin : IDalamudPlugin
             OnFleetCommandReceived(json);
         else if (channel == RelayClient.ItemsChannel)
             _fleetItems.OnRelayMessage(channel, json);
+        else if (channel == RelayClient.SpotsChannel)
+            _palaceSpots.OnRelayMessage(json);
     }
 
     /// <summary>Fleet channel dispatch: leader designation, or a fleet-wide command.</summary>

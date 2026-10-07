@@ -224,6 +224,21 @@ public sealed class CharonConfig : IPluginConfiguration
     /// exactly the one worth routing around.</summary>
     public bool DeepDungeonEspTraps { get; set; } = true;
 
+    /// <summary>Draw a line from you to an accursed hoard (or its coffer) once one is in the world —
+    /// at any distance, since an Intuition-revealed hoard is usually rooms away.</summary>
+    public bool DeepDungeonEspHoardLine { get; set; } = true;
+
+    /// <summary>Draw likely TRAP spots: every place a trap has been seen on this floor set (imported
+    /// from Palace Pal, plus this fleet's own sightings), until Sight or Safety settles the floor.</summary>
+    public bool DeepDungeonEspLikelyTraps { get; set; } = true;
+
+    /// <summary>Draw likely HOARD spots, until Intuition says where (or whether) the hoard is.</summary>
+    public bool DeepDungeonEspLikelyHoards { get; set; } = true;
+
+    /// <summary>Palace Pal's saved spots have been imported on this machine (Charon.json and the spot
+    /// file are both per machine). The import button stays available — it is idempotent.</summary>
+    public bool PalacePalImported { get; set; }
+
     /// <summary>
     /// Learn unlearned collectibles in the bags automatically (out of combat, one per 1.5s).
     /// NEVER the sellable kinds — fashion accessories and chocobo barding stay a manual click,

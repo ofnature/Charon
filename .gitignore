@@ -13,3 +13,6 @@ docs/
 
 # UI design sketches — local scratch, same rule as docs/ (README.md is the only tracked .md)
 sketches/
+
+# Hephaestus integration notes — local reference, same rule as docs/
+HEPHAESTUS-RETAINER-IPC.md
