@@ -34,6 +34,7 @@ public sealed class RetainersWindow : Window
     private readonly Func<string> _selectorStatus;
     private readonly Func<string> _characterName;
     private readonly Func<ulong> _contentId;
+    private readonly RetainerGearService _gear;
 
     private int _tab;
     private string _search = string.Empty;
@@ -49,9 +50,11 @@ public sealed class RetainersWindow : Window
         Func<string> characterName,
         Func<ulong> contentId,
         Func<bool> autoSelect,
-        Func<string> selectorStatus)
+        Func<string> selectorStatus,
+        RetainerGearService gear)
         : base("Charon — Retainers##CharonRetainers")
     {
+        _gear = gear;
         BgAlpha = CharonTheme.PanelAlpha;
         _retainers = retainers;
         _planner = planner;
@@ -83,6 +86,7 @@ public sealed class RetainersWindow : Window
         {
             case 0: DrawBoard(rows, ventures); break;
             case 1: DrawFarm(rows, ventures); break;
+            case 3: DrawGear(rows); break;
             default: DrawContents(rows); break;
         }
     }
@@ -97,9 +101,11 @@ public sealed class RetainersWindow : Window
             $"{rows.Count(Ready)} ready");
         ImGui.SameLine();
         CharonTheme.HelpMarker(
-            "Charon never picks the retainer: choose it at the bell and the armed pass handles the window\n"
-            + "that opens. \"Assign venture. (in progress)\" is never clicked — that entry means the retainer\n"
-            + "is already out, and clicking it buys a replacement venture.");
+            "These buttons work at a summoning bell with its retainer list open — Charon never walks you to one.\n"
+            + "A row's Collect or Send opens THAT retainer, by name; Collect all / Send all take each due retainer\n"
+            + "in turn. Nothing is queued: Stop ends it on the next step.\n"
+            + "\"Assign venture. (in progress)\" is never clicked — that entry means the retainer is already out,\n"
+            + "and clicking it buys a replacement venture.");
     }
 
     private void DrawTabs()
@@ -117,9 +123,202 @@ public sealed class RetainersWindow : Window
             _tab = 2;
 
         ImGui.SameLine();
+        if (ImGui.Button(_tab == 3 ? "[ Gear ]" : "Gear##tab"))
+            _tab = 3;
+
+        ImGui.SameLine();
         ImGui.TextColored(CharonTheme.TextMuted, _planner.Status);
         ImGui.Spacing();
     }
+
+    // ------------------------------------------------------------------- gear ---
+
+    /// <summary>
+    /// The gear optimiser: each retainer's numbers, and — for the one at the bell — the best set from
+    /// gear the player holds, with a button that puts it on.
+    /// </summary>
+    private void DrawGear(IReadOnlyList<RetainerVenture> rows)
+    {
+        var now = DateTime.UtcNow;
+        var view = _gear.Current(now);
+
+        ImGui.TextColored(CharonTheme.TextDim, "Best gear for each retainer, from what you are holding.");
+        ImGui.SameLine();
+        CharonTheme.HelpMarker(
+            "A gatherer needs enough Gathering to be sent on a venture at all, then tiers on Perception:\n"
+            + "each gate cleared brings back more per run. A combat retainer does both on item level.\n\n"
+            + "Gear is chosen for the venture you PICKED for her, otherwise the highest-level hunt she can take.\n"
+            + "Only gear in your bags and armoury is offered, and never anything one of your own gearsets uses.\n"
+            + "Melded materia is counted. A swap is only proposed when it unlocks the venture or reaches a new\n"
+            + "tier — Perception between two gates buys nothing.\n\n"
+            + "A retainer's gear can only be read while she is summoned, so open her at a bell to plan.");
+        ImGui.Spacing();
+
+        if (rows.Count == 0)
+        {
+            ImGui.TextColored(CharonTheme.TextDisabled,
+                _retainers.Loaded ? "No retainers on this character." : $"Waiting for the game: {_retainers.Status}");
+            return;
+        }
+
+        foreach (var row in rows)
+        {
+            var job = _planner.Profile(row).Job;
+            var gatherer = job is "MIN" or "BTN" or "FSH";
+            var atBell = view != null && view.Retainer == row.Name;
+
+            ImGui.TextColored(atBell ? CharonTheme.TextStrong : CharonTheme.TextSecondary, row.Name);
+            ImGui.SameLine();
+            ImGui.TextColored(CharonTheme.TextDim, $"{job} {row.Level}");
+            ImGui.SameLine();
+
+            var snapshot = _gear.Snapshot(row.Name);
+            if (snapshot == null)
+            {
+                ImGui.TextColored(CharonTheme.TextMuted, "· gear not read yet — open her at a bell");
+            }
+            else
+            {
+                var numbers = gatherer
+                    ? $"Gathering {snapshot.Gathering:N0} · Perception {snapshot.Perception:N0}"
+                    : $"item level {snapshot.ItemLevel}";
+                ImGui.TextColored(CharonTheme.TextDim, $"· {numbers} · read {Ago(now - snapshot.CapturedUtc)}");
+            }
+
+            if (atBell)
+            {
+                DrawGearPlan(view!);
+            }
+            else if (_gear.RetainerAtBell == row.Name)
+            {
+                // She is summoned but her worn gear is not in memory yet — it loads with her gear window.
+                ImGui.Indent();
+                if (Buttons.Action("Read her gear##" + row.Name, !_gear.Busy, 130f))
+                    _gear.RequestGearWindow();
+                ImGui.SameLine();
+                ImGui.TextColored(CharonTheme.TextMuted, "opens \"View retainer attributes and gear\" from her menu");
+                ImGui.Unindent();
+            }
+
+            ImGui.Spacing();
+        }
+
+        ImGui.TextColored(CharonTheme.TextMuted, $"gear: {_gear.Status}");
+        TracePanel.Draw("Gear steps", _gear.Trace);
+    }
+
+    private void DrawGearPlan(RetainerGearService.View view)
+    {
+        var goal = view.Goal;
+        var plan = view.Plan;
+        var label = goal.Gatherer ? "Perception" : "item level";
+
+        ImGui.Indent();
+        ImGui.TextColored(CharonTheme.TextDim, $"For {goal.VentureName}:");
+        ImGui.SameLine();
+        if (goal.Gatherer)
+        {
+            ImGui.TextColored(plan.MeetsBefore ? CharonTheme.StatusGreen : CharonTheme.StatusRed,
+                plan.MeetsBefore
+                    ? $"Gathering {plan.Before.Gathering:N0} of {goal.RequiredGathering:N0}"
+                    : $"Gathering {plan.Before.Gathering:N0} — {goal.RequiredGathering - plan.Before.Gathering:N0} short of {goal.RequiredGathering:N0}");
+        }
+        else
+        {
+            ImGui.TextColored(plan.MeetsBefore ? CharonTheme.StatusGreen : CharonTheme.StatusRed,
+                plan.MeetsBefore
+                    ? $"item level {plan.Before.ItemLevel} of {goal.RequiredItemLevel}"
+                    : $"item level {plan.Before.ItemLevel} — {goal.RequiredItemLevel - plan.Before.ItemLevel} short of {goal.RequiredItemLevel}");
+        }
+
+        if (goal.QuantitySteps > 0)
+        {
+            ImGui.SameLine();
+            ImGui.TextColored(CharonTheme.TextDim,
+                $"· tier {plan.TierBefore + 1} of {goal.QuantitySteps} ({label} gates: {string.Join(" / ", goal.Thresholds.Select(t => t.ToString("N0")))})");
+        }
+
+        if (plan.Swaps.Count == 0)
+        {
+            ImGui.TextColored(CharonTheme.TextSecondary, plan.Note);
+        }
+        else
+        {
+            if (ImGui.BeginTable("gearSwaps##" + view.Retainer, 4,
+                    ImGuiTableFlags.BordersInnerV | ImGuiTableFlags.RowBg | ImGuiTableFlags.SizingFixedFit))
+            {
+                ImGui.TableSetupColumn("Slot", ImGuiTableColumnFlags.WidthFixed, 70f);
+                ImGui.TableSetupColumn("Wearing", ImGuiTableColumnFlags.WidthStretch);
+                ImGui.TableSetupColumn("Put on", ImGuiTableColumnFlags.WidthStretch);
+                ImGui.TableSetupColumn("From", ImGuiTableColumnFlags.WidthFixed, 62f);
+                ImGui.TableHeadersRow();
+
+                foreach (var swap in plan.Swaps)
+                {
+                    ImGui.TableNextRow();
+                    ImGui.TableNextColumn();
+                    ImGui.TextColored(CharonTheme.TextDim, SlotName(swap.Slot));
+                    ImGui.TableNextColumn();
+                    ImGui.TextColored(CharonTheme.TextDim, swap.Replacing == null ? "(empty)" : PieceText(swap.Replacing, goal.Gatherer));
+                    ImGui.TableNextColumn();
+                    ImGui.TextColored(CharonTheme.TextStrong, PieceText(swap.Wear, goal.Gatherer));
+                    ImGui.TableNextColumn();
+                    ImGui.TextColored(CharonTheme.TextDim, swap.Wear.Container is >= 0 and <= 3 ? "bags" : "armoury");
+                }
+
+                ImGui.EndTable();
+            }
+
+            var after = goal.Gatherer
+                ? $"Gathering {plan.After.Gathering:N0} · Perception {plan.After.Perception:N0}"
+                : $"item level {plan.After.ItemLevel}";
+            ImGui.TextColored(CharonTheme.StatusGreen,
+                $"After: {after} → tier {plan.TierAfter + 1} of {goal.QuantitySteps} · {plan.Note}");
+
+            if (_gear.Busy)
+            {
+                if (Buttons.Action("Stop##gear", true, 110f, CharonTheme.AccentRose))
+                    _gear.Stop();
+            }
+            else if (Buttons.Action($"Equip {plan.Swaps.Count} piece(s)##gear", view.CannotEquip == null, 150f))
+            {
+                _gear.StartEquip(DateTime.UtcNow);
+            }
+
+            ImGui.SameLine();
+            if (view.CannotEquip != null)
+                ImGui.TextColored(CharonTheme.StatusYellow, view.CannotEquip);
+            else
+                ImGui.TextColored(CharonTheme.TextMuted, "one piece at a time, each checked — the replaced gear goes back where the new piece came from");
+        }
+
+        if (view.Holding != null)
+            ImGui.TextColored(CharonTheme.StatusYellow, view.Holding);
+        else
+            ImGui.TextColored(CharonTheme.TextMuted, $"{view.Candidates} piece(s) of yours fit her and are in no gearset");
+
+        ImGui.Unindent();
+    }
+
+    private static string PieceText(RetainerPiece piece, bool gatherer) =>
+        gatherer
+            ? $"{piece.Name}{(piece.Hq ? " HQ" : "")}  (G {piece.Gathering} / P {piece.Perception})"
+            : $"{piece.Name}{(piece.Hq ? " HQ" : "")}  (i{piece.ItemLevel})";
+
+    private static string SlotName(Charon.Features.Gear.GearSlot slot) => slot switch
+    {
+        Charon.Features.Gear.GearSlot.MainHand => "Main hand",
+        Charon.Features.Gear.GearSlot.OffHand => "Off hand",
+        Charon.Features.Gear.GearSlot.RingRight => "Ring (R)",
+        Charon.Features.Gear.GearSlot.RingLeft => "Ring (L)",
+        _ => slot.ToString(),
+    };
+
+    private static string Ago(TimeSpan age) =>
+        age.TotalMinutes < 1 ? "just now"
+        : age.TotalHours < 1 ? $"{(int)age.TotalMinutes}m ago"
+        : age.TotalDays < 1 ? $"{(int)age.TotalHours}h ago"
+        : $"{(int)age.TotalDays}d ago";
 
     // ------------------------------------------------------------------ board ---
 
@@ -221,22 +420,25 @@ public sealed class RetainersWindow : Window
                 _runner.Stop("stopped");
 
             ImGui.SameLine();
-            ImGui.TextColored(CharonTheme.TextDim, "one retainer at a time — pick them at the bell");
+            ImGui.TextColored(CharonTheme.TextDim, _runner.RoundActive
+                ? "working through your retainers, one at a time"
+                : "one retainer at a time");
         }
         else
         {
+            // Both run a ROUND at the bell: each due retainer is opened by name, collected and sent back out.
+            // "Collect all" takes only the finished ones; "Send all" also sends anyone sitting idle.
             if (Buttons.Action("Collect all", rows.Any(Ready), 110f))
             {
-                _runner.Plan(0);
-                _runner.Arm();
+                _runner.ArmRound(served => _planner.NextInRound(
+                    _retainers.Read(DateTime.UtcNow), served, _contentId(), includeIdle: false, DateTime.UtcNow));
             }
 
             ImGui.SameLine();
             if (Buttons.Action("Send all", rows.Count > 0, 104f))
             {
-                // One retainer per pass, chosen in game; the plan follows whoever is in front of the bell.
-                _runner.Plan(0);
-                _runner.Arm();
+                _runner.ArmRound(served => _planner.NextInRound(
+                    _retainers.Read(DateTime.UtcNow), served, _contentId(), includeIdle: true, DateTime.UtcNow));
             }
         }
 
@@ -252,16 +454,16 @@ public sealed class RetainersWindow : Window
 
         if (Buttons.Action(ready ? "Collect" : "Collect##idle", ready, 76f))
         {
-            // Collect THIS retainer: open it at the bell by its own index, collect the report, then send it out
+            // Collect THIS retainer: open it at the bell by name, collect the report, then send it out
             // again on the venture the planner has for it. One press, one retainer's whole round trip.
-            _runner.ArmFor(row.Index, _planner.PlanTaskId(row, key));
+            _runner.ArmFor(row.Name, _planner.PlanTaskId(row, key));
         }
 
         ImGui.SameLine();
         if (Buttons.Action("Send out", row.VentureId == 0, 80f))
         {
-            _runner.Plan(_planner.PlanTaskId(row, key));
-            _runner.Arm();
+            // The row names the retainer, so the press opens HER at the bell rather than waiting for a pick.
+            _runner.ArmFor(row.Name, _planner.PlanTaskId(row, key));
         }
 
         ImGui.SameLine();

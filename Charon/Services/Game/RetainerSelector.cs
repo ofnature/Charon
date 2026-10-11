@@ -389,7 +389,7 @@ public sealed unsafe class RetainerSelector
     /// The list's values as text (null for a non-text value), plus the row count at [0]. The caller
     /// has already checked IsReady: an access violation from a window read cannot be caught.
     /// </summary>
-    private static (List<string?> Texts, int RowCount) ReadListTexts(AtkUnitBase* addon)
+    internal static (List<string?> Texts, int RowCount) ReadListTexts(AtkUnitBase* addon)
     {
         var texts = new List<string?>();
         var count = Math.Min((int)addon->AtkValuesCount, 256);

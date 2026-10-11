@@ -22,8 +22,8 @@ public enum VentureKind
 /// <param name="TaskId">The <c>RetainerTask</c> row id — this is what gets handed back to the game to assign it.</param>
 /// <param name="Name">Display name: the returned item for a hunt, the pool name for an exploration.</param>
 /// <param name="Quantities">The five-step quantity ladder for this venture, low tier first.</param>
-/// <param name="Thresholds">The gate ladder that decides which step you land on, same length as <see cref="Quantities"/>.</param>
-/// <param name="UsesItemLevel">True when <see cref="Thresholds"/> are item level, false when they are gathering/perception.</param>
+/// <param name="Thresholds">The FOUR gates above the base step: meeting <c>Thresholds[i]</c> lands on <c>Quantities[i + 1]</c>, and meeting none of them is <c>Quantities[0]</c>.</param>
+/// <param name="UsesItemLevel">True when <see cref="Thresholds"/> are item level, false when they are PERCEPTION (gatherers).</param>
 public sealed record VentureDef(
     uint TaskId,
     string Name,
@@ -53,16 +53,21 @@ public sealed record VentureDef(
 /// <summary>
 /// What a retainer brings to the table. The gear stats pick the quantity tier, so an unknown stat
 /// (0 or -1) means the tier is a guess — which is reported rather than hidden.
+///
+/// Three numbers, three jobs (AutoRetainer's VentureUtils, BSD-3, is the reference): a combat retainer's
+/// ITEM LEVEL both gates a venture and picks its tier; a gatherer's GATHERING gates the venture and its
+/// PERCEPTION picks the tier.
 /// </summary>
 public sealed record RetainerProfile(
     string Name,
     string Job,
     int Level,
     int ItemLevel = 0,
-    int Gathering = 0)
+    int Gathering = 0,
+    int Perception = 0)
 {
     /// <summary>True when the stats that decide a tier are known.</summary>
-    public bool StatsKnown => ItemLevel > 0 || Gathering > 0;
+    public bool StatsKnown => ItemLevel > 0 || Gathering > 0 || Perception > 0;
 }
 
 /// <summary>One venture ranked for one retainer: what it would return, what that is worth, and why not.</summary>
@@ -148,20 +153,29 @@ public static class VentureCatalog
         if (venture.Quantities.Count == 0)
             return (0, false);
 
-        var stat = venture.UsesItemLevel ? retainer.ItemLevel : retainer.Gathering;
+        // Gatherers tier on PERCEPTION, not Gathering (which only gates the venture). The ladder has one
+        // fewer gate than it has quantities: the tier is HOW MANY gates the stat clears. Both were wrong
+        // here until the stats were actually read — comparing Gathering, and landing one step low.
+        var stat = venture.UsesItemLevel ? retainer.ItemLevel : retainer.Perception;
         var known = stat > 0 && venture.Thresholds.Count > 0;
 
         if (!known)
             return (AssumeMiddleTierWhenUnknown ? venture.Quantities.Count / 2 : 0, false);
 
-        var index = 0;
-        for (var i = 0; i < venture.Thresholds.Count && i < venture.Quantities.Count; i++)
+        return (TierFor(stat, venture.Thresholds, venture.Quantities.Count), true);
+    }
+
+    /// <summary>The quantity step a stat lands on: the number of gates it clears, capped at the last step.</summary>
+    public static int TierFor(int stat, IReadOnlyList<int> thresholds, int quantitySteps)
+    {
+        var cleared = 0;
+        foreach (var gate in thresholds)
         {
-            if (stat >= venture.Thresholds[i])
-                index = i;
+            if (gate > 0 && stat >= gate)
+                cleared++;
         }
 
-        return (index, true);
+        return Math.Clamp(cleared, 0, Math.Max(0, quantitySteps - 1));
     }
 
     /// <summary>Everything this retainer could be sent on, best first. Blocked ventures are included, with the reason.</summary>

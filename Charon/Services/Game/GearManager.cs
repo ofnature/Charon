@@ -823,7 +823,7 @@ public sealed unsafe class GearManager
     }
 
     /// <summary>Every item id referenced by every saved gearset — the cleanup's keep-list.</summary>
-    private List<uint> ReadGearsetItemIds()
+    internal List<uint> ReadGearsetItemIds()
     {
         var ids = new List<uint>();
 
@@ -951,7 +951,7 @@ public sealed unsafe class GearManager
     }
 
     /// <summary>The slot an item occupies (the column set to 1). Rings report RingRight.</summary>
-    private static GearSlot? SlotOf(EquipSlotCategory category)
+    internal static GearSlot? SlotOf(EquipSlotCategory category)
     {
         if (category.MainHand == 1) return GearSlot.MainHand;
         if (category.OffHand == 1) return GearSlot.OffHand;
@@ -973,7 +973,7 @@ public sealed unsafe class GearManager
     /// named by the job's abbreviation, so the lookup is reflective — cached per (category, job)
     /// pair, which makes it a handful of lookups per session rather than per item.
     /// </summary>
-    private bool FitsJob(uint categoryId, uint jobId)
+    internal bool FitsJob(uint categoryId, uint jobId)
     {
         if (_jobFitCache.TryGetValue((categoryId, jobId), out var cached))
             return cached;

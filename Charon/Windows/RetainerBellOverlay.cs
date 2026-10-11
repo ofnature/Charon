@@ -134,14 +134,15 @@ public sealed unsafe class RetainerBellOverlay : Window
         }
         else
         {
-            if (Buttons.Action("Send a retainer", rows.Count > 0, 120f))
+            if (Buttons.Action("Collect & send all", rows.Count > 0, 150f))
             {
-                _runner.Plan(0);
-                _runner.Arm();
+                // Every retainer in turn — the row buttons are for one of them.
+                _runner.ArmRound(served => _planner.NextInRound(
+                    _retainers.Read(DateTime.UtcNow), served, _contentId(), includeIdle: true, DateTime.UtcNow));
             }
 
             ImGui.SameLine();
-            ImGui.TextColored(CharonTheme.TextMuted, "then pick who at the bell");
+            ImGui.TextColored(CharonTheme.TextMuted, "each retainer in turn");
         }
 
         ImGui.SameLine();
@@ -180,17 +181,18 @@ public sealed unsafe class RetainerBellOverlay : Window
             ImGui.SameLine(330f);
             if (Buttons.Action(ready ? "Collect" : "Collect##bellidle", ready, 68f))
             {
-                // THAT retainer: the same targeted cycle the board's row button runs — open it by its own index,
+                // THAT retainer: the same targeted cycle the board's row button runs — open it by NAME,
                 // collect, send it back out on the plan, then close it. At the bell this is the whole point of
                 // pressing Collect on a row rather than the button at the top.
-                _runner.ArmFor(row.Index, _planner.PlanTaskId(row, key));
+                _runner.ArmFor(row.Name, _planner.PlanTaskId(row, key));
             }
 
             ImGui.SameLine();
             if (Buttons.Action("Send##bell", row.VentureId == 0, 60f))
             {
-                _runner.Plan(_planner.PlanTaskId(row, key));
-                _runner.Arm();
+                // The row names the retainer, so the press opens HER — it used to arm and wait for the
+                // player to pick someone, which made the row's own button behave like the one at the top.
+                _runner.ArmFor(row.Name, _planner.PlanTaskId(row, key));
             }
         }
 

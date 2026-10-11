@@ -104,14 +104,25 @@ public sealed class VentureCatalogTests
     }
 
     [Fact]
-    public void Tier_FollowsTheGatheringLadder()
+    public void Tier_FollowsThePerceptionLadder_NotGathering()
     {
-        var venture = Manganese(); // thresholds 1980 2027 2073 2119 2165
+        // The REAL level-86 miner ladder (RetainerTaskParameter.PerceptionDoL): four gates, five quantities.
+        var venture = Hunt(903, "Manganese Ore", 36165, 86, 2073, 923100, new[] { 2198, 3140, 3454, 3768 });
+        RetainerProfile Miner(int perception) => new("x", "MIN", 86, 0, 2500, perception);
 
-        Assert.Equal(0, VentureCatalog.Tier(new RetainerProfile("x", "MIN", 86, 0, 1980), venture).Index);
-        Assert.Equal(2, VentureCatalog.Tier(new RetainerProfile("x", "MIN", 86, 0, 2100), venture).Index);
-        Assert.Equal(4, VentureCatalog.Tier(new RetainerProfile("x", "MIN", 86, 0, 9999), venture).Index);
-        Assert.True(VentureCatalog.Tier(new RetainerProfile("x", "MIN", 86, 0, 2100), venture).Known);
+        Assert.Equal(0, VentureCatalog.Tier(Miner(2197), venture).Index); // below the first gate: the base step
+        Assert.Equal(1, VentureCatalog.Tier(Miner(2198), venture).Index); // clearing gate 1 is step 2, not step 1
+        Assert.Equal(2, VentureCatalog.Tier(Miner(3140), venture).Index);
+        Assert.Equal(4, VentureCatalog.Tier(Miner(9999), venture).Index);
+        Assert.True(VentureCatalog.Tier(Miner(3140), venture).Known);
+    }
+
+    [Fact]
+    public void GatheringAlone_DoesNotPickATier()
+    {
+        // Gathering gates the venture; a retainer whose Perception is unread still has an unknown tier.
+        var venture = Hunt(903, "Manganese Ore", 36165, 86, 2073, 923100, new[] { 2198, 3140, 3454, 3768 });
+        Assert.False(VentureCatalog.Tier(new RetainerProfile("x", "MIN", 86, 0, 9999), venture).Known);
     }
 
     [Theory]

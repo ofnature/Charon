@@ -97,11 +97,27 @@ public sealed class RetainerPlanner
     }
 
     /// <summary>
-    /// The retainer as the catalog sees it. Gear stats (item level, gathering) are not read yet, so the
-    /// tier is an assumption the UI reports rather than a number it invents.
+    /// The retainer as the catalog sees it. Gear stats come from the last time her gear was read at a
+    /// bell (<see cref="CharonConfig.RetainerGear"/>); with no reading — or no key to look one up by —
+    /// they are 0, and the tier is an assumption the UI reports rather than a number it invents.
     /// </summary>
-    public RetainerProfile Profile(RetainerVenture row) =>
-        new(row.Name, _sheet.JobAbbreviation(row.JobId), row.Level, 0, 0);
+    public RetainerProfile Profile(RetainerVenture row, string? key = null)
+    {
+        var job = _sheet.JobAbbreviation(row.JobId);
+        return key != null && _config.RetainerGear.TryGetValue(key, out var gear)
+            ? new RetainerProfile(row.Name, job, row.Level, gear.ItemLevel, gear.Gathering, gear.Perception)
+            : new RetainerProfile(row.Name, job, row.Level);
+    }
+
+    /// <summary>What this retainer's gear should be chosen for — see <see cref="GearGoals.For"/>.</summary>
+    public GearGoal GearGoalFor(RetainerVenture row, string key)
+    {
+        VentureDef? picked = null;
+        if (Mode(key) == VentureAssignment.Picked && Picked(key) is var id and not 0)
+            picked = _sheet.Ventures.FirstOrDefault(v => v.TaskId == id);
+
+        return GearGoals.For(_sheet.JobAbbreviation(row.JobId), row.Level, picked, _sheet.Ventures);
+    }
 
     public List<FarmTarget> FarmTargets()
     {
@@ -145,7 +161,7 @@ public sealed class RetainerPlanner
     }
 
     public VentureOption? Resolve(RetainerVenture row, string key) =>
-        VenturePlanner.Resolve(Profile(row), Mode(key), Picked(key), FarmTargets(), _sheet.Ventures, Prices());
+        VenturePlanner.Resolve(Profile(row, key), Mode(key), Picked(key), FarmTargets(), _sheet.Ventures, Prices());
 
     /// <summary>
     /// The venture the next send should choose: whatever the mode resolves to (best value, the picked one,
@@ -155,10 +171,25 @@ public sealed class RetainerPlanner
     public uint PlanTaskId(RetainerVenture? row, string key) =>
         row == null ? 0 : Resolve(row, key)?.Venture.TaskId ?? 0;
 
+    /// <summary>
+    /// A round's next retainer, with the venture the planner has for her. Asked fresh each time the bell
+    /// is back at its list — see <see cref="VentureRound"/>.
+    /// </summary>
+    public RoundStep NextInRound(
+        IReadOnlyList<RetainerVenture> rows, IReadOnlyCollection<string> served, ulong contentId, bool includeIdle, DateTime nowUtc)
+    {
+        var step = VentureRound.Next(VentureBoard.Compose(nowUtc, rows), served, includeIdle);
+        if (step.Kind != RoundKind.Serve)
+            return step;
+
+        var row = rows.FirstOrDefault(r => r.Name == step.Name);
+        return step with { TaskId = PlanTaskId(row, Key(contentId, step.Name)) };
+    }
+
     public List<FarmPlan> PlanFarm(IReadOnlyList<RetainerVenture> rows) =>
         VenturePlanner.PlanFarm(
             FarmTargets(),
-            rows.Select(Profile).ToList(),
+            rows.Select(r => Profile(r)).ToList(),
             _sheet.Ventures,
             Prices());
 

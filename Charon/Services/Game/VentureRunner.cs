@@ -77,15 +77,34 @@ public sealed unsafe class VentureRunner
     public bool Armed { get; private set; }
 
     /// <summary>
-    /// The retainer a run was aimed at, by the game's own SORTED index — the number the retainer list takes when
-    /// it opens one, and the number <c>RetainerReader</c> walks with <c>GetRetainerBySortedIndex</c>. -1 means the
-    /// old behaviour: whoever is put in front of the bell gets served.
+    /// The retainer a run was aimed at, BY NAME — null means the old behaviour: whoever is put in front of
+    /// the bell gets served. It was a sorted index until the bell work proved that number is not a list
+    /// row: a gap in the retainer array (an unpaid or empty slot) pushes it one row past the retainer it
+    /// names, onto a slot the game refuses to summon. The row is now read off the list's own values, the
+    /// approach <see cref="RetainerSelector"/> verified live.
     /// </summary>
-    public int TargetIndex { get; private set; } = -1;
+    public string? TargetName { get; private set; }
 
     private bool _targetOpened;
     private bool _targetSent;
     private int _selectAttempts;
+
+    /// <summary>
+    /// A round: asked "who is next?" each time the bell is back at its list (see <see cref="VentureRound"/>).
+    /// Null outside a round. It is a QUESTION put to live state, never a list decided in advance.
+    /// </summary>
+    private Func<IReadOnlyCollection<string>, RoundStep>? _round;
+    private readonly List<string> _served = new();
+    private DateTime _targetStartedUtc;
+    private DateTime _roundWaitingSinceUtc;
+
+    /// <summary>One retainer may not hold a round up for longer than this — a stall ends with its reason shown.</summary>
+    private static readonly TimeSpan PerRetainerLimit = TimeSpan.FromSeconds(60);
+
+    /// <summary>How long an unreadable roster is waited out (it reloads while a retainer is dismissed).</summary>
+    private static readonly TimeSpan RosterWait = TimeSpan.FromSeconds(10);
+
+    public bool RoundActive => _round != null;
 
     /// <summary>A send has gone out for the retainer in front of us: its cycle is collectable-complete.</summary>
     private bool _sentThisRetainer;
@@ -107,7 +126,10 @@ public sealed unsafe class VentureRunner
     public void Arm()
     {
         Armed = true;
-        TargetIndex = -1;
+        TargetName = null;
+        _round = null;
+        _served.Clear();
+        _roundWaitingSinceUtc = DateTime.MinValue;
         _targetOpened = false;
         _targetSent = false;
         _sentThisRetainer = false;
@@ -126,12 +148,24 @@ public sealed unsafe class VentureRunner
     /// the player is there) and pressing Collect on a row: that retainer, its report collected, and sent out again
     /// on <paramref name="taskId"/>, then done.
     /// </summary>
-    public void ArmFor(int sortedIndex, uint taskId)
+    /// <summary>
+    /// Every retainer in turn: each one that is due is opened by name, collected and sent back out, and
+    /// the round ends when <paramref name="next"/> says nobody is left. One step per tick like every
+    /// other run here, so Stop lands on the next tick and leaves nothing queued.
+    /// </summary>
+    public void ArmRound(Func<IReadOnlyCollection<string>, RoundStep> next)
     {
         Arm();
-        TargetIndex = sortedIndex;
+        _round = next;
+        Status = "armed — every retainer in turn";
+    }
+
+    public void ArmFor(string retainer, uint taskId)
+    {
+        Arm();
+        TargetName = retainer;
         Plan(taskId);
-        Status = $"armed for retainer #{sortedIndex}";
+        Status = $"armed for {retainer}";
     }
 
     /// <summary>
@@ -150,7 +184,8 @@ public sealed unsafe class VentureRunner
     public void Stop(string reason = "stopped")
     {
         Armed = false;
-        TargetIndex = -1;
+        TargetName = null;
+        _round = null;
         _targetOpened = false;
         _targetSent = false;
         _sentThisRetainer = false;
@@ -174,17 +209,34 @@ public sealed unsafe class VentureRunner
             if (screen != VentureScreen.None || listOpen)
                 _lastSessionUtc = nowUtc;
 
+            // A round with nobody in hand, back at the list: ask who is next.
+            if (_round != null && TargetName == null && screen == VentureScreen.None && listOpen
+                && !NextInRound(nowUtc))
+                return;
+
             // A run aimed at one retainer: open it first, then serve it like any other.
-            if (TargetIndex >= 0)
+            if (TargetName != null)
             {
                 if (screen != VentureScreen.None)
                     _targetOpened = true;
 
-                // Finished: the send has gone out and the game is back at the retainer list. Without this the run
-                // would carry on down the list, which is what "Collect all" is for, not a single row's button.
+                // Finished: the send has gone out and the game is back at the retainer list. A single row's
+                // button stops here; a round lets go of her and asks for the next one.
                 if (_targetOpened && _targetSent && _closedThisRetainer && screen == VentureScreen.None && listOpen)
                 {
-                    Stop("done — collected and sent out");
+                    if (_round == null)
+                    {
+                        Stop("done — collected and sent out");
+                        return;
+                    }
+
+                    TargetName = null;
+                    return;
+                }
+
+                if (_round != null && nowUtc - _targetStartedUtc > PerRetainerLimit)
+                {
+                    Stop($"gave up on {TargetName}: {Status}");
                     return;
                 }
 
@@ -267,11 +319,48 @@ public sealed unsafe class VentureRunner
     /// <summary>
     /// Open the retainer this run was aimed at, through the game's own retainer list callback.
     ///
-    /// The call is <c>RetainerList.Select(index)</c> as ECommons implements it — four ints on the list addon with
-    /// updateState TRUE: (2, index, 0, 0) — where the index is the game's SORTED index. That number is the only
-    /// handle Charon has on which retainer opens, which is why the board carries it. Bounded attempts, because a
-    /// list that will not take the selection must be reported rather than clicked at forever.
+    /// The row is found BY NAME in the list's own values (<see cref="RetainerListRows"/>) and fired in the
+    /// shape the bell selection proved at a real bell: (Int 2, UInt row), updateState TRUE. A name the list
+    /// does not show stops the run with what it DOES show, rather than guessing a row. Bounded attempts,
+    /// because a list that will not take the selection must be reported rather than clicked at forever.
     /// </summary>
+    /// <summary>Takes the round's next retainer in hand. False when the tick should end here (waiting, or done).</summary>
+    private bool NextInRound(DateTime nowUtc)
+    {
+        var step = _round!(_served);
+        switch (step.Kind)
+        {
+            case RoundKind.Done:
+                Stop(_served.Count == 0
+                    ? "nothing to collect or send"
+                    : $"done — {_served.Count} retainer(s) collected and sent");
+                return false;
+
+            case RoundKind.Wait:
+                // The roster reloads while a retainer is dismissed; an empty read is not "nobody left".
+                if (_roundWaitingSinceUtc == DateTime.MinValue)
+                    _roundWaitingSinceUtc = nowUtc;
+                else if (nowUtc - _roundWaitingSinceUtc > RosterWait)
+                    Stop("the retainer list could not be read");
+
+                Status = "waiting for the retainer list";
+                return false;
+        }
+
+        _roundWaitingSinceUtc = DateTime.MinValue;
+        _served.Add(step.Name);
+        TargetName = step.Name;
+        Plan(step.TaskId);
+        _targetOpened = false;
+        _targetSent = false;
+        _sentThisRetainer = false;
+        _closedThisRetainer = false;
+        _selectAttempts = 0;
+        _targetStartedUtc = nowUtc;
+        Status = $"next: {step.Name}";
+        return true;
+    }
+
     private bool TrySelectTarget(DateTime nowUtc)
     {
         if (nowUtc - _lastActionUtc < ActionThrottle)
@@ -283,20 +372,27 @@ public sealed unsafe class VentureRunner
             return false;
         }
 
+        // IsReady FIRST: an access violation from reading a window mid-setup cannot be caught.
         var list = (AtkUnitBase*)_gameGui.GetAddonByName("RetainerList").Address;
-        if (list == null)
+        if (list == null || !list->IsReady || !list->IsVisible)
             return false;
+
+        var (texts, rowCount) = RetainerSelector.ReadListTexts(list);
+        var row = RetainerListRows.RowOf(texts, rowCount, TargetName!);
+        if (row < 0)
+        {
+            Stop($"{TargetName} is not in the retainer list (it shows: {string.Join(", ", RetainerListRows.Names(texts, rowCount))})");
+            return false;
+        }
 
         _selectAttempts++;
         _lastActionUtc = nowUtc;
-        Status = $"opening retainer #{TargetIndex}";
+        Status = $"opening {TargetName}";
 
-        var values = stackalloc AtkValue[4];
+        var values = stackalloc AtkValue[2];
         values[0].SetInt(2);
-        values[1].SetInt(TargetIndex);
-        values[2].SetInt(0);
-        values[3].SetInt(0);
-        list->FireCallback(4, values, true);
+        values[1].SetUInt((uint)row);
+        list->FireCallback(2, values, true);
         return true;
     }
 

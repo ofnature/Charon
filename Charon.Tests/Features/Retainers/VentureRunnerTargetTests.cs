@@ -23,7 +23,7 @@ public class VentureRunnerTargetTests
         runner.Arm();
 
         Assert.True(runner.Armed);
-        Assert.Equal(-1, runner.TargetIndex);
+        Assert.Null(runner.TargetName);
     }
 
     [Fact]
@@ -31,12 +31,13 @@ public class VentureRunnerTargetTests
     {
         var runner = Runner();
 
-        runner.ArmFor(3, 903);
+        runner.ArmFor("T'sola", 903);
 
         Assert.True(runner.Armed);
-        Assert.Equal(3, runner.TargetIndex);
+        // By NAME: a position in the retainer array is not a list row once a slot is unpaid or empty.
+        Assert.Equal("T'sola", runner.TargetName);
         Assert.Equal(903u, runner.WantedTaskId);
-        Assert.Contains("#3", runner.Status);
+        Assert.Contains("T'sola", runner.Status);
     }
 
     /// <summary>
@@ -47,12 +48,12 @@ public class VentureRunnerTargetTests
     public void StoppingLeavesNoTargetBehind()
     {
         var runner = Runner();
-        runner.ArmFor(2, 768);
+        runner.ArmFor("T'sala", 768);
 
         runner.Stop("stopped");
 
         Assert.False(runner.Armed);
-        Assert.Equal(-1, runner.TargetIndex);
+        Assert.Null(runner.TargetName);
         Assert.Equal(0u, runner.WantedTaskId);
     }
 }

@@ -374,6 +374,14 @@ public sealed class CharonConfig : IPluginConfiguration
     /// <summary>Per-retainer chosen venture (RetainerTask row id), same key.</summary>
     public Dictionary<string, uint> RetainerPickedVenture { get; set; } = new();
 
+    /// <summary>
+    /// Each retainer's gear numbers (item level, Gathering, Perception) as last read at a bell, keyed
+    /// <c>contentId:retainerName</c> like every other per-retainer setting. A retainer's gear is only in
+    /// memory while she is summoned, so this is a snapshot — an absent entry means UNKNOWN, and the
+    /// venture picker then says its quantity is assumed.
+    /// </summary>
+    public Dictionary<string, Charon.Features.Retainers.RetainerGearSnapshot> RetainerGear { get; set; } = new();
+
     /// <summary>One stack as last seen in a retainer's bags. High quality is its own stack, never folded in.</summary>
     public sealed class RetainerStack
     {

@@ -28,7 +28,7 @@ namespace Charon;
 
 public sealed class CharonPlugin : IDalamudPlugin
 {
-    public const string PluginVersion = "0.1.48";
+    public const string PluginVersion = "0.1.49";
     private const string CommandName = "/charon";
 
     /// <summary>
@@ -215,6 +215,7 @@ public sealed class CharonPlugin : IDalamudPlugin
 
     /// <summary>Shared by the retainer board and the bell overlay, so a plan means one thing.</summary>
     private readonly RetainerPlanner _retainerPlanner;
+    private readonly RetainerGearService _retainerGear;
 
     /// <summary>What each retainer holds, as last seen — the store Hephaestus asks for over IPC.</summary>
     private readonly RetainerContentsReader _retainerContents;
@@ -516,6 +517,8 @@ public sealed class CharonPlugin : IDalamudPlugin
         // and its Tweaks section shows the idle timer the guard is working from.
         _ventureSheet = new VentureSheetReader(dataManager, log);
         _retainerPlanner = new RetainerPlanner(_config, _ventureSheet, MarketPrice, SaveConfig);
+        _retainerGear = new RetainerGearService(gameGui, dataManager, log, _gear, _retainers, _retainerContents,
+            _retainerPlanner, _config, SaveConfig, () => _jobLevels.LocalContentId, () => _ventureRunner.Armed, chatGui);
         _afkGuard = new AfkGuard(
             () => _config.AfkGuardEnabled,
             () => _config.AfkGuardThresholdSeconds,
@@ -554,7 +557,7 @@ public sealed class CharonPlugin : IDalamudPlugin
             () => _sprintStatus,
             () => $"{_nav.ProviderName}: {(_nav.IsAvailable ? "ready" : "not ready/installed")}"
                   + $" · path {(_nav.IsPathRunning ? "running" : "idle")}",
-            () => $"chests: {_chests.Status} · ATM: {_qte.Status} · saddlebag: {_saddlebag.Status} · commend: {_commend.Status} · turn-in: {_turnIn.Status} · talk: {_textAdvance.Status} · spawns: {_spawnScanner.Status} · quick kill: {_quickKill.Status} · chest search: {_chestSearch!.Status} · DD: {_ddReader.Status} · ESP: {(_ddEsp!.IsOpen ? _ddEsp.Status : "closed")} · spots: {_palaceSpots.Status} · pomanders: {_pomanders.Status}",
+            () => $"chests: {_chests.Status} · ATM: {_qte.Status} · saddlebag: {_saddlebag.Status} · commend: {_commend.Status} · turn-in: {_turnIn.Status} · talk: {_textAdvance.Status} · spawns: {_spawnScanner.Status} · quick kill: {_quickKill.Status} · chest search: {_chestSearch!.Status} · DD: {_ddReader.Status} · ESP: {(_ddEsp!.IsOpen ? _ddEsp.Status : "closed")} · spots: {_palaceSpots.Status} · pomanders: {_pomanders.Status} · retainer gear: {_retainerGear.Status}",
             () => _lootWatcher.Status,
             // Reading the line IS the refresh: the reader is lazy (nothing local polls it — it
             // exists for IPC), so without this nudge Debug would say "not read yet" forever.
@@ -609,7 +612,8 @@ public sealed class CharonPlugin : IDalamudPlugin
             () => _objectTable.LocalPlayer?.Name.TextValue ?? string.Empty,
             () => _jobLevels.LocalContentId,
             () => _config.RetainerAutoSelectEnabled,
-            () => _retainerSelector.Status);
+            () => _retainerSelector.Status,
+            _retainerGear);
         _retainersWindow.IsOpen = _config.RetainerWindowVisible; // Dalamud windows default to OPEN
         _retainerWindowShown = _config.RetainerWindowVisible;
         _windowSystem.AddWindow(_retainersWindow);
@@ -707,6 +711,7 @@ public sealed class CharonPlugin : IDalamudPlugin
         _relay.OnMessage -= OnRelayMessage;
         _commend.Dispose();
         _palaceSpots.Dispose();
+        _retainerGear.Dispose();
         _pomanders.Dispose();
         _doman.Dispose();
         _fcChest.Dispose();
@@ -1217,6 +1222,7 @@ public sealed class CharonPlugin : IDalamudPlugin
         _afkGuard.Update(now);
         _retainerContents.Update(now);
         _retainerSelector.Update(now);
+        _retainerGear.Update(now);
         _chestContents.Update(now);
         _allowances.Update(now);
         _windowText.UpdateWatch(now, message => _chat.Print(message));
