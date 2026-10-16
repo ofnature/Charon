@@ -41,6 +41,7 @@ public sealed unsafe class AfkGuard
 
     private readonly Func<bool> _enabled;
     private readonly Func<int> _thresholdSeconds;
+    private readonly Func<bool> _inDuty;
     private readonly IClientState _clientState;
     private readonly IPluginLog _log;
 
@@ -53,8 +54,10 @@ public sealed unsafe class AfkGuard
         Func<bool> enabled,
         Func<int> thresholdSeconds,
         IClientState clientState,
-        IPluginLog log)
+        IPluginLog log,
+        Func<bool> inDuty)
     {
+        _inDuty = inDuty;
         _enabled = enabled;
         _thresholdSeconds = thresholdSeconds;
         _clientState = clientState;
@@ -85,7 +88,7 @@ public sealed unsafe class AfkGuard
 
         var since = _lastNudgeUtc is { } last ? (nowUtc - last).TotalSeconds : (double?)null;
         var decision = AfkGuardPolicy.Decide(
-            _enabled(), _clientState.IsLoggedIn, timers, _thresholdSeconds(), since, _stuckNudges);
+            _enabled(), _clientState.IsLoggedIn, timers, _thresholdSeconds(), since, _stuckNudges, _inDuty());
 
         Status = decision.Reason;
 

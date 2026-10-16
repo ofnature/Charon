@@ -79,6 +79,17 @@ public sealed class CharonConfig : IPluginConfiguration
     /// </summary>
     public bool PillionRidersWindowEnabled { get; set; } = true;
 
+    /// <summary>
+    /// The edge dock: context tabs on a screen edge (Retainers at a bell, Floor in a deep dungeon, Chest
+    /// at the company chest, Riders on a multi-seat mount), each popping its panel out beside it. OFF by
+    /// default — while it is on, those four windows stop opening by themselves and live behind their tabs,
+    /// which is a change of habit nobody should get from an update.
+    /// </summary>
+    public bool EdgeDockEnabled { get; set; }
+
+    /// <summary>Pin the edge dock to the right edge of the screen instead of the left.</summary>
+    public bool EdgeDockRightSide { get; set; }
+
     // Movement
     /// <summary>
     /// Which navigation plugin drives all Charon movement (follow, boarding walks, vendor trips):

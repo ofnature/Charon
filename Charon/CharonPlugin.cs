@@ -94,6 +94,11 @@ public sealed class CharonPlugin : IDalamudPlugin
     private readonly PillionRidersWindow _pillionRidersWindow;
     private readonly DeepDungeonMapWindow _ddMapWindow;
     private readonly EspOverlayWindow _ddEsp;
+    private readonly EdgeDockWindow _edgeDock;
+    private readonly Charon.Features.Dock.DockLayoutShare _dockLayout;
+
+    /// <summary>The company chest's game window is open (set by its addon lifecycle) — the Chest tab's moment.</summary>
+    private bool _fcChestAddonOpen;
     private readonly PalaceSpotService _palaceSpots;
     private readonly PomanderTracker _pomanders;
     private readonly LevelingIpc _levelingIpc;
@@ -523,7 +528,8 @@ public sealed class CharonPlugin : IDalamudPlugin
             () => _config.AfkGuardEnabled,
             () => _config.AfkGuardThresholdSeconds,
             clientState,
-            log);
+            log,
+            () => _condition[ConditionFlag.BoundByDuty]);
 
 
         _windowText = new WindowTextDump(gameGui, log);
@@ -557,7 +563,7 @@ public sealed class CharonPlugin : IDalamudPlugin
             () => _sprintStatus,
             () => $"{_nav.ProviderName}: {(_nav.IsAvailable ? "ready" : "not ready/installed")}"
                   + $" · path {(_nav.IsPathRunning ? "running" : "idle")}",
-            () => $"chests: {_chests.Status} · ATM: {_qte.Status} · saddlebag: {_saddlebag.Status} · commend: {_commend.Status} · turn-in: {_turnIn.Status} · talk: {_textAdvance.Status} · spawns: {_spawnScanner.Status} · quick kill: {_quickKill.Status} · chest search: {_chestSearch!.Status} · DD: {_ddReader.Status} · ESP: {(_ddEsp!.IsOpen ? _ddEsp.Status : "closed")} · spots: {_palaceSpots.Status} · pomanders: {_pomanders.Status} · retainer gear: {_retainerGear.Status}",
+            () => $"chests: {_chests.Status} · ATM: {_qte.Status} · saddlebag: {_saddlebag.Status} · commend: {_commend.Status} · turn-in: {_turnIn.Status} · talk: {_textAdvance.Status} · spawns: {_spawnScanner.Status} · quick kill: {_quickKill.Status} · chest search: {_chestSearch!.Status} · DD: {_ddReader.Status} · ESP: {(_ddEsp!.IsOpen ? _ddEsp.Status : "closed")} · spots: {_palaceSpots.Status} · pomanders: {_pomanders.Status} · retainer gear: {_retainerGear.Status} · dock: {(_config.EdgeDockEnabled ? _edgeDock!.Status : "off")}",
             () => _lootWatcher.Status,
             // Reading the line IS the refresh: the reader is lazy (nothing local polls it — it
             // exists for IPC), so without this nudge Debug would say "not read yet" forever.
@@ -665,6 +671,29 @@ public sealed class CharonPlugin : IDalamudPlugin
             () => _ddReader.GetSnapshot().ContentId);
         _windowSystem.AddWindow(_ddEsp);
 
+        // The edge dock: one tab per context window, each drawing that window's own body in its pop-out.
+        // A tab also honours its window's own on/off setting, so switching a window off removes its tab.
+        // The layout is shared with Daedalus's dock so the two stack on one edge instead of overlapping;
+        // Charon sits below (order 20, Daedalus 10).
+        _dockLayout = new Charon.Features.Dock.DockLayoutShare(_pluginInterface, "Charon", order: 20);
+        _edgeDock = new EdgeDockWindow(
+        [
+            new EdgeDockWindow.Tab(Charon.Features.Dock.DockTab.Retainers,
+                () => _config.RetainerOverlayEnabled && _condition[ConditionFlag.OccupiedSummoningBell],
+                () => _retainerBell.Draw()),
+            new EdgeDockWindow.Tab(Charon.Features.Dock.DockTab.Floor,
+                () => _config.DeepDungeonMapEnabled && _ddReader.GetSnapshot().Active,
+                () => _ddMapWindow.Draw()),
+            new EdgeDockWindow.Tab(Charon.Features.Dock.DockTab.Chest,
+                () => _config.FcChestWindowAutoOpen && _fcChestAddonOpen,
+                () => _fcChestWindow.Draw(),
+                new System.Numerics.Vector2(440f, 480f)), // its table stretches, so it needs a real width
+            new EdgeDockWindow.Tab(Charon.Features.Dock.DockTab.Riders,
+                () => _config.PillionRidersWindowEnabled && ReadRawSeatOccupancy().Count > 0,
+                () => _pillionRidersWindow.Draw()),
+        ], () => _config.EdgeDockRightSide, _dockLayout);
+        _windowSystem.AddWindow(_edgeDock);
+
         _commandManager.AddHandler(CommandName, new CommandInfo(OnCommand)
         {
             HelpMessage = "Toggle the Charon window (short alias: /cha). "
@@ -707,6 +736,7 @@ public sealed class CharonPlugin : IDalamudPlugin
         _commandManager.RemoveHandler(CommandName);
         _commandManager.RemoveHandler(CommandAlias);
         _windowSystem.RemoveAllWindows();
+        _dockLayout.Dispose();
 
         _relay.OnMessage -= OnRelayMessage;
         _commend.Dispose();
@@ -1109,13 +1139,15 @@ public sealed class CharonPlugin : IDalamudPlugin
     /// <summary>FC chest opened — pop the standalone window (unless auto-open is disabled).</summary>
     private void OnFcChestOpen(AddonEvent type, AddonArgs args)
     {
-        if (_config.FcChestWindowAutoOpen)
+        _fcChestAddonOpen = true;
+        if (_config.FcChestWindowAutoOpen && !_config.EdgeDockEnabled)
             _fcChestWindow.IsOpen = true;
     }
 
     /// <summary>FC chest closed — the transfer session is gone, so close the window with it.</summary>
     private void OnFcChestClose(AddonEvent type, AddonArgs args)
     {
+        _fcChestAddonOpen = false;
         _fcChestWindow.IsOpen = false;
     }
 
@@ -1266,18 +1298,23 @@ public sealed class CharonPlugin : IDalamudPlugin
         // Shown ONLY while a deep-dungeon instance is live — the director pointer is the signal,
         // so no territory list to go stale.
         var ddActive = _ddReader.GetSnapshot().Active;
-        _ddMapWindow.IsOpen = _config.DeepDungeonMapEnabled && ddActive;
+        // With the edge dock on, these context windows live behind their tabs instead of opening themselves.
+        var docked = _config.EdgeDockEnabled;
+        _ddMapWindow.IsOpen = _config.DeepDungeonMapEnabled && ddActive && !docked;
         _ddEsp.IsOpen = _config.DeepDungeonEspEnabled && ddActive;
         _palaceSpots.Update(now);
         _pomanders.Update();
         // The riders window follows the mount: open while driving a multi-seat mount, gone on
         // dismount (the occupancy read is the tick-cached snapshot — no rescan).
-        _pillionRidersWindow.IsOpen = _config.PillionRidersWindowEnabled && ReadRawSeatOccupancy().Count > 0;
+        _pillionRidersWindow.IsOpen = _config.PillionRidersWindowEnabled && ReadRawSeatOccupancy().Count > 0 && !docked;
+        if (docked)
+            _fcChestWindow.IsOpen = false;
+        _edgeDock.IsOpen = docked && _edgeDock.AnyTab();
         UpdateDomanWindow();
 
         // The overlay lives exactly as long as the bell's list is up - it is a decision aid for the window
         // that is open, never a panel that lingers over the world.
-        _retainerBell.IsOpen = _config.RetainerOverlayEnabled && _ventureRunner.RetainerListOpen;
+        _retainerBell.IsOpen = _config.RetainerOverlayEnabled && _ventureRunner.RetainerListOpen && !_config.EdgeDockEnabled;
 
         // Two-way and EDGE-triggered, the spawn-window pattern exactly: the first branch compares the
         // config against the state WE last pushed, not against IsOpen. Comparing against IsOpen makes the

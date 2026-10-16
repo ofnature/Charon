@@ -51,13 +51,23 @@ public static class AfkGuardPolicy
     /// </summary>
     public const int MinimumThresholdSeconds = 60;
 
+    /// <summary>
+    /// The most idle time allowed INSIDE A DUTY, whatever the setting says. A duty has its own, much
+    /// shorter clock: the game warns at 5 minutes ("5 minutes have elapsed since your last activity")
+    /// and expels you at 10 — so the default 600-second threshold nudged at the very second of the kick
+    /// (user screenshot, 2026-10-11, in a deep dungeon). 240 keeps the warning from ever appearing and
+    /// leaves room for the three retries a stuck nudge is allowed.
+    /// </summary>
+    public const int DutyThresholdSeconds = 240;
+
     public static AfkDecision Decide(
         bool enabled,
         bool loggedIn,
         IReadOnlyList<double> timers,
         int thresholdSeconds,
         double? secondsSinceNudge,
-        int stuckNudges)
+        int stuckNudges,
+        bool inDuty = false)
     {
         if (!enabled)
             return new AfkDecision(AfkAction.Idle, "off");
@@ -72,9 +82,12 @@ public static class AfkGuardPolicy
 
         var worst = usable.Max();
         var threshold = Math.Max(MinimumThresholdSeconds, thresholdSeconds);
+        var capped = inDuty && threshold > DutyThresholdSeconds;
+        if (capped)
+            threshold = DutyThresholdSeconds;
 
         if (worst < threshold)
-            return new AfkDecision(AfkAction.Idle, $"idle {worst:0}s of {threshold}s");
+            return new AfkDecision(AfkAction.Idle, $"idle {worst:0}s of {threshold}s{(capped ? " (in a duty — the game expels at 600s)" : "")}");
 
         if (stuckNudges >= NudgesBeforeGivingUp)
         {

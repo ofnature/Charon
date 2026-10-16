@@ -3047,6 +3047,32 @@ public sealed class MainWindow : Window
     {
         DrawPageHeader("Tweaks");
 
+        var dock = _config.EdgeDockEnabled;
+        if (ImGui.Checkbox("Edge tabs##dock", ref dock))
+        {
+            _config.EdgeDockEnabled = dock;
+            _save();
+        }
+        CharonTheme.HelpMarker("Tabs on the edge of the screen that only appear when they apply:\n"
+                               + "Retainers at a summoning bell, Floor in a deep dungeon, Chest at the company\n"
+                               + "chest, Riders while you drive a multi-seat mount.\n\n"
+                               + "Point at a tab and its panel pops out beside it; click a tab to pin the panel open.\n\n"
+                               + "While this is on, those four windows stop opening by themselves — their tabs\n"
+                               + "are how you reach them. A window you have switched off has no tab.");
+        if (dock)
+        {
+            ImGui.Indent();
+            var rightSide = _config.EdgeDockRightSide;
+            if (ImGui.Checkbox("On the right edge##dock", ref rightSide))
+            {
+                _config.EdgeDockRightSide = rightSide;
+                _save();
+            }
+            ImGui.Unindent();
+        }
+
+        ImGui.Spacing();
+
         var openChests = _config.AutoOpenChestsEnabled;
         if (ImGui.Checkbox("Auto-open treasure chests##qol", ref openChests))
         {
@@ -3515,7 +3541,10 @@ public sealed class MainWindow : Window
             }
 
             CharonTheme.HelpMarker("The client logs out around the 30-minute mark; 10 minutes is early\n"
-                                   + "enough to be safe and late enough that the nudge is rare.");
+                                   + "enough to be safe and late enough that the nudge is rare.\n\n"
+                                   + "Inside a duty the game is stricter — it warns at 5 minutes idle and\n"
+                                   + "expels you at 10 — so there the nudge comes at 4 minutes at the latest,\n"
+                                   + "whatever this is set to.");
             ImGui.Unindent();
         }
 

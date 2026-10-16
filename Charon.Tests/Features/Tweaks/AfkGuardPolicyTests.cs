@@ -125,4 +125,38 @@ public class AfkGuardPolicyTests
         Assert.Equal(AfkAction.Idle, decision.Action);
         Assert.Equal($"idle 1s of {AfkGuardPolicy.MinimumThresholdSeconds}s", decision.Reason);
     }
+
+    // --- Inside a duty the game's own clock is shorter: warned at 300s, expelled at 600s. ---
+
+    [Fact]
+    public void InADuty_TheNudgeComesBeforeTheFiveMinuteWarning()
+    {
+        // The default 600s threshold nudged at the very second the duty expels you.
+        var decision = AfkGuardPolicy.Decide(true, true, [250.0], 600, null, 0, inDuty: true);
+        Assert.Equal(AfkAction.Nudge, decision.Action);
+    }
+
+    [Fact]
+    public void InADuty_BelowTheCap_ItStillWaits_AndSaysWhy()
+    {
+        var decision = AfkGuardPolicy.Decide(true, true, [100.0], 600, null, 0, inDuty: true);
+
+        Assert.Equal(AfkAction.Idle, decision.Action);
+        Assert.Contains("of 240s", decision.Reason);
+        Assert.Contains("duty", decision.Reason);
+    }
+
+    [Fact]
+    public void OutsideADuty_TheSettingStands()
+    {
+        var decision = AfkGuardPolicy.Decide(true, true, [250.0], 600, null, 0, inDuty: false);
+        Assert.Equal(AfkAction.Idle, decision.Action);
+    }
+
+    [Fact]
+    public void AShorterSettingIsNotRaisedByTheDutyCap()
+    {
+        var decision = AfkGuardPolicy.Decide(true, true, [130.0], 120, null, 0, inDuty: true);
+        Assert.Equal(AfkAction.Nudge, decision.Action);
+    }
 }
