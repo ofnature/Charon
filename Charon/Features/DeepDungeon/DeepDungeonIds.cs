@@ -16,6 +16,12 @@ public static class DeepDungeonIds
     public const uint AccursedHoard = 2007542;
     public const uint AccursedHoardCoffer = 2007543;
 
+    /// <summary>
+    /// Pilgrim's Traverse's votive candelabra (a Pomander of Devotion guarantees one on the next floor).
+    /// NecroLens's <c>VotifesIds</c> and Splatoon's Pilgrim's Traverse preset (Leathen-94) agree on it.
+    /// </summary>
+    public const uint VotiveCandelabra = 2014759;
+
     /// <summary>Bronze coffers, per dungeon (PotD / HoH / EO / Pilgrim's Traverse).</summary>
     public static readonly HashSet<uint> BronzeChests = new()
     {

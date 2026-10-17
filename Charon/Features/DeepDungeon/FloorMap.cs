@@ -30,11 +30,18 @@ public static class FloorMap
     public const ushort Home = 1 << 6;
     public const ushort Revealed = 1 << 7;
 
+    /// <summary>
+    /// The room holding Pilgrim's Traverse's votive candelabra. Not in the SDK's RoomFlags enum — it is
+    /// BossMod's production read (<c>Minimap.cs</c>: <c>(ushort)Rooms[i] &amp; 0x100</c> draws the game's
+    /// own votive icon, 63988).
+    /// </summary>
+    public const ushort Votive = 1 << 8;
+
     /// <summary>One room cell, ready to draw. X grows east, Y grows south (index = Y*5+X).</summary>
     public sealed record Cell(
         int Index, int X, int Y, bool Exists,
         bool North, bool South, bool West, bool East,
-        bool IsReturn, bool IsPassage, bool IsHome, bool IsRevealed);
+        bool IsReturn, bool IsPassage, bool IsHome, bool IsRevealed, bool IsVotive = false);
 
     public static List<Cell> Build(IReadOnlyList<ushort> rooms)
     {
@@ -52,7 +59,8 @@ public static class FloorMap
                 IsReturn: (flags & Return) != 0,
                 IsPassage: (flags & Passage) != 0,
                 IsHome: (flags & Home) != 0,
-                IsRevealed: (flags & Revealed) != 0));
+                IsRevealed: (flags & Revealed) != 0,
+                IsVotive: (flags & Votive) != 0));
         }
 
         return cells;

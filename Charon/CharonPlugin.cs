@@ -28,7 +28,7 @@ namespace Charon;
 
 public sealed class CharonPlugin : IDalamudPlugin
 {
-    public const string PluginVersion = "0.1.50";
+    public const string PluginVersion = "0.1.51";
     private const string CommandName = "/charon";
 
     /// <summary>
@@ -221,6 +221,7 @@ public sealed class CharonPlugin : IDalamudPlugin
     /// <summary>Shared by the retainer board and the bell overlay, so a plan means one thing.</summary>
     private readonly RetainerPlanner _retainerPlanner;
     private readonly RetainerGearService _retainerGear;
+    private readonly RetainerEntruster _entruster;
 
     /// <summary>What each retainer holds, as last seen — the store Hephaestus asks for over IPC.</summary>
     private readonly RetainerContentsReader _retainerContents;
@@ -458,10 +459,14 @@ public sealed class CharonPlugin : IDalamudPlugin
 
         // Selection only: it opens the retainer a pass is waiting for at a bell the player is
         // ALREADY at, and never walks anyone to one.
+        // Built before the selector: the selector asks it which retainer an entrust round wants next.
+        _entruster = new RetainerEntruster(gameGui, dataManager, _condition, log, _retainers,
+            () => _retainerContents.Bags(), () => _jobLevels.LocalContentId, () => _retainerContents.OpenRetainer);
+
         _retainerSelector = new RetainerSelector(
             gameGui, dataManager,
             () => _config.RetainerAutoSelectEnabled,
-            () => _retainerContents.WantedRetainer,
+            () => _retainerContents.WantedRetainer ?? _entruster.WantedRetainer,
             () => _retainerContents.OpenRetainer,
             () => _retainerContents.RetainerAtBell,
             log);
@@ -563,7 +568,7 @@ public sealed class CharonPlugin : IDalamudPlugin
             () => _sprintStatus,
             () => $"{_nav.ProviderName}: {(_nav.IsAvailable ? "ready" : "not ready/installed")}"
                   + $" · path {(_nav.IsPathRunning ? "running" : "idle")}",
-            () => $"chests: {_chests.Status} · ATM: {_qte.Status} · saddlebag: {_saddlebag.Status} · commend: {_commend.Status} · turn-in: {_turnIn.Status} · talk: {_textAdvance.Status} · spawns: {_spawnScanner.Status} · quick kill: {_quickKill.Status} · chest search: {_chestSearch!.Status} · DD: {_ddReader.Status} · ESP: {(_ddEsp!.IsOpen ? _ddEsp.Status : "closed")} · spots: {_palaceSpots.Status} · pomanders: {_pomanders.Status} · retainer gear: {_retainerGear.Status} · dock: {(_config.EdgeDockEnabled ? _edgeDock!.Status : "off")}",
+            () => $"chests: {_chests.Status} · ATM: {_qte.Status} · saddlebag: {_saddlebag.Status} · commend: {_commend.Status} · turn-in: {_turnIn.Status} · talk: {_textAdvance.Status} · spawns: {_spawnScanner.Status} · quick kill: {_quickKill.Status} · chest search: {_chestSearch!.Status} · DD: {_ddReader.Status} · ESP: {(_ddEsp!.IsOpen ? _ddEsp.Status : "closed")} · spots: {_palaceSpots.Status} · pomanders: {_pomanders.Status} · retainer gear: {_retainerGear.Status} · entrust: {_entruster.Status} · dock: {(_config.EdgeDockEnabled ? _edgeDock!.Status : "off")}",
             () => _lootWatcher.Status,
             // Reading the line IS the refresh: the reader is lazy (nothing local polls it — it
             // exists for IPC), so without this nudge Debug would say "not read yet" forever.
@@ -631,7 +636,9 @@ public sealed class CharonPlugin : IDalamudPlugin
             _ventureRunner,
             () => _jobLevels.LocalContentId,
             () => _retainersWindow.IsOpen = true,
-            log);
+            log,
+            _entruster,
+            () => _ventureRunner.Armed || _retainerContents.Busy || _retainerGear.Busy);
         _windowSystem.AddWindow(_retainerBell);
 
         _saddlebagOverlay = new SaddlebagOverlay(gameGui, _saddlebag);
@@ -1255,6 +1262,7 @@ public sealed class CharonPlugin : IDalamudPlugin
         _retainerContents.Update(now);
         _retainerSelector.Update(now);
         _retainerGear.Update(now);
+        _entruster.Update(now);
         _chestContents.Update(now);
         _allowances.Update(now);
         _windowText.UpdateWatch(now, message => _chat.Print(message));
@@ -1314,7 +1322,9 @@ public sealed class CharonPlugin : IDalamudPlugin
 
         // The overlay lives exactly as long as the bell's list is up - it is a decision aid for the window
         // that is open, never a panel that lingers over the world.
-        _retainerBell.IsOpen = _config.RetainerOverlayEnabled && _ventureRunner.RetainerListOpen && !_config.EdgeDockEnabled;
+        // Kept up for an entrust round too: the list closes when each retainer opens, and Stop must stay reachable.
+        _retainerBell.IsOpen = _config.RetainerOverlayEnabled && (_ventureRunner.RetainerListOpen || _entruster.Armed)
+                               && !_config.EdgeDockEnabled;
 
         // Two-way and EDGE-triggered, the spawn-window pattern exactly: the first branch compares the
         // config against the state WE last pushed, not against IsOpen. Comparing against IsOpen makes the

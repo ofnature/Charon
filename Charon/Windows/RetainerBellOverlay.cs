@@ -30,6 +30,8 @@ public sealed unsafe class RetainerBellOverlay : Window
     private readonly Func<ulong> _contentId;
     private readonly Action _openBoard;
     private readonly IPluginLog _log;
+    private readonly RetainerEntruster _entruster;
+    private readonly Func<bool> _othersBusy;
     private DateTime _lastLoggedUtc = DateTime.MinValue;
 
     public RetainerBellOverlay(
@@ -39,9 +41,13 @@ public sealed unsafe class RetainerBellOverlay : Window
         VentureRunner runner,
         Func<ulong> contentId,
         Action openBoard,
-        IPluginLog log)
+        IPluginLog log,
+        RetainerEntruster entruster,
+        Func<bool> othersBusy)
         : base("##CharonRetainerBell")
     {
+        _entruster = entruster;
+        _othersBusy = othersBusy;
         _gameGui = gameGui;
         _retainers = retainers;
         _planner = planner;
@@ -124,7 +130,15 @@ public sealed unsafe class RetainerBellOverlay : Window
 
         var rows = _retainers.Read(DateTime.UtcNow);
 
-        if (_runner.Armed)
+        if (_entruster.Armed)
+        {
+            if (Buttons.Action("Stop##entrust", true, 90f, CharonTheme.AccentRose))
+                _entruster.Stop("stopped");
+
+            ImGui.SameLine();
+            ImGui.TextColored(CharonTheme.TextDim, _entruster.Status);
+        }
+        else if (_runner.Armed)
         {
             if (Buttons.Action("Stop", true, 90f, CharonTheme.AccentRose))
                 _runner.Stop("stopped");
@@ -143,6 +157,31 @@ public sealed unsafe class RetainerBellOverlay : Window
 
             ImGui.SameLine();
             ImGui.TextColored(CharonTheme.TextMuted, "each retainer in turn");
+
+            // The game's own Entrust Duplicates, for every retainer that holds something you are carrying.
+            var visits = _entruster.Preview();
+            var busy = _othersBusy();
+            if (Buttons.Action("Entrust duplicates to all", visits.Count > 0 && !busy, 180f))
+                _entruster.Start(DateTime.UtcNow);
+
+            if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
+            {
+                ImGui.SetTooltip(busy
+                    ? "Another retainer job is running — let it finish first."
+                    : visits.Count == 0
+                        ? "None of your retainers holds anything you are carrying."
+                        : "Opens each retainer below and presses the game's own Entrust Duplicates,\n"
+                          + "which only entrusts items she already holds a stack of:\n"
+                          + string.Join("\n", visits.Select(v => v.Matches < 0
+                              ? $"  {v.Name} — contents never read, checked when opened"
+                              : $"  {v.Name} — {v.Matches} matching item(s)")));
+            }
+
+            if (_entruster.Status != "idle")
+            {
+                ImGui.SameLine();
+                ImGui.TextColored(CharonTheme.TextMuted, _entruster.Status);
+            }
         }
 
         ImGui.SameLine();

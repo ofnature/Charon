@@ -172,12 +172,17 @@ public sealed class DeepDungeonMapWindow : Window
             if (cell.IsReturn)
                 drawList.AddText(marker, ImGui.GetColorU32(FloorMap.CairnActive(snapshot.ReturnProgress)
                     ? CharonTheme.StatusYellow : CharonTheme.TextDisabled), "R");
+
+            // The votive candelabra (Pilgrim's Traverse) — bottom-right, clear of the cairn markers above.
+            if (cell.IsVotive)
+                drawList.AddText(topLeft + new Vector2(CellSize - 11f, CellSize - 16f),
+                    ImGui.GetColorU32(CharonTheme.AccentSoft), "V");
         }
 
         ImGui.Dummy(new Vector2(FloorMap.GridSize * pitch, FloorMap.GridSize * pitch));
         ImGui.PushStyleColor(ImGuiCol.Text, CharonTheme.TextDisabled);
         ImGui.TextWrapped(
-            "P passage · R return (bright = open) · outline: the game's flag room · arrow: you · dots: chests (bottom) / party (top)");
+            "P passage · R return (bright = open) · V candelabra · outline: the game's flag room · arrow: you · dots: chests (bottom) / party (top)");
         ImGui.PopStyleColor();
     }
 

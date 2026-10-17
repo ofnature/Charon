@@ -89,4 +89,18 @@ public sealed class FloorMapTests
         Assert.Equal(expected, FloorMap.CairnText(progress));
         Assert.Equal(progress >= 11, FloorMap.CairnActive(progress));
     }
+
+    [Fact]
+    public void TheVotiveRoomIsRead_FromFlag0x100()
+    {
+        // BossMod's minimap draws the votive icon on (ushort)Rooms[i] & 0x100 — a bit the SDK's enum does not name.
+        var rooms = new ushort[25];
+        rooms[7] = FloorMap.Revealed | FloorMap.Votive;
+        rooms[8] = FloorMap.Revealed;
+
+        var cells = FloorMap.Build(rooms);
+
+        Assert.True(cells[7].IsVotive);
+        Assert.False(cells[8].IsVotive);
+    }
 }

@@ -266,6 +266,7 @@ public sealed class EspOverlayWindow : Window
             new(FloorKind.Waypoint, 2f, new Vector4(0.35f, 0.85f, 0.45f, 0.9f), "Passage"),
         _ when DeepDungeonIds.Returns.Contains(baseId) =>
             new(FloorKind.Waypoint, 2f, new Vector4(0.90f, 0.80f, 0.30f, 0.9f), "Return"),
+        DeepDungeonIds.VotiveCandelabra => new(FloorKind.Waypoint, 2f, new Vector4(0.98f, 0.92f, 0.70f, 0.9f), "Candelabra"),
         _ when DeepDungeonIds.Traps.ContainsKey(baseId) =>
             new(FloorKind.Trap, 1.7f, new Vector4(1f, 0.25f, 0.25f, 0.95f), DeepDungeonIds.Traps[baseId]),
         _ => new(FloorKind.None, 0f, default, ""),
