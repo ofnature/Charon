@@ -11,10 +11,11 @@ public enum DockTab
     Floor,
     Chest,
     Riders,
+    Route,
 }
 
 /// <summary>What is true right now that a tab could be about.</summary>
-public sealed record DockContext(bool AtBell, bool InDeepDungeon, bool ChestOpen, bool DrivingMultiSeat);
+public sealed record DockContext(bool AtBell, bool InDeepDungeon, bool ChestOpen, bool DrivingMultiSeat, bool InVariant = false);
 
 /// <summary>
 /// The edge dock's decisions. Pure — no Dalamud or ImGui types.
@@ -35,6 +36,7 @@ public static class DockTabs
         if (context.InDeepDungeon) tabs.Add(DockTab.Floor);
         if (context.ChestOpen) tabs.Add(DockTab.Chest);
         if (context.DrivingMultiSeat) tabs.Add(DockTab.Riders);
+        if (context.InVariant) tabs.Add(DockTab.Route);
         return tabs;
     }
 
@@ -44,6 +46,7 @@ public static class DockTabs
         DockTab.Floor => "Floor",
         DockTab.Chest => "Chest",
         DockTab.Riders => "Riders",
+        DockTab.Route => "Route",
         _ => tab.ToString(),
     };
 }

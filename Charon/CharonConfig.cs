@@ -250,19 +250,25 @@ public sealed class CharonConfig : IPluginConfiguration
     /// file are both per machine). The import button stays available — it is idempotent.</summary>
     public bool PalacePalImported { get; set; }
 
+    /// <summary>Open the variant route guide once on entering a variant dungeon (closing it sticks for the run).</summary>
+    public bool VariantGuideEnabled { get; set; } = true;
+
+    /// <summary>Label the guided variant route's objects and spots in the world.</summary>
+    public bool VariantMarkersEnabled { get; set; } = true;
+
     /// <summary>
     /// Learn unlearned collectibles in the bags automatically (out of combat, one per 1.5s).
     /// NEVER the sellable kinds — fashion accessories and chocobo barding stay a manual click,
     /// because an unlearned one can be worth millions and collecting consumes it. Off by default:
     /// consuming items unprompted is opt-in.
     /// </summary>
-    public bool AutoCollectEnabled { get; set; } = false;
-
-    /// <summary>
-    /// Use untradable consumables (the MGP card family) without being asked. Default OFF for the
-    /// same reason auto-collect is: consuming something unprompted is opt-in, even when the item
-    /// has no market value to lose.
-    /// </summary>
+    public bool AutoCollectEnabled { get; set; } = false;
+
+    /// <summary>
+    /// Use untradable consumables (the MGP card family) without being asked. Default OFF for the
+    /// same reason auto-collect is: consuming something unprompted is opt-in, even when the item
+    /// has no market value to lose.
+    /// </summary>
     public bool UseConsumablesEnabled { get; set; } = false;
 
     /// <summary>

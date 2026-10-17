@@ -28,7 +28,7 @@ namespace Charon;
 
 public sealed class CharonPlugin : IDalamudPlugin
 {
-    public const string PluginVersion = "0.1.51";
+    public const string PluginVersion = "0.1.52";
     private const string CommandName = "/charon";
 
     /// <summary>
@@ -94,6 +94,12 @@ public sealed class CharonPlugin : IDalamudPlugin
     private readonly PillionRidersWindow _pillionRidersWindow;
     private readonly DeepDungeonMapWindow _ddMapWindow;
     private readonly EspOverlayWindow _ddEsp;
+    private readonly VariantService _variant;
+    private readonly VariantGuideWindow _variantGuide;
+    private readonly VariantMarkerOverlay _variantMarkers;
+
+    /// <summary>The variant dungeon the guide last opened itself for (0 = none) — the edge it opens on.</summary>
+    private uint _variantGuideShownFor;
     private readonly EdgeDockWindow _edgeDock;
     private readonly Charon.Features.Dock.DockLayoutShare _dockLayout;
 
@@ -429,6 +435,8 @@ public sealed class CharonPlugin : IDalamudPlugin
         _pomanders = new PomanderTracker(chatGui, dataManager, log, _ddReader);
         _palaceSpots = new PalaceSpotService(pluginInterface, _objectTable, _clientState, chatGui, dataManager,
             log, _ddReader, _config, SaveConfig, _relay, () => _objectTable.LocalPlayer?.Name.TextValue ?? string.Empty);
+        _variant = new VariantService(_clientState, dataManager, log, _relay,
+            () => _objectTable.LocalPlayer?.Name.TextValue ?? string.Empty, PartyMemberNames);
         _weeklies = new WeekliesReader(log);
         _retainers = new RetainerReader(log);
         _consumables = new ConsumableUser(dataManager, _condition,
@@ -604,7 +612,9 @@ public sealed class CharonPlugin : IDalamudPlugin
             GetReportedFollowLeader,
             new MainWindow.FleetCommands(CommandSetFleetLeader, CommandFleetLeaveDuty),
             HandOffToHephaestus,
-            _palaceSpots);
+            _palaceSpots,
+            _variant,
+            () => _variantGuide!.IsOpen = true);
         _mainWindow.IsOpen = _config.MainWindowVisible;
         _windowSystem.AddWindow(_mainWindow);
 
@@ -678,6 +688,11 @@ public sealed class CharonPlugin : IDalamudPlugin
             () => _ddReader.GetSnapshot().ContentId);
         _windowSystem.AddWindow(_ddEsp);
 
+        _variantGuide = new VariantGuideWindow(_variant, name => _mainWindow.Display(name));
+        _windowSystem.AddWindow(_variantGuide);
+        _variantMarkers = new VariantMarkerOverlay(_objectTable, gameGui, _variant);
+        _windowSystem.AddWindow(_variantMarkers);
+
         // The edge dock: one tab per context window, each drawing that window's own body in its pop-out.
         // A tab also honours its window's own on/off setting, so switching a window off removes its tab.
         // The layout is shared with Daedalus's dock so the two stack on one edge instead of overlapping;
@@ -698,6 +713,9 @@ public sealed class CharonPlugin : IDalamudPlugin
             new EdgeDockWindow.Tab(Charon.Features.Dock.DockTab.Riders,
                 () => _config.PillionRidersWindowEnabled && ReadRawSeatOccupancy().Count > 0,
                 () => _pillionRidersWindow.Draw()),
+            new EdgeDockWindow.Tab(Charon.Features.Dock.DockTab.Route,
+                () => _config.VariantGuideEnabled && _variant.Current != null,
+                () => _variantGuide.Draw()),
         ], () => _config.EdgeDockRightSide, _dockLayout);
         _windowSystem.AddWindow(_edgeDock);
 
@@ -1159,6 +1177,28 @@ public sealed class CharonPlugin : IDalamudPlugin
     }
 
     /// <summary>
+    /// The variant route guide opens ONCE per entry into a variant dungeon (edge-triggered on the
+    /// territory, so closing it by hand sticks for the run — a window forced open every tick cannot be
+    /// shut); with the edge dock on it stays behind its Route tab instead. The markers simply follow the
+    /// territory: they are a no-input overlay with nothing to close.
+    /// </summary>
+    private void UpdateVariantWindows(bool docked)
+    {
+        var dungeon = _variant.Current;
+        var here = dungeon?.TerritoryId ?? 0;
+        if (here != _variantGuideShownFor)
+        {
+            _variantGuideShownFor = here;
+            if (here != 0)
+                _variant.Ask(); // the party's records, fresh, for the run about to start
+            if (here != 0 && _config.VariantGuideEnabled && !docked)
+                _variantGuide.IsOpen = true;
+        }
+
+        _variantMarkers.IsOpen = _config.VariantMarkersEnabled && dungeon != null;
+    }
+
+    /// <summary>
     /// The Doman donation window rides the basket, but NOT as a plain mirror of it. Prepare closes the
     /// basket on purpose (the game blocks inventory splits while it is open) and the split stack still has
     /// to be staged, so a running operation or a ready stack keeps the window up after the basket goes —
@@ -1310,6 +1350,8 @@ public sealed class CharonPlugin : IDalamudPlugin
         var docked = _config.EdgeDockEnabled;
         _ddMapWindow.IsOpen = _config.DeepDungeonMapEnabled && ddActive && !docked;
         _ddEsp.IsOpen = _config.DeepDungeonEspEnabled && ddActive;
+        UpdateVariantWindows(docked);
+        _variant.Update(now);
         _palaceSpots.Update(now);
         _pomanders.Update();
         // The riders window follows the mount: open while driving a multi-seat mount, gone on
@@ -2415,6 +2457,27 @@ public sealed class CharonPlugin : IDalamudPlugin
     }
 
     /// <summary>True when the named character is in our current party (pillion requires a group).</summary>
+    /// <summary>Party member names, empty when unreadable mid-transition.</summary>
+    private IReadOnlyList<string> PartyMemberNames()
+    {
+        var names = new List<string>();
+        try
+        {
+            foreach (var member in _partyList)
+            {
+                var name = member.Name.TextValue;
+                if (name.Length > 0)
+                    names.Add(name);
+            }
+        }
+        catch
+        {
+            names.Clear();
+        }
+
+        return names;
+    }
+
     private bool IsInMyParty(string characterName)
     {
         try
@@ -2582,6 +2645,8 @@ public sealed class CharonPlugin : IDalamudPlugin
             _fleetItems.OnRelayMessage(channel, json);
         else if (channel == RelayClient.SpotsChannel)
             _palaceSpots.OnRelayMessage(json);
+        else if (channel == RelayClient.VariantChannel)
+            _variant.OnRelayMessage(json, DateTime.UtcNow);
     }
 
     /// <summary>Fleet channel dispatch: leader designation, or a fleet-wide command.</summary>

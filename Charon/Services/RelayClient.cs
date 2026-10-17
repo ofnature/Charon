@@ -41,6 +41,9 @@ public sealed class RelayClient : IDisposable
     /// <summary>Deep-dungeon trap/hoard spots: live sightings and catch-up answers (SpotMessage JSON).</summary>
     public const string SpotsChannel = "charon.spots";
 
+    /// <summary>Variant-dungeon route records: each box's own, and asks for everyone else's (VariantMessage JSON).</summary>
+    public const string VariantChannel = "charon.variant";
+
     private readonly ICallGateSubscriber<string, string, object?> _publish;
     private readonly ICallGateSubscriber<string, string, object?> _message;
     private readonly IPluginLog _log;

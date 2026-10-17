@@ -58,6 +58,7 @@ public sealed class MainWindow : Window
         DomanDonate,
         Tweaks,
         DeepDungeon,
+        Variant,
         Debug,
     }
 
@@ -94,6 +95,8 @@ public sealed class MainWindow : Window
     /// <summary>Live state for the TWEAKS toggle: the timer it saw and whether a nudge landed.</summary>
     private readonly AfkGuard _afkGuard;
     private readonly PalaceSpotService _palaceSpots;
+    private readonly VariantService _variant;
+    private readonly Action _openVariantGuide;
 
     private string _retainerFarmInput = string.Empty;
     private readonly WhitelistService _whitelist;
@@ -224,7 +227,9 @@ public sealed class MainWindow : Window
         Func<string, string?> reportedFollowLeader,
         FleetCommands fleetCommands,
         Func<bool, string> handOffToHephaestus,
-        PalaceSpotService palaceSpots)
+        PalaceSpotService palaceSpots,
+        VariantService variant,
+        Action openVariantGuide)
         : base("Charon##CharonMain")
     {
         BgAlpha = CharonTheme.PanelAlpha;
@@ -274,6 +279,8 @@ public sealed class MainWindow : Window
         _gcDailies = gcDailies;
         _afkGuard = afkGuard;
         _palaceSpots = palaceSpots;
+        _variant = variant;
+        _openVariantGuide = openVariantGuide;
         _isFreeTrial = isFreeTrial;
         _lootWatcher = lootWatcher;
         _collection = collection;
@@ -521,6 +528,8 @@ public sealed class MainWindow : Window
         DrawCategoryHeader("Dungeon");
         if (SidebarTab.Draw("Deep Dungeon", FontAwesomeIcon.Map, _section == Section.DeepDungeon))
             _section = Section.DeepDungeon;
+        if (SidebarTab.Draw("Variant", FontAwesomeIcon.Route, _section == Section.Variant))
+            _section = Section.Variant;
 
         DrawCategoryHeader("System");
         if (SidebarTab.Draw("Debug", FontAwesomeIcon.Bug, _section == Section.Debug))
@@ -558,6 +567,7 @@ public sealed class MainWindow : Window
             case Section.DomanDonate: DrawDomanSection(); break;
             case Section.Tweaks: DrawTweaksSection(); break;
             case Section.DeepDungeon: DrawDeepDungeonSection(); break;
+            case Section.Variant: DrawVariantSection(); break;
             case Section.Debug: DrawDebugSection(); break;
         }
     }
@@ -3294,6 +3304,72 @@ public sealed class MainWindow : Window
     }
 
     /// <summary>
+    /// The variant dungeons: this character's record (the game's own), every route's steps, and the route
+    /// being guided — which the in-dungeon window and the world markers follow.
+    /// </summary>
+    private void DrawVariantSection()
+    {
+        DrawPageHeader("Variant", $"Every route through the four variant dungeons · {VariantView.Summary(_variant)}");
+
+        var guide = _config.VariantGuideEnabled;
+        if (ImGui.Checkbox("Route guide window in variant dungeons##variant", ref guide))
+        {
+            _config.VariantGuideEnabled = guide;
+            _save();
+        }
+        CharonTheme.HelpMarker("Opens once when you enter a variant dungeon, showing the guided route step by\n"
+                               + "step. Close it and it stays closed for that run.");
+        ImGui.SameLine();
+        if (ImGui.SmallButton("Open now##variant"))
+            _openVariantGuide();
+
+        var markers = _config.VariantMarkersEnabled;
+        if (ImGui.Checkbox("Label the route in the world##variant", ref markers))
+        {
+            _config.VariantMarkersEnabled = markers;
+            _save();
+        }
+        CharonTheme.HelpMarker("Only the guided route's things are labelled, so a lever says which one to pull.");
+        Styling.TextWrapped(VariantView.MarkersNote, CharonTheme.TextMuted);
+        ImGui.Spacing();
+
+        // Who needs what: the party when in one, or every toon whose record the relay has delivered.
+        var inParty = _variant.Group(forceFleet: false).IsParty;
+        var fleet = _variant.ShowWholeFleet || !inParty;
+        Styling.Text("Who needs what:", CharonTheme.TextSecondary);
+        ImGui.SameLine();
+        if (!inParty)
+            ImGui.BeginDisabled();
+        if (ImGui.RadioButton("Party##variantgroup", !fleet))
+            _variant.ShowWholeFleet = false;
+        if (!inParty)
+            ImGui.EndDisabled();
+        ImGui.SameLine();
+        if (ImGui.RadioButton("Whole fleet##variantgroup", fleet))
+            _variant.ShowWholeFleet = true;
+        ImGui.SameLine();
+        Styling.Text($"{_variant.FleetRecordCount} other toon(s) reported", CharonTheme.TextMuted);
+        CharonTheme.HelpMarker("Each box running Charon reports its own route record over the LAN relay\n"
+                               + "(only a toon's own client can read it). In a party, the suggested route\n"
+                               + "becomes the one that earns a record for the most of you.");
+        ImGui.Spacing();
+
+        foreach (var dungeon in Charon.Features.Variant.VariantRoutes.All)
+        {
+            var progress = _variant.Progress(dungeon);
+            var count = progress == null ? "" : $"  {progress.Done.Count}/{dungeon.Routes.Count}";
+            var flags = _variant.Current == dungeon ? ImGuiTreeNodeFlags.DefaultOpen : ImGuiTreeNodeFlags.None;
+            if (ImGui.CollapsingHeader($"{dungeon.Name}{count}##variant{dungeon.Series}", flags))
+            {
+                ImGui.Indent();
+                VariantView.DrawDungeon(_variant, dungeon, compact: false, Display);
+                ImGui.Unindent();
+                ImGui.Spacing();
+            }
+        }
+    }
+
+    /// <summary>
     /// Stay-logged-in: the toggle, the threshold, and — the part worth having on screen — the client's
     /// own idle timer, so "am I safe" is a number rather than a feeling.
     /// </summary>
@@ -3579,6 +3655,7 @@ public sealed class MainWindow : Window
         // Reading the line IS the refresh — the reader is lazy and nothing else polls it here.
         _weeklies.Read(DateTime.UtcNow);
         DrawStatusLine($"Weeklies: {_weeklies.Status}");
+        DrawStatusLine($"Variant: {_variant.Status}");
 
         // Read-only: this never opens a bell, so it is safe on a hand-played box.
         _retainers.Read(DateTime.UtcNow);
@@ -3620,7 +3697,7 @@ public sealed class MainWindow : Window
     }
 
     /// <summary>Display name honoring the scramble toggle.</summary>
-    private string Display(string characterName) =>
+    internal string Display(string characterName) =>
         _config.ScrambleNames && characterName.Length > 0 ? AliasFor(characterName) : characterName;
 
     /// <summary>

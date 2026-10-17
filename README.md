@@ -4,7 +4,7 @@
 
 # Charon
 
-**The ferryman for your fleet.** A Dalamud plugin for FFXIV, companion to [Daedalus](https://github.com/ofnature/Daedalus) — party assembly, auto pillion with smart seat scanning, whitelisted auto group invite, follow teleport, fleet follow, duty-pop and trade automation, a heal-watch babysitter for leveling alts, automatic gear upgrades, fleet-leader commands, collectible sweeping, FC chest management, gil-cap selling, Doman Enclave donations, a weekly-chores board, a power-levelling carry, deep dungeon trap and hoard maps shared across the fleet, and a mob spawn watchlist.
+**The ferryman for your fleet.** A Dalamud plugin for FFXIV, companion to [Daedalus](https://github.com/ofnature/Daedalus) — party assembly, auto pillion with smart seat scanning, whitelisted auto group invite, follow teleport, fleet follow, duty-pop and trade automation, a heal-watch babysitter for leveling alts, automatic gear upgrades, fleet-leader commands, collectible sweeping, FC chest management, gil-cap selling, Doman Enclave donations, a weekly-chores board, a power-levelling carry, deep dungeon trap and hoard maps shared across the fleet, a variant dungeon route guide that knows who in the party still needs what, and a mob spawn watchlist.
 
 Built for multibox setups: invite the fleet, group up, mount up, teleport out, follow you around, keep the bots alive, and manage the FC chest — without touching seven other keyboards.
 
@@ -244,6 +244,17 @@ Palace of the Dead, Heaven-on-High, Eureka Orthos and Pilgrim's Traverse support
 - **Coffers open themselves** — bronze, silver, gold and dug-up hoards — *except* the colour that can be a mimic on this floor set, which is left for you to decide. A silver coffer is also left alone below 77% HP, because those can be trap chests and the damage kills unattended toons.
 - Traps draw at any distance once revealed — but an unrevealed trap is server-side and exists in no plugin's world until a Pomander of Sight reveals it. That is what the likely-spot rings are for.
 - Boss fights stay the boss AI's job, exactly as with Fleet Follow — Charon adds the pieces it doesn't have.
+
+## Variant Dungeons
+
+Every route through the Sil'dihn Subterrane, Mount Rokkon, Aloalo Island and the Merchant's Tale, under DUNGEON → Variant:
+
+- **Your record, from the game** — which of the 49 records this character has, read from the game's own notebook data, so runs done before Charon count too. Record names come from the game in your client's language.
+- **Every route, step by step** — which way to go at the first fork, then the choices that decide the record: the puzzle answers, who to save or leave, what to interact with, and the exact phrases and emotes for the secret routes. Steps are the community's solutions (the FFXIV Console Games Wiki), rewritten short and checked against Splatoon's route layouts.
+- **A guide window in the dungeon** — opens once when you enter, showing the route you are running. With edge tabs on it sits behind a **Route** tab instead.
+- **The route labelled in the world** — only the guided route's things get a label, so a lever says *pull the RIGHT lever* rather than every route's instruction at once: levers, statues, the NPCs to save or leave, and (Aloalo Island and the Merchant's Tale) where to stand.
+- **Who needs what, across the fleet** — every box reports its record over the Daedalus LAN relay, so in a party the suggested route is **the one that earns a record for the most of you**, and the guide says who gets one from this run. The Variant page lists, per route, who still needs it, and per toon, the routes left on each path — for the party or the whole fleet. A party member whose record hasn't been heard from is shown as unknown, never guessed.
+- **Secret routes first** — each secret route is another route plus a few extra steps, so a failed attempt still earns that other route's record. When nobody has chosen, the suggestion tries the secret first.
 
 ## Spawn Tracker
 
