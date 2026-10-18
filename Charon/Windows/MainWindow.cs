@@ -98,6 +98,12 @@ public sealed class MainWindow : Window
     private readonly VariantService _variant;
     private readonly Action _openVariantGuide;
 
+    /// <summary>Minimise to the edge tab (true) or back to the window (false).</summary>
+    private readonly Action<bool> _setMinimized;
+
+    /// <summary>Drawing inside the edge tab's pop-out right now, not as the window.</summary>
+    private bool _inDock;
+
     private string _retainerFarmInput = string.Empty;
     private readonly WhitelistService _whitelist;
     private readonly IDaedalusRosterProvider _roster;
@@ -229,7 +235,8 @@ public sealed class MainWindow : Window
         Func<bool, string> handOffToHephaestus,
         PalaceSpotService palaceSpots,
         VariantService variant,
-        Action openVariantGuide)
+        Action openVariantGuide,
+        Action<bool> setMinimized)
         : base("Charon##CharonMain")
     {
         BgAlpha = CharonTheme.PanelAlpha;
@@ -281,6 +288,7 @@ public sealed class MainWindow : Window
         _palaceSpots = palaceSpots;
         _variant = variant;
         _openVariantGuide = openVariantGuide;
+        _setMinimized = setMinimized;
         _isFreeTrial = isFreeTrial;
         _lootWatcher = lootWatcher;
         _collection = collection;
@@ -315,6 +323,20 @@ public sealed class MainWindow : Window
 
         using (ImRaii.Child("##CharonContent", new Vector2(-1, -1), false))
             DrawContent();
+    }
+
+    /// <summary>The whole window, drawn inside the edge tab's pop-out while minimised.</summary>
+    public void DrawDocked()
+    {
+        _inDock = true;
+        try
+        {
+            Draw();
+        }
+        finally
+        {
+            _inDock = false;
+        }
     }
 
     // --- Identity strip ---
@@ -357,11 +379,19 @@ public sealed class MainWindow : Window
 
         var button = 22f * scale;
         var buttonX = end.X - 15f * scale - button;
+        var dockX = buttonX - button - 6f * scale;
         ImGui.SetWindowFontScale(0.78f);
         var detailSize = ImGui.CalcTextSize(detail);
-        dl.AddText(new Vector2(buttonX - 8f * scale - detailSize.X, origin.Y + 36f * scale),
+        dl.AddText(new Vector2(dockX - 8f * scale - detailSize.X, origin.Y + 36f * scale),
             ImGui.GetColorU32(CharonTheme.TextDim), detail);
         ImGui.SetWindowFontScale(1f);
+
+        ImGui.SetCursorScreenPos(new Vector2(dockX, origin.Y + 35f * scale));
+        if (_inDock
+                ? Buttons.Icon(FontAwesomeIcon.WindowMaximize, "##charon_dock", button, "Restore the window")
+                : Buttons.Icon(FontAwesomeIcon.WindowMinimize, "##charon_dock", button,
+                    $"Minimise to a tab on the {(_config.EdgeDockRightSide ? "right" : "left")} edge - point at it to pop this out, click it to restore"))
+            _setMinimized(!_inDock);
 
         ImGui.SetCursorScreenPos(new Vector2(buttonX, origin.Y + 35f * scale));
         if (Buttons.Icon(FontAwesomeIcon.Scroll, "##charon_statuslog", button, "Status log (System → Debug)"))

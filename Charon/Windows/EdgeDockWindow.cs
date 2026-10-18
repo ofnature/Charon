@@ -23,7 +23,8 @@ namespace Charon.Windows;
 public sealed unsafe class EdgeDockWindow : Window
 {
     /// <param name="FixedSize">A panel whose content stretches (a table with stretch columns) needs a real size; null lets it auto-size.</param>
-    public sealed record Tab(DockTab Id, Func<bool> Applies, Action DrawPanel, Vector2? FixedSize = null);
+    /// <param name="OnClick">What a click does instead of pinning — the minimised main window's tab restores the window.</param>
+    public sealed record Tab(DockTab Id, Func<bool> Applies, Action DrawPanel, Vector2? FixedSize = null, Action? OnClick = null);
 
     private const float TabWidth = 34f;
     private const float TabPadding = 14f;
@@ -100,7 +101,12 @@ public sealed unsafe class EdgeDockWindow : Window
             var min = ImGui.GetCursorScreenPos();
 
             if (ImGui.InvisibleButton($"##dock{tab.Id}", size))
-                _hover.Click(tab.Id);
+            {
+                if (tab.OnClick != null)
+                    tab.OnClick();
+                else
+                    _hover.Click(tab.Id);
+            }
             if (ImGui.IsItemHovered())
                 hovered = tab.Id;
 

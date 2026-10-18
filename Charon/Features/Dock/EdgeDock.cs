@@ -12,6 +12,9 @@ public enum DockTab
     Chest,
     Riders,
     Route,
+
+    /// <summary>The main window, minimised to the edge (Odysseus's minimise-to-tab).</summary>
+    Main,
 }
 
 /// <summary>What is true right now that a tab could be about.</summary>
@@ -47,6 +50,7 @@ public static class DockTabs
         DockTab.Chest => "Chest",
         DockTab.Riders => "Riders",
         DockTab.Route => "Route",
+        DockTab.Main => "Charon",
         _ => tab.ToString(),
     };
 }

@@ -544,6 +544,9 @@ public sealed class CharonConfig : IPluginConfiguration
 
     // Window state
     public bool MainWindowVisible { get; set; } = true;
+
+    /// <summary>The main window is minimised to a tab on the screen edge (it pops out while pointed at).</summary>
+    public bool MainWindowMinimized { get; set; }
     public bool DebugSectionOpen { get; set; } = false;
 
     /// <summary>Cosmetic: replace character names with session-stable aliases in the window (for screenshots).</summary>

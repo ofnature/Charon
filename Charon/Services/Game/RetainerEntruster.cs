@@ -42,7 +42,6 @@ public sealed unsafe class RetainerEntruster
     private static readonly InventoryType[] PlayerBags =
     [
         InventoryType.Inventory1, InventoryType.Inventory2, InventoryType.Inventory3, InventoryType.Inventory4,
-        InventoryType.Crystals,
     ];
 
     private readonly IGameGui _gameGui;
@@ -267,8 +266,9 @@ public sealed unsafe class RetainerEntruster
         var prefix = $"{_contentId()}:";
         var snapshots = _snapshots()
             .Where(b => b.Key.StartsWith(prefix, StringComparison.Ordinal))
-            .ToDictionary(b => b.Name, b => (IReadOnlyCollection<uint>)b.Stacks.Select(s => s.ItemId).ToList());
-        return EntrustRound.Plan(names, snapshots, BagItems());
+            .ToDictionary(b => b.Name, b => (IReadOnlyCollection<HeldStack>)b.Stacks
+                .Select(s => new HeldStack(EntrustRound.Key(s.ItemId, s.Hq), s.Qty)).ToList());
+        return EntrustRound.Plan(names, snapshots, BagItems(), StackSize);
     }
 
     private static HashSet<uint> BagItems()
@@ -288,11 +288,65 @@ public sealed unsafe class RetainerEntruster
             {
                 var slot = container->GetInventorySlot(i);
                 if (slot != null && slot->ItemId != 0)
-                    items.Add(slot->ItemId);
+                    items.Add(EntrustRound.Key(slot->ItemId, slot->Flags.HasFlag(InventoryItem.ItemFlags.HighQuality)));
             }
         }
 
         return items;
+    }
+
+    /// <summary>One visit for the tooltip: who, and which items match — named, so a wrong match shows.</summary>
+    public string Describe(EntrustVisit visit)
+    {
+        if (visit.Matches < 0)
+            return $"{visit.Name} — contents never read, checked when opened";
+
+        const int shown = 4;
+        var names = visit.Items.Take(shown).Select(ItemName).ToList();
+        if (visit.Items.Count > shown)
+            names.Add($"+{visit.Items.Count - shown} more");
+        return $"{visit.Name} — {string.Join(", ", names)}";
+    }
+
+    private readonly Dictionary<uint, int> _stackSizes = new();
+
+    /// <summary>The item's stack size from the sheet (cached); 0 when unreadable, which rules nothing out.</summary>
+    private int StackSize(uint itemId)
+    {
+        if (_stackSizes.TryGetValue(itemId, out var size))
+            return size;
+
+        size = 0;
+        try
+        {
+            var sheet = _data.GetExcelSheet<Lumina.Excel.Sheets.Item>();
+            if (sheet != null && sheet.TryGetRow(itemId, out var row))
+                size = (int)row.StackSize;
+        }
+        catch (Exception)
+        {
+            // unknown stays 0
+        }
+
+        _stackSizes[itemId] = size;
+        return size;
+    }
+
+    private string ItemName(uint key)
+    {
+        var name = $"item {EntrustRound.ItemIdOf(key)}";
+        try
+        {
+            var sheet = _data.GetExcelSheet<Lumina.Excel.Sheets.Item>();
+            if (sheet != null && sheet.TryGetRow(EntrustRound.ItemIdOf(key), out var row))
+                name = row.Name.ExtractText();
+        }
+        catch (Exception)
+        {
+            // fall back to the id
+        }
+
+        return EntrustRound.IsHq(key) ? $"{name} (HQ)" : name;
     }
 
     private AtkUnitBase* Ready(string name)

@@ -28,7 +28,7 @@ namespace Charon;
 
 public sealed class CharonPlugin : IDalamudPlugin
 {
-    public const string PluginVersion = "0.1.52";
+    public const string PluginVersion = "0.1.53";
     private const string CommandName = "/charon";
 
     /// <summary>
@@ -576,7 +576,7 @@ public sealed class CharonPlugin : IDalamudPlugin
             () => _sprintStatus,
             () => $"{_nav.ProviderName}: {(_nav.IsAvailable ? "ready" : "not ready/installed")}"
                   + $" · path {(_nav.IsPathRunning ? "running" : "idle")}",
-            () => $"chests: {_chests.Status} · ATM: {_qte.Status} · saddlebag: {_saddlebag.Status} · commend: {_commend.Status} · turn-in: {_turnIn.Status} · talk: {_textAdvance.Status} · spawns: {_spawnScanner.Status} · quick kill: {_quickKill.Status} · chest search: {_chestSearch!.Status} · DD: {_ddReader.Status} · ESP: {(_ddEsp!.IsOpen ? _ddEsp.Status : "closed")} · spots: {_palaceSpots.Status} · pomanders: {_pomanders.Status} · retainer gear: {_retainerGear.Status} · entrust: {_entruster.Status} · dock: {(_config.EdgeDockEnabled ? _edgeDock!.Status : "off")}",
+            () => $"chests: {_chests.Status} · ATM: {_qte.Status} · saddlebag: {_saddlebag.Status} · commend: {_commend.Status} · turn-in: {_turnIn.Status} · talk: {_textAdvance.Status} · spawns: {_spawnScanner.Status} · quick kill: {_quickKill.Status} · chest search: {_chestSearch!.Status} · DD: {_ddReader.Status} · ESP: {(_ddEsp!.IsOpen ? _ddEsp.Status : "closed")} · spots: {_palaceSpots.Status} · pomanders: {_pomanders.Status} · retainer gear: {_retainerGear.Status} · entrust: {_entruster.Status} · dock: {(_config.EdgeDockEnabled || _config.MainWindowMinimized ? _edgeDock!.Status : "off")}",
             () => _lootWatcher.Status,
             // Reading the line IS the refresh: the reader is lazy (nothing local polls it — it
             // exists for IPC), so without this nudge Debug would say "not read yet" forever.
@@ -614,8 +614,9 @@ public sealed class CharonPlugin : IDalamudPlugin
             HandOffToHephaestus,
             _palaceSpots,
             _variant,
-            () => _variantGuide!.IsOpen = true);
-        _mainWindow.IsOpen = _config.MainWindowVisible;
+            () => _variantGuide!.IsOpen = true,
+            SetMainMinimized);
+        _mainWindow.IsOpen = _config.MainWindowVisible && !_config.MainWindowMinimized;
         _windowSystem.AddWindow(_mainWindow);
 
         _fcChestWindow = new FcChestWindow(_config, SaveConfig, _fcChest);
@@ -700,21 +701,27 @@ public sealed class CharonPlugin : IDalamudPlugin
         _dockLayout = new Charon.Features.Dock.DockLayoutShare(_pluginInterface, "Charon", order: 20);
         _edgeDock = new EdgeDockWindow(
         [
+            // The main window minimised to the edge - there whether or not the context tabs are on.
+            new EdgeDockWindow.Tab(Charon.Features.Dock.DockTab.Main,
+                () => _config.MainWindowMinimized && _clientState.IsLoggedIn,
+                () => _mainWindow.DrawDocked(),
+                new System.Numerics.Vector2(980f, 640f), // its sidebar and content are stretch children
+                () => SetMainMinimized(false)),
             new EdgeDockWindow.Tab(Charon.Features.Dock.DockTab.Retainers,
-                () => _config.RetainerOverlayEnabled && _condition[ConditionFlag.OccupiedSummoningBell],
+                () => _config.EdgeDockEnabled && _config.RetainerOverlayEnabled && _condition[ConditionFlag.OccupiedSummoningBell],
                 () => _retainerBell.Draw()),
             new EdgeDockWindow.Tab(Charon.Features.Dock.DockTab.Floor,
-                () => _config.DeepDungeonMapEnabled && _ddReader.GetSnapshot().Active,
+                () => _config.EdgeDockEnabled && _config.DeepDungeonMapEnabled && _ddReader.GetSnapshot().Active,
                 () => _ddMapWindow.Draw()),
             new EdgeDockWindow.Tab(Charon.Features.Dock.DockTab.Chest,
-                () => _config.FcChestWindowAutoOpen && _fcChestAddonOpen,
+                () => _config.EdgeDockEnabled && _config.FcChestWindowAutoOpen && _fcChestAddonOpen,
                 () => _fcChestWindow.Draw(),
                 new System.Numerics.Vector2(440f, 480f)), // its table stretches, so it needs a real width
             new EdgeDockWindow.Tab(Charon.Features.Dock.DockTab.Riders,
-                () => _config.PillionRidersWindowEnabled && ReadRawSeatOccupancy().Count > 0,
+                () => _config.EdgeDockEnabled && _config.PillionRidersWindowEnabled && ReadRawSeatOccupancy().Count > 0,
                 () => _pillionRidersWindow.Draw()),
             new EdgeDockWindow.Tab(Charon.Features.Dock.DockTab.Route,
-                () => _config.VariantGuideEnabled && _variant.Current != null,
+                () => _config.EdgeDockEnabled && _config.VariantGuideEnabled && _variant.Current != null,
                 () => _variantGuide.Draw()),
         ], () => _config.EdgeDockRightSide, _dockLayout);
         _windowSystem.AddWindow(_edgeDock);
@@ -1133,12 +1140,38 @@ public sealed class CharonPlugin : IDalamudPlugin
             return;
         }
 
+        if (_config.MainWindowMinimized)
+        {
+            SetMainMinimized(false); // /charon brings a minimised window back
+            return;
+        }
+
         _mainWindow.IsOpen = !_mainWindow.IsOpen;
         _config.MainWindowVisible = _mainWindow.IsOpen;
         SaveConfig();
     }
 
-    private void OpenMainWindow() => _mainWindow.IsOpen = true;
+    private void OpenMainWindow()
+    {
+        if (_config.MainWindowMinimized)
+            SetMainMinimized(false);
+        else
+            _mainWindow.IsOpen = true;
+    }
+
+    /// <summary>
+    /// Minimise the main window to its edge tab, or restore it - Odysseus's minimise-to-tab. Minimised, the
+    /// window is a "Charon" tab on the edge (stacked with Daedalus's and Odysseus's via the shared layout)
+    /// that pops the whole window out while pointed at; clicking the tab, /charon or the installer's open
+    /// button restores it. It works whether or not the context tabs are switched on.
+    /// </summary>
+    private void SetMainMinimized(bool minimized)
+    {
+        _config.MainWindowMinimized = minimized;
+        _config.MainWindowVisible = !minimized;
+        _mainWindow.IsOpen = !minimized;
+        SaveConfig();
+    }
 
     /// <summary>What the client has loaded right now, so a window's addon name never has to be guessed.</summary>
     private void PrintAddons()
@@ -1359,7 +1392,7 @@ public sealed class CharonPlugin : IDalamudPlugin
         _pillionRidersWindow.IsOpen = _config.PillionRidersWindowEnabled && ReadRawSeatOccupancy().Count > 0 && !docked;
         if (docked)
             _fcChestWindow.IsOpen = false;
-        _edgeDock.IsOpen = docked && _edgeDock.AnyTab();
+        _edgeDock.IsOpen = (docked || _config.MainWindowMinimized) && _edgeDock.AnyTab();
         UpdateDomanWindow();
 
         // The overlay lives exactly as long as the bell's list is up - it is a decision aid for the window

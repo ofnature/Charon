@@ -172,9 +172,7 @@ public sealed unsafe class RetainerBellOverlay : Window
                         ? "None of your retainers holds anything you are carrying."
                         : "Opens each retainer below and presses the game's own Entrust Duplicates,\n"
                           + "which only entrusts items she already holds a stack of:\n"
-                          + string.Join("\n", visits.Select(v => v.Matches < 0
-                              ? $"  {v.Name} — contents never read, checked when opened"
-                              : $"  {v.Name} — {v.Matches} matching item(s)")));
+                          + string.Join("\n", visits.Select(v => "  " + _entruster.Describe(v))));
             }
 
             if (_entruster.Status != "idle")
