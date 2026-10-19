@@ -28,7 +28,7 @@ namespace Charon;
 
 public sealed class CharonPlugin : IDalamudPlugin
 {
-    public const string PluginVersion = "0.1.53";
+    public const string PluginVersion = "0.1.54";
     private const string CommandName = "/charon";
 
     /// <summary>

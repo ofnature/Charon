@@ -121,7 +121,24 @@ public sealed unsafe class VentureRunner
     /// <summary>Whether the bell's retainer list is on screen right now.</summary>
     public bool RetainerListOpen => IsVisible("RetainerList");
 
-    public string Status { get; private set; } = "off";
+    /// <summary>
+    /// What the runner is doing. Every CHANGE is logged at Info (deduped by value, so a wait does not flood
+    /// the log): a Release build hides Debug lines, and a stall on a box nobody here can reach is diagnosed
+    /// from /xllog or not at all (the roommate's eight retainers, 2026-10-19).
+    /// </summary>
+    public string Status
+    {
+        get => _status;
+        private set
+        {
+            if (value == _status)
+                return;
+            _status = value;
+            _log.Info("Ventures: {0}", value);
+        }
+    }
+
+    private string _status = "off";
 
     public void Arm()
     {
@@ -209,6 +226,19 @@ public sealed unsafe class VentureRunner
             if (screen != VentureScreen.None || listOpen)
                 _lastSessionUtc = nowUtc;
 
+            // A retainer GREETS you when she is opened and says goodbye when dismissed — a Talk box in front
+            // of her menu, or of the list, until it is clicked. The runner only ever looked for the venture
+            // windows, so on a client with nothing else advancing dialogue it sat behind the greeting:
+            // the roommate's box (2026-10-19), three retainers ready, Collect pressed, nothing happened.
+            // The bell selector learned this long ago (GBR clears Talk at five points in its cycle); this
+            // is the same click, scoped to an armed run inside a live bell session so quest dialogue is
+            // never touched. A greeting on screen counts as the session still being alive.
+            if (!VentureStep.SessionEnded(nowUtc - _lastSessionUtc, SessionGrace) && TryAdvanceTalk(nowUtc))
+            {
+                _lastSessionUtc = nowUtc;
+                return;
+            }
+
             // A round with nobody in hand, back at the list: ask who is next.
             if (_round != null && TargetName == null && screen == VentureScreen.None && listOpen
                 && !NextInRound(nowUtc))
@@ -254,9 +284,11 @@ public sealed unsafe class VentureRunner
                     return;
                 }
 
-                Status = listOpen
-                    ? "waiting — pick a retainer"
-                    : "waiting for the retainer window";
+                // A run aimed at one retainer names her: "pick a retainer" read as if the player had to,
+                // which is exactly what a targeted run exists to avoid.
+                Status = TargetName != null
+                    ? listOpen ? $"waiting to open {TargetName}" : $"waiting for {TargetName}'s window"
+                    : listOpen ? "waiting — pick a retainer" : "waiting for the retainer window";
                 return;
             }
 
@@ -302,7 +334,8 @@ public sealed unsafe class VentureRunner
                 }
 
                 Status = decision.Reason;
-                _log.Debug("Ventures: {0}", decision.Reason);
+                _log.Info("Ventures: clicked {0} on {1} (entry {2}; menu: {3})", decision.Action, screen,
+                    decision.EntryIndex, entries.Count == 0 ? "-" : string.Join(" | ", entries));
             }
             else
             {
@@ -388,6 +421,7 @@ public sealed unsafe class VentureRunner
         _selectAttempts++;
         _lastActionUtc = nowUtc;
         Status = $"opening {TargetName}";
+        _log.Info("Ventures: opening {0} at list row {1} (attempt {2})", TargetName!, row, _selectAttempts);
 
         var values = stackalloc AtkValue[2];
         values[0].SetInt(2);
@@ -485,6 +519,23 @@ public sealed unsafe class VentureRunner
         }
 
         return VentureScreen.None;
+    }
+
+    /// <summary>Clicks through a visible Talk box (a retainer's greeting or farewell). True when one was there.</summary>
+    private bool TryAdvanceTalk(DateTime nowUtc)
+    {
+        var talk = (AtkUnitBase*)_gameGui.GetAddonByName("Talk").Address;
+        if (talk == null || !talk->IsVisible)
+            return false;
+
+        if (nowUtc - _lastActionUtc < ActionThrottle)
+            return true; // it is there; just not our turn to click yet
+
+        _lastActionUtc = nowUtc;
+        AtkClickHelper.AdvanceTalk(talk);
+        Status = TargetName != null ? $"clearing {TargetName}'s greeting" : "clearing the retainer's greeting";
+        _log.Debug("Ventures: advanced a Talk box");
+        return true;
     }
 
     private bool IsVisible(string addon)

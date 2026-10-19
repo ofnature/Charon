@@ -2826,6 +2826,18 @@ public sealed class MainWindow : Window
                 _retainerSelector.Reset();
                 _save();
             }
+
+            var ipcExecute = _config.RetainerIpcExecuteEnabled;
+            if (bell.Toggle("Let other plugins move retainer items",
+                    "Lets another plugin (Hephaestus) ask Charon to fetch items out of a retainer or run a "
+                    + "refresh. Reading what your retainers hold is always allowed; this is only the moving. "
+                    + "Charon still never walks you to a bell — the fetch waits until you are at one. "
+                    + "Stop always works. Off by default.",
+                    ref ipcExecute))
+            {
+                _config.RetainerIpcExecuteEnabled = ipcExecute;
+                _save();
+            }
         }
 
         // Debug builds only: TracePanel is [Conditional("DEBUG")], so a Release build drops this call
