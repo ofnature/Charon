@@ -3,7 +3,7 @@
   <PropertyGroup>
     <AssemblyName>Charon</AssemblyName>
     <RootNamespace>Charon</RootNamespace>
-    <Version>0.1.55</Version>
+    <Version>0.1.56</Version>
     <DalamudLibPath>$(AppData)\XIVLauncher\addon\Hooks\dev\</DalamudLibPath>
   </PropertyGroup>
 

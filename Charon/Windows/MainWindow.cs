@@ -3258,11 +3258,11 @@ public sealed class MainWindow : Window
             _config.CutsceneSkipEnabled = skipCutscenes;
             _save();
         }
-        CharonTheme.HelpMarker("During a cutscene, presses Escape and answers Yes to the game's own\n"
-                               + "\"Skip cutscene?\" prompt — for unattended toons. Never presses Escape\n"
-                               + "over dialogue or a choice, and gives up on a cutscene that offers no\n"
-                               + "skip after a few tries. Off by default: on a box someone is playing,\n"
-                               + "it skips their story.");
+        CharonTheme.HelpMarker("During a cutscene the game lets you skip, raises the game's own\n"
+                               + "\"Skip cutscene?\" prompt and answers Yes — for unattended toons. No key\n"
+                               + "is pressed, so it works whatever your Esc is bound to. Never over\n"
+                               + "another choice. Off by default: on a box someone is playing, it skips\n"
+                               + "their story. Odysseus can switch it either way while it runs.");
 
         ImGui.Spacing();
         DrawAfkGuardBlock();

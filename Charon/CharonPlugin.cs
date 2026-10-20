@@ -28,7 +28,7 @@ namespace Charon;
 
 public sealed class CharonPlugin : IDalamudPlugin
 {
-    public const string PluginVersion = "0.1.55";
+    public const string PluginVersion = "0.1.56";
     private const string CommandName = "/charon";
 
     /// <summary>
@@ -324,6 +324,7 @@ public sealed class CharonPlugin : IDalamudPlugin
     public CharonPlugin(
         IDalamudPluginInterface pluginInterface,
         ISigScanner sigScanner,
+        IGameInteropProvider gameInterop,
         ICommandManager commandManager,
         IFramework framework,
         IObjectTable objectTable,
@@ -460,7 +461,8 @@ public sealed class CharonPlugin : IDalamudPlugin
             () => _condition[ConditionFlag.InCombat],
             () => _daedalusIpc.GetLanPartyMembers().Select(t => t.EntityId).ToList(), log);
         _textAdvance = new TextAdvancer(gameGui, () => _config.TextAdvanceEnabled, log);
-        _cutsceneSkipper = new CutsceneSkipper(gameGui, _condition, dataManager, log, () => _config.CutsceneSkipEnabled);
+        _cutsceneSkipper = new CutsceneSkipper(gameGui, _condition, dataManager, log, gameInterop, sigScanner,
+            () => _config.CutsceneSkipEnabled);
         _textAdvanceIpc = new TextAdvanceIpc(pluginInterface, _textAdvance, _cutsceneSkipper);
 
         // The other store: the free company chest, same snapshot honesty, so a crafter can ask where an item is
@@ -789,6 +791,7 @@ public sealed class CharonPlugin : IDalamudPlugin
         _fcChest.Dispose();
         _chestSearch.Dispose();
         _textAdvanceIpc.Dispose();
+        _cutsceneSkipper.Dispose();
         _levelingIpc.Dispose();
         _gearIpc.Dispose();
         _retainerContentsIpc.Dispose();

@@ -5,11 +5,8 @@ namespace Charon.Tests.Features.Tweaks;
 
 public sealed class CutsceneSkipPolicyTests
 {
-    private static readonly TimeSpan Long = TimeSpan.FromSeconds(10);
-
-    private static CutsceneSkipDecision Decide(bool enabled = true, bool inCutscene = true, bool talkUp = false,
-        int yes = -1, bool otherList = false, TimeSpan? since = null, int presses = 0) =>
-        CutsceneSkipPolicy.Decide(enabled, inCutscene, talkUp, yes, otherList, since ?? Long, presses);
+    private static CutsceneSkipDecision Decide(bool enabled = true, bool inCutscene = true, int yes = -1, bool otherList = false) =>
+        CutsceneSkipPolicy.Decide(enabled, inCutscene, yes, otherList);
 
     [Fact]
     public void Off_OrNotInACutscene_DoesNothing()
@@ -19,9 +16,9 @@ public sealed class CutsceneSkipPolicyTests
     }
 
     [Fact]
-    public void InACutscene_PressesEscape()
+    public void InACutscene_AsksToSkip()
     {
-        Assert.Equal(CutsceneSkipAction.PressEscape, Decide().Action);
+        Assert.Equal(CutsceneSkipAction.Trigger, Decide().Action);
     }
 
     [Fact]
@@ -33,18 +30,9 @@ public sealed class CutsceneSkipPolicyTests
     }
 
     [Fact]
-    public void Escape_IsNeverPressedOverDialogue_OrAChoice()
+    public void ItNeverAsksOverAnotherChoice()
     {
-        Assert.Equal(CutsceneSkipAction.None, Decide(talkUp: true).Action);
         Assert.Equal(CutsceneSkipAction.None, Decide(otherList: true).Action);
-    }
-
-    [Fact]
-    public void Escape_IsPaced_AndGivenUpOnAfterTheCap()
-    {
-        Assert.Equal(CutsceneSkipAction.None, Decide(since: TimeSpan.FromSeconds(1)).Action);
-        Assert.Equal(CutsceneSkipAction.None, Decide(presses: CutsceneSkipPolicy.MaxPresses).Action);
-        Assert.Equal(CutsceneSkipAction.PressEscape, Decide(presses: CutsceneSkipPolicy.MaxPresses - 1).Action);
     }
 
     [Fact]
@@ -58,6 +46,15 @@ public sealed class CutsceneSkipPolicyTests
         Assert.False(CutsceneSkipPolicy.Effective(toggle: true, leaseSkip: false, live, now));  // roleplay: watch them
         Assert.True(CutsceneSkipPolicy.Effective(toggle: true, leaseSkip: false, lapsed, now)); // caller gone: toggle again
         Assert.False(CutsceneSkipPolicy.Effective(toggle: false, leaseSkip: true, lapsed, now));
+    }
+
+    [Fact]
+    public void ThePromptIsKnownByItsTitle_OrByBeingATwoEntryListWithYes()
+    {
+        Assert.True(CutsceneSkipPolicy.LooksLikeSkipPrompt(titleMatches: true, entryCount: 2, yesIndex: 0));
+        Assert.True(CutsceneSkipPolicy.LooksLikeSkipPrompt(titleMatches: false, entryCount: 2, yesIndex: 0));
+        Assert.False(CutsceneSkipPolicy.LooksLikeSkipPrompt(titleMatches: false, entryCount: 3, yesIndex: 0));
+        Assert.False(CutsceneSkipPolicy.LooksLikeSkipPrompt(titleMatches: false, entryCount: 2, yesIndex: -1));
     }
 
     [Fact]
