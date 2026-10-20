@@ -28,7 +28,7 @@ namespace Charon;
 
 public sealed class CharonPlugin : IDalamudPlugin
 {
-    public const string PluginVersion = "0.1.54";
+    public const string PluginVersion = "0.1.55";
     private const string CommandName = "/charon";
 
     /// <summary>
@@ -116,6 +116,7 @@ public sealed class CharonPlugin : IDalamudPlugin
     private readonly VentureRunner _ventureRunner;
     private bool _ventureWasArmed;
     private readonly TextAdvancer _textAdvance;
+    private readonly CutsceneSkipper _cutsceneSkipper;
     private readonly TextAdvanceIpc _textAdvanceIpc;
     private readonly FollowManager _followManager;
     private readonly BossAiClient _bossAi;
@@ -459,7 +460,8 @@ public sealed class CharonPlugin : IDalamudPlugin
             () => _condition[ConditionFlag.InCombat],
             () => _daedalusIpc.GetLanPartyMembers().Select(t => t.EntityId).ToList(), log);
         _textAdvance = new TextAdvancer(gameGui, () => _config.TextAdvanceEnabled, log);
-        _textAdvanceIpc = new TextAdvanceIpc(pluginInterface, _textAdvance);
+        _cutsceneSkipper = new CutsceneSkipper(gameGui, _condition, dataManager, log, () => _config.CutsceneSkipEnabled);
+        _textAdvanceIpc = new TextAdvanceIpc(pluginInterface, _textAdvance, _cutsceneSkipper);
 
         // The other store: the free company chest, same snapshot honesty, so a crafter can ask where an item is
         // without either window being open.
@@ -576,7 +578,7 @@ public sealed class CharonPlugin : IDalamudPlugin
             () => _sprintStatus,
             () => $"{_nav.ProviderName}: {(_nav.IsAvailable ? "ready" : "not ready/installed")}"
                   + $" · path {(_nav.IsPathRunning ? "running" : "idle")}",
-            () => $"chests: {_chests.Status} · ATM: {_qte.Status} · saddlebag: {_saddlebag.Status} · commend: {_commend.Status} · turn-in: {_turnIn.Status} · talk: {_textAdvance.Status} · spawns: {_spawnScanner.Status} · quick kill: {_quickKill.Status} · chest search: {_chestSearch!.Status} · DD: {_ddReader.Status} · ESP: {(_ddEsp!.IsOpen ? _ddEsp.Status : "closed")} · spots: {_palaceSpots.Status} · pomanders: {_pomanders.Status} · retainer gear: {_retainerGear.Status} · entrust: {_entruster.Status} · dock: {(_config.EdgeDockEnabled || _config.MainWindowMinimized ? _edgeDock!.Status : "off")}",
+            () => $"chests: {_chests.Status} · ATM: {_qte.Status} · saddlebag: {_saddlebag.Status} · commend: {_commend.Status} · turn-in: {_turnIn.Status} · talk: {_textAdvance.Status} · cutscene: {_cutsceneSkipper!.Status} · spawns: {_spawnScanner.Status} · quick kill: {_quickKill.Status} · chest search: {_chestSearch!.Status} · DD: {_ddReader.Status} · ESP: {(_ddEsp!.IsOpen ? _ddEsp.Status : "closed")} · spots: {_palaceSpots.Status} · pomanders: {_pomanders.Status} · retainer gear: {_retainerGear.Status} · entrust: {_entruster.Status} · dock: {(_config.EdgeDockEnabled || _config.MainWindowMinimized ? _edgeDock!.Status : "off")}",
             () => _lootWatcher.Status,
             // Reading the line IS the refresh: the reader is lazy (nothing local polls it — it
             // exists for IPC), so without this nudge Debug would say "not read yet" forever.
@@ -696,8 +698,9 @@ public sealed class CharonPlugin : IDalamudPlugin
 
         // The edge dock: one tab per context window, each drawing that window's own body in its pop-out.
         // A tab also honours its window's own on/off setting, so switching a window off removes its tab.
-        // The layout is shared with Daedalus's dock so the two stack on one edge instead of overlapping;
-        // Charon sits below (order 20, Daedalus 10).
+        // Each tab has its own edge and spot along it; dragging a tab stores the new ones. The layout is shared
+        // with Daedalus's tabs so none cover each other; tabs wanting the same spot put Daedalus's first
+        // (order 10, Charon 20).
         _dockLayout = new Charon.Features.Dock.DockLayoutShare(_pluginInterface, "Charon", order: 20);
         _edgeDock = new EdgeDockWindow(
         [
@@ -723,7 +726,14 @@ public sealed class CharonPlugin : IDalamudPlugin
             new EdgeDockWindow.Tab(Charon.Features.Dock.DockTab.Route,
                 () => _config.EdgeDockEnabled && _config.VariantGuideEnabled && _variant.Current != null,
                 () => _variantGuide.Draw()),
-        ], () => _config.EdgeDockRightSide, _dockLayout);
+        ],
+        tab => _config.DockPlacementFor(tab),
+        (tab, edge, along) =>
+        {
+            _config.EdgeDockTabs[tab.ToString()] = new Charon.Features.Dock.DockPlacement { Edge = edge, Along = along };
+            SaveConfig();
+        },
+        _dockLayout);
         _windowSystem.AddWindow(_edgeDock);
 
         _commandManager.AddHandler(CommandName, new CommandInfo(OnCommand)
@@ -1344,6 +1354,7 @@ public sealed class CharonPlugin : IDalamudPlugin
         _commend.Update();
         _turnIn.Update(now);
         _textAdvance.Update(now);
+        _cutsceneSkipper.Update(now);
         _quickKill.Update(now);
         _spawnScanner.Update(now);
         _bossAi.Update(now);

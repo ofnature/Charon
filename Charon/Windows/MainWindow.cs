@@ -390,7 +390,7 @@ public sealed class MainWindow : Window
         if (_inDock
                 ? Buttons.Icon(FontAwesomeIcon.WindowMaximize, "##charon_dock", button, "Restore the window")
                 : Buttons.Icon(FontAwesomeIcon.WindowMinimize, "##charon_dock", button,
-                    $"Minimise to a tab on the {(_config.EdgeDockRightSide ? "right" : "left")} edge - point at it to pop this out, click it to restore"))
+                    $"Minimise to a tab on the {_config.DockPlacementFor(Charon.Features.Dock.DockTab.Main).Edge.ToString().ToLowerInvariant()} edge - point at it to pop this out, click it to restore"))
             _setMinimized(!_inDock);
 
         ImGui.SetCursorScreenPos(new Vector2(buttonX, origin.Y + 35f * scale));
@@ -1751,6 +1751,17 @@ public sealed class MainWindow : Window
         CharonTheme.HelpMarker("Automatically open a small FC Chest window next to the game's chest,\n"
                                + "so the entrust/withdraw tools are right there.");
 
+        var chestIpc = _config.ChestIpcExecuteEnabled;
+        if (ImGui.Checkbox("Let other plugins withdraw from the FC chest", ref chestIpc))
+        {
+            _config.ChestIpcExecuteEnabled = chestIpc;
+            _save();
+        }
+        CharonTheme.HelpMarker("Lets another plugin (Hephaestus) ask Charon to withdraw items from the\n"
+                               + "free company chest while you have it open. Reading what the chest holds\n"
+                               + "is always allowed; this is only the moving. Separate from the retainer\n"
+                               + "switch on purpose: the chest belongs to the whole free company. Off by default.");
+
         ImGui.Spacing();
         FcChestView.DrawBody(_config, _save, _fcChest);
     }
@@ -3108,18 +3119,29 @@ public sealed class MainWindow : Window
         CharonTheme.HelpMarker("Tabs on the edge of the screen that only appear when they apply:\n"
                                + "Retainers at a summoning bell, Floor in a deep dungeon, Chest at the company\n"
                                + "chest, Riders while you drive a multi-seat mount.\n\n"
-                               + "Point at a tab and its panel pops out beside it; click a tab to pin the panel open.\n\n"
+                               + "Point at a tab and its panel pops out beside it; click a tab to pin the panel open.\n"
+                               + "Drag a tab to put it anywhere on any edge, top and bottom included.\n\n"
                                + "While this is on, those four windows stop opening by themselves — their tabs\n"
                                + "are how you reach them. A window you have switched off has no tab.");
         if (dock)
         {
             ImGui.Indent();
             var rightSide = _config.EdgeDockRightSide;
-            if (ImGui.Checkbox("On the right edge##dock", ref rightSide))
+            if (ImGui.Checkbox("New tabs on the right edge##dock", ref rightSide))
             {
                 _config.EdgeDockRightSide = rightSide;
                 _save();
             }
+            CharonTheme.HelpMarker("Where a tab sits until you drag it somewhere: the middle of the right edge\n"
+                                   + "instead of the left. A tab you have dragged keeps its own spot.");
+
+            if (ImGui.Button("Reset tab positions##dock"))
+            {
+                _config.EdgeDockTabs.Clear();
+                _save();
+            }
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip("Put every tab back in the middle of the edge above.");
             ImGui.Unindent();
         }
 
@@ -3229,6 +3251,18 @@ public sealed class MainWindow : Window
                                + "default — on a box a human is playing this eats the story. Odysseus\n"
                                + "can also switch it on over IPC with a self-expiring lease while it\n"
                                + "runs quests, regardless of this toggle.");
+
+        var skipCutscenes = _config.CutsceneSkipEnabled;
+        if (ImGui.Checkbox("Skip cutscenes##qol", ref skipCutscenes))
+        {
+            _config.CutsceneSkipEnabled = skipCutscenes;
+            _save();
+        }
+        CharonTheme.HelpMarker("During a cutscene, presses Escape and answers Yes to the game's own\n"
+                               + "\"Skip cutscene?\" prompt — for unattended toons. Never presses Escape\n"
+                               + "over dialogue or a choice, and gives up on a cutscene that offers no\n"
+                               + "skip after a few tries. Off by default: on a box someone is playing,\n"
+                               + "it skips their story.");
 
         ImGui.Spacing();
         DrawAfkGuardBlock();

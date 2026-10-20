@@ -168,4 +168,83 @@ public sealed class EdgeDockTests
             Assert.Equal(expected.Y, placed.Y, 3);
         }
     }
+
+    // --- Dragging, and the four edges ---
+
+    private static readonly Vector2 WorkPos = Vector2.Zero;
+    private static readonly Vector2 WorkSize = new(1920f, 1080f);
+
+    [Theory]
+    [InlineData(20f, 540f, DockEdge.Left)]
+    [InlineData(1900f, 540f, DockEdge.Right)]
+    [InlineData(960f, 15f, DockEdge.Top)]
+    [InlineData(960f, 1070f, DockEdge.Bottom)]
+    [InlineData(300f, 900f, DockEdge.Bottom)] // 180 from the bottom beats 300 from the left
+    public void ADroppedTab_LandsOnTheNearestEdge(float x, float y, DockEdge expected)
+        => Assert.Equal(expected, DockMath.NearestEdge(new Vector2(x, y), WorkPos, WorkSize));
+
+    [Fact]
+    public void TheDropSpot_IsMeasuredAlongTheEdge()
+    {
+        var point = new Vector2(480f, 270f);
+        Assert.Equal(0.25f, DockMath.AlongFraction(DockEdge.Right, point, WorkPos, WorkSize), 3);
+        Assert.Equal(0.25f, DockMath.AlongFraction(DockEdge.Bottom, point, WorkPos, WorkSize), 3);
+        Assert.Equal(0f, DockMath.AlongFraction(DockEdge.Left, new Vector2(0f, -50f), WorkPos, WorkSize));
+    }
+
+    [Fact]
+    public void ATab_HugsItsEdge()
+    {
+        Assert.Equal((new Vector2(0f, 300f), new Vector2(34f, 90f)), DockMath.TabRect(DockEdge.Left, 300f, 90f, 34f, WorkPos, WorkSize));
+        Assert.Equal((new Vector2(1886f, 300f), new Vector2(34f, 90f)), DockMath.TabRect(DockEdge.Right, 300f, 90f, 34f, WorkPos, WorkSize));
+        Assert.Equal((new Vector2(300f, 0f), new Vector2(90f, 34f)), DockMath.TabRect(DockEdge.Top, 300f, 90f, 34f, WorkPos, WorkSize));
+        Assert.Equal((new Vector2(300f, 1046f), new Vector2(90f, 34f)), DockMath.TabRect(DockEdge.Bottom, 300f, 90f, 34f, WorkPos, WorkSize));
+    }
+
+    [Fact]
+    public void ThePanel_OpensOnTheScreenSideOfTheTab()
+    {
+        var panel = new Vector2(300f, 200f);
+        Assert.Equal((new Vector2(40f, 400f), Vector2.Zero),
+            DockMath.PanelPlacement(DockEdge.Left, new Vector2(0f, 400f), new Vector2(34f, 90f), panel, WorkPos, WorkSize, 6f));
+        Assert.Equal((new Vector2(1880f, 400f), new Vector2(1f, 0f)),
+            DockMath.PanelPlacement(DockEdge.Right, new Vector2(1886f, 400f), new Vector2(34f, 90f), panel, WorkPos, WorkSize, 6f));
+        Assert.Equal((new Vector2(800f, 40f), Vector2.Zero),
+            DockMath.PanelPlacement(DockEdge.Top, new Vector2(800f, 0f), new Vector2(90f, 34f), panel, WorkPos, WorkSize, 6f));
+        Assert.Equal((new Vector2(800f, 1040f), new Vector2(0f, 1f)),
+            DockMath.PanelPlacement(DockEdge.Bottom, new Vector2(800f, 1046f), new Vector2(90f, 34f), panel, WorkPos, WorkSize, 6f));
+    }
+
+    [Fact]
+    public void ABigPanel_NearTheEndOfItsEdge_SlidesBackOnScreen()
+    {
+        // The minimised main window's 980x640 panel, from a tab near the right end of the top edge.
+        var pos = DockMath.PanelPlacement(DockEdge.Top, new Vector2(1800f, 0f), new Vector2(90f, 34f),
+            new Vector2(980f, 640f), WorkPos, WorkSize, 6f).Pos;
+        Assert.Equal(1920f - 980f - 4f, pos.X);
+    }
+
+    // --- Where a tab sits ---
+
+    [Fact]
+    public void AnUnmovedTab_SitsInTheMiddleOfTheDefaultEdge()
+    {
+        var config = new CharonConfig { EdgeDockRightSide = true };
+        var place = config.DockPlacementFor(DockTab.Floor);
+        Assert.Equal(DockEdge.Right, place.Edge);
+        Assert.Equal(0.5f, place.Along);
+    }
+
+    [Fact]
+    public void ADraggedTab_KeepsItsOwnSpot_WhateverTheDefault()
+    {
+        var config = new CharonConfig();
+        config.EdgeDockTabs[nameof(DockTab.Floor)] = new DockPlacement { Edge = DockEdge.Top, Along = 0.2f };
+        config.EdgeDockRightSide = true;
+
+        var place = config.DockPlacementFor(DockTab.Floor);
+        Assert.Equal(DockEdge.Top, place.Edge);
+        Assert.Equal(0.2f, place.Along);
+        Assert.Equal(DockEdge.Right, config.DockPlacementFor(DockTab.Chest).Edge);
+    }
 }

@@ -87,8 +87,23 @@ public sealed class CharonConfig : IPluginConfiguration
     /// </summary>
     public bool EdgeDockEnabled { get; set; }
 
-    /// <summary>Pin the edge dock to the right edge of the screen instead of the left.</summary>
+    /// <summary>
+    /// Where a tab goes until it is dragged somewhere: the middle of the right edge instead of the left. A tab
+    /// that has been dragged keeps its own spot (<see cref="EdgeDockTabs"/>).
+    /// </summary>
     public bool EdgeDockRightSide { get; set; }
+
+    /// <summary>Where each tab has been dragged to, by tab name. A tab not in here sits at the default spot.</summary>
+    public Dictionary<string, Charon.Features.Dock.DockPlacement> EdgeDockTabs { get; set; } = new();
+
+    /// <summary>Where a tab sits: where it was dragged, or the middle of the default edge.</summary>
+    public Charon.Features.Dock.DockPlacement DockPlacementFor(Charon.Features.Dock.DockTab tab)
+        => EdgeDockTabs.TryGetValue(tab.ToString(), out var placed)
+            ? placed
+            : new Charon.Features.Dock.DockPlacement
+            {
+                Edge = EdgeDockRightSide ? Charon.Features.Dock.DockEdge.Right : Charon.Features.Dock.DockEdge.Left,
+            };
 
     // Movement
     /// <summary>
@@ -544,6 +559,9 @@ public sealed class CharonConfig : IPluginConfiguration
 
     // Window state
     public bool MainWindowVisible { get; set; } = true;
+
+    /// <summary>Skip cutscenes (Escape, then Yes on the game's prompt). Off: on a played box it skips the story.</summary>
+    public bool CutsceneSkipEnabled { get; set; }
 
     /// <summary>The main window is minimised to a tab on the screen edge (it pops out while pointed at).</summary>
     public bool MainWindowMinimized { get; set; }

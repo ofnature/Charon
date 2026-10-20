@@ -17,6 +17,24 @@ public enum DockTab
     Main,
 }
 
+/// <summary>
+/// The screen edge a tab is pinned to. The values are the shared layout's edge numbers, the same in Daedalus.
+/// </summary>
+public enum DockEdge
+{
+    Left = 0,
+    Right = 1,
+    Top = 2,
+    Bottom = 3,
+}
+
+/// <summary>Where one tab sits: its edge, and its centre as a fraction along that edge (0.5 = the middle).</summary>
+public sealed class DockPlacement
+{
+    public DockEdge Edge { get; set; }
+    public float Along { get; set; } = 0.5f;
+}
+
 /// <summary>What is true right now that a tab could be about.</summary>
 public sealed record DockContext(bool AtBell, bool InDeepDungeon, bool ChestOpen, bool DrivingMultiSeat, bool InVariant = false);
 
@@ -144,5 +162,72 @@ public static class DockMath
     {
         var d = point - drawnAt;
         return pivot + new Vector2(d.Y, -d.X);
+    }
+
+    /// <summary>Top and bottom tabs run along the edge; left and right ones stand up the edge.</summary>
+    public static bool IsHorizontal(DockEdge edge) => edge is DockEdge.Top or DockEdge.Bottom;
+
+    /// <summary>The screen edge closest to <paramref name="point"/> — where a dragged tab lands when let go.</summary>
+    public static DockEdge NearestEdge(Vector2 point, Vector2 workPos, Vector2 workSize)
+    {
+        var best = DockEdge.Left;
+        var bestDistance = point.X - workPos.X;
+
+        void Consider(DockEdge edge, float distance)
+        {
+            if (distance < bestDistance)
+            {
+                best = edge;
+                bestDistance = distance;
+            }
+        }
+
+        Consider(DockEdge.Right, workPos.X + workSize.X - point.X);
+        Consider(DockEdge.Top, point.Y - workPos.Y);
+        Consider(DockEdge.Bottom, workPos.Y + workSize.Y - point.Y);
+        return best;
+    }
+
+    /// <summary>How far along <paramref name="edge"/> a point is, as a fraction of the edge (0..1).</summary>
+    public static float AlongFraction(DockEdge edge, Vector2 point, Vector2 workPos, Vector2 workSize)
+    {
+        var fraction = IsHorizontal(edge)
+            ? (point.X - workPos.X) / MathF.Max(1f, workSize.X)
+            : (point.Y - workPos.Y) / MathF.Max(1f, workSize.Y);
+        return Math.Clamp(fraction, 0f, 1f);
+    }
+
+    /// <summary>
+    /// A tab's rectangle: <paramref name="start"/> along the edge (its top, or its left on the top and bottom
+    /// edges), <paramref name="length"/> long, <paramref name="thickness"/> out from the edge.
+    /// </summary>
+    public static (Vector2 Min, Vector2 Size) TabRect(
+        DockEdge edge, float start, float length, float thickness, Vector2 workPos, Vector2 workSize) => edge switch
+    {
+        DockEdge.Right => (new Vector2(workPos.X + workSize.X - thickness, start), new Vector2(thickness, length)),
+        DockEdge.Top => (new Vector2(start, workPos.Y), new Vector2(length, thickness)),
+        DockEdge.Bottom => (new Vector2(start, workPos.Y + workSize.Y - thickness), new Vector2(length, thickness)),
+        _ => (new Vector2(workPos.X, start), new Vector2(thickness, length)),
+    };
+
+    /// <summary>
+    /// Where an open tab's panel goes: beside the tab, on the screen side of it, level with it — slid back
+    /// along the edge if <paramref name="panelSize"/> would run it off the screen.
+    /// </summary>
+    /// <returns>The window position and the pivot that position refers to (as for SetNextWindowPos).</returns>
+    public static (Vector2 Pos, Vector2 Pivot) PanelPlacement(
+        DockEdge edge, Vector2 tabMin, Vector2 tabSize, Vector2 panelSize, Vector2 workPos, Vector2 workSize, float gap)
+    {
+        const float margin = 4f;
+        var y = MathF.Max(workPos.Y + margin, MathF.Min(tabMin.Y, workPos.Y + workSize.Y - panelSize.Y - margin));
+        var x = MathF.Max(workPos.X + margin, MathF.Min(tabMin.X, workPos.X + workSize.X - panelSize.X - margin));
+
+        return edge switch
+        {
+            DockEdge.Right => (new Vector2(tabMin.X - gap, y), new Vector2(1f, 0f)),
+            DockEdge.Top => (new Vector2(x, tabMin.Y + tabSize.Y + gap), Vector2.Zero),
+            DockEdge.Bottom => (new Vector2(x, tabMin.Y - gap), new Vector2(0f, 1f)),
+            _ => (new Vector2(tabMin.X + tabSize.X + gap, y), Vector2.Zero),
+        };
     }
 }

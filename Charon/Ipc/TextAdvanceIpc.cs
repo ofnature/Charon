@@ -16,14 +16,34 @@ namespace Charon.Ipc;
 /// The lease is deliberately a TTL, not a switch: a caller that crashes mid-quest simply stops
 /// refreshing and the lease expires, so dialogue can never stay hijacked on an undriven box.
 /// Callers refresh well inside their window (e.g. Force(60) every 30s) and Force(0) on stop.
+///
+/// Cutscene skipping, for Odysseus's roleplay choice (watch the story, or skip it):
+///
+/// | Charon.Cutscene.Set        | Func&lt;bool, int, bool&gt; | (skip, seconds): skip=true skips, false WATCHES, for N seconds (capped 300); 0 releases |
+/// | Charon.Cutscene.IsSkipping | Func&lt;bool&gt;            | effective state (a live lease, else the box's own toggle)                               |
+///
+/// Unlike Force, this lease works BOTH ways — "watch" holds cutscenes on a box whose toggle skips them —
+/// and it is a TTL for the same reason: a caller that dies stops refreshing and the box's own toggle
+/// decides again.
 /// </summary>
 public sealed class TextAdvanceIpc : IDisposable
 {
     private readonly ICallGateProvider<int, bool> _force;
     private readonly ICallGateProvider<bool> _isEnabled;
+    private readonly ICallGateProvider<bool, int, bool> _cutsceneSet;
+    private readonly ICallGateProvider<bool> _cutsceneIsSkipping;
 
-    public TextAdvanceIpc(IDalamudPluginInterface pluginInterface, TextAdvancer advancer)
+    public TextAdvanceIpc(IDalamudPluginInterface pluginInterface, TextAdvancer advancer, CutsceneSkipper cutscenes)
     {
+        _cutsceneSet = pluginInterface.GetIpcProvider<bool, int, bool>("Charon.Cutscene.Set");
+        _cutsceneIsSkipping = pluginInterface.GetIpcProvider<bool>("Charon.Cutscene.IsSkipping");
+        _cutsceneSet.RegisterFunc((skip, seconds) =>
+        {
+            cutscenes.Lease(skip, seconds);
+            return true;
+        });
+        _cutsceneIsSkipping.RegisterFunc(() => cutscenes.EffectivelySkipping);
+
         _force = pluginInterface.GetIpcProvider<int, bool>("Charon.TextAdvance.Force");
         _isEnabled = pluginInterface.GetIpcProvider<bool>("Charon.TextAdvance.IsEnabled");
 
@@ -39,5 +59,7 @@ public sealed class TextAdvanceIpc : IDisposable
     {
         _force.UnregisterFunc();
         _isEnabled.UnregisterFunc();
+        _cutsceneSet.UnregisterFunc();
+        _cutsceneIsSkipping.UnregisterFunc();
     }
 }
