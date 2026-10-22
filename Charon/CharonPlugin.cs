@@ -28,7 +28,7 @@ namespace Charon;
 
 public sealed class CharonPlugin : IDalamudPlugin
 {
-    public const string PluginVersion = "0.1.56";
+    public const string PluginVersion = "0.1.57";
     private const string CommandName = "/charon";
 
     /// <summary>
@@ -94,6 +94,7 @@ public sealed class CharonPlugin : IDalamudPlugin
     private readonly PillionRidersWindow _pillionRidersWindow;
     private readonly DeepDungeonMapWindow _ddMapWindow;
     private readonly EspOverlayWindow _ddEsp;
+    private readonly CursorFinderOverlay _cursorFinder;
     private readonly VariantService _variant;
     private readonly VariantGuideWindow _variantGuide;
     private readonly VariantMarkerOverlay _variantMarkers;
@@ -580,7 +581,7 @@ public sealed class CharonPlugin : IDalamudPlugin
             () => _sprintStatus,
             () => $"{_nav.ProviderName}: {(_nav.IsAvailable ? "ready" : "not ready/installed")}"
                   + $" · path {(_nav.IsPathRunning ? "running" : "idle")}",
-            () => $"chests: {_chests.Status} · ATM: {_qte.Status} · saddlebag: {_saddlebag.Status} · commend: {_commend.Status} · turn-in: {_turnIn.Status} · talk: {_textAdvance.Status} · cutscene: {_cutsceneSkipper!.Status} · spawns: {_spawnScanner.Status} · quick kill: {_quickKill.Status} · chest search: {_chestSearch!.Status} · DD: {_ddReader.Status} · ESP: {(_ddEsp!.IsOpen ? _ddEsp.Status : "closed")} · spots: {_palaceSpots.Status} · pomanders: {_pomanders.Status} · retainer gear: {_retainerGear.Status} · entrust: {_entruster.Status} · dock: {(_config.EdgeDockEnabled || _config.MainWindowMinimized ? _edgeDock!.Status : "off")}",
+            () => $"chests: {_chests.Status} · ATM: {_qte.Status} · saddlebag: {_saddlebag.Status} · commend: {_commend.Status} · turn-in: {_turnIn.Status} · talk: {_textAdvance.Status} · cutscene: {_cutsceneSkipper!.Status} · cursor: {(_config.CursorFinderEnabled || _config.CursorDotEnabled ? _cursorFinder!.Status : "off")} · spawns: {_spawnScanner.Status} · quick kill: {_quickKill.Status} · chest search: {_chestSearch!.Status} · DD: {_ddReader.Status} · ESP: {(_ddEsp!.IsOpen ? _ddEsp.Status : "closed")} · spots: {_palaceSpots.Status} · pomanders: {_pomanders.Status} · retainer gear: {_retainerGear.Status} · entrust: {_entruster.Status} · dock: {(_config.EdgeDockEnabled || _config.MainWindowMinimized ? _edgeDock!.Status : "off")}",
             () => _lootWatcher.Status,
             // Reading the line IS the refresh: the reader is lazy (nothing local polls it — it
             // exists for IPC), so without this nudge Debug would say "not read yet" forever.
@@ -692,6 +693,12 @@ public sealed class CharonPlugin : IDalamudPlugin
                 _config.DeepDungeonEspLikelyTraps, _config.DeepDungeonEspLikelyHoards),
             () => _ddReader.GetSnapshot().ContentId);
         _windowSystem.AddWindow(_ddEsp);
+
+        _cursorFinder = new CursorFinderOverlay(
+            () => !_config.CursorFinderCombatOnly || _condition[ConditionFlag.InCombat],
+            () => _config.CursorFinderEnabled, () => _config.CursorDotEnabled, () => _config.CursorFinderColor,
+            () => _config.CursorDotSize, () => _config.CursorDotOpacity);
+        _windowSystem.AddWindow(_cursorFinder);
 
         _variantGuide = new VariantGuideWindow(_variant, name => _mainWindow.Display(name));
         _windowSystem.AddWindow(_variantGuide);
@@ -1397,6 +1404,7 @@ public sealed class CharonPlugin : IDalamudPlugin
         var docked = _config.EdgeDockEnabled;
         _ddMapWindow.IsOpen = _config.DeepDungeonMapEnabled && ddActive && !docked;
         _ddEsp.IsOpen = _config.DeepDungeonEspEnabled && ddActive;
+        _cursorFinder.IsOpen = _config.CursorFinderEnabled || _config.CursorDotEnabled;
         UpdateVariantWindows(docked);
         _variant.Update(now);
         _palaceSpots.Update(now);

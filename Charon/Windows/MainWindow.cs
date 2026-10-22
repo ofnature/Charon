@@ -3264,6 +3264,66 @@ public sealed class MainWindow : Window
                                + "another choice. Off by default: on a box someone is playing, it skips\n"
                                + "their story. Odysseus can switch it either way while it runs.");
 
+        var cursorFinder = _config.CursorFinderEnabled;
+        if (ImGui.Checkbox("Shake the mouse to find it##qol", ref cursorFinder))
+        {
+            _config.CursorFinderEnabled = cursorFinder;
+            _save();
+        }
+        CharonTheme.HelpMarker("Lost the cursor? Shake the mouse: a circle and lines across the whole\n"
+                               + "screen point at it, fading as you stop. Ordinary movement never sets it\n"
+                               + "off. From Where's Mouse? by Paissa Heavy Industries (MIT).");
+
+        var cursorDot = _config.CursorDotEnabled;
+        if (ImGui.Checkbox("Dot on the cursor##qol", ref cursorDot))
+        {
+            _config.CursorDotEnabled = cursorDot;
+            _save();
+        }
+        CharonTheme.HelpMarker("A dot that always sits on the mouse cursor, so it is easy to track\n"
+                               + "over busy scenery.");
+        if (cursorDot)
+        {
+            ImGui.SameLine();
+            ImGui.SetNextItemWidth(140f);
+            var dotSize = _config.CursorDotSize;
+            if (ImGui.SliderFloat("Size##cursordot", ref dotSize, 1f, 40f, "%.0f px"))
+            {
+                _config.CursorDotSize = dotSize;
+                _save();
+            }
+
+            ImGui.SameLine();
+            ImGui.SetNextItemWidth(140f);
+            var dotOpacity = _config.CursorDotOpacity * 100f;
+            if (ImGui.SliderFloat("Opacity##cursordot", ref dotOpacity, 5f, 100f, "%.0f%%"))
+            {
+                _config.CursorDotOpacity = dotOpacity / 100f;
+                _save();
+            }
+        }
+
+        if (cursorFinder || cursorDot)
+        {
+            ImGui.Indent();
+            var tint = _config.CursorFinderColor;
+            if (ImGui.ColorEdit4("Colour##cursorfinder", ref tint, ImGuiColorEditFlags.NoInputs | ImGuiColorEditFlags.AlphaBar))
+            {
+                _config.CursorFinderColor = tint;
+                _save();
+            }
+
+            ImGui.SameLine();
+            var combatOnly = _config.CursorFinderCombatOnly;
+            if (ImGui.Checkbox("Only in combat##cursorfinder", ref combatOnly))
+            {
+                _config.CursorFinderCombatOnly = combatOnly;
+                _save();
+            }
+
+            ImGui.Unindent();
+        }
+
         ImGui.Spacing();
         DrawAfkGuardBlock();
     }

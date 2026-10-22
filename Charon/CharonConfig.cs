@@ -563,6 +563,24 @@ public sealed class CharonConfig : IPluginConfiguration
     /// <summary>Skip cutscenes (Escape, then Yes on the game's prompt). Off: on a played box it skips the story.</summary>
     public bool CutsceneSkipEnabled { get; set; }
 
+    /// <summary>Shake the mouse to show where the cursor is (Where's Mouse?'s indicator). Off by default.</summary>
+    public bool CursorFinderEnabled { get; set; }
+
+    /// <summary>Only show the cursor finder in combat.</summary>
+    public bool CursorFinderCombatOnly { get; set; }
+
+    /// <summary>A dot that always sits on the cursor (Where's Mouse?'s persistent circle). Off by default.</summary>
+    public bool CursorDotEnabled { get; set; }
+
+    /// <summary>Radius of the cursor dot in pixels (the ring sits a little outside it).</summary>
+    public float CursorDotSize { get; set; } = 6f;
+
+    /// <summary>The dot's own opacity (0-1), on top of the colour's — so the dot can be see-through while the shake indicator stays bold.</summary>
+    public float CursorDotOpacity { get; set; } = 0.5f;
+
+    /// <summary>Colour of the cursor dot and the shake indicator (RGBA). White, the original's default.</summary>
+    public System.Numerics.Vector4 CursorFinderColor { get; set; } = new(1f, 1f, 1f, 1f);
+
     /// <summary>The main window is minimised to a tab on the screen edge (it pops out while pointed at).</summary>
     public bool MainWindowMinimized { get; set; }
     public bool DebugSectionOpen { get; set; } = false;
