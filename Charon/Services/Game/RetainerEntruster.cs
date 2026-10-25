@@ -264,11 +264,17 @@ public sealed unsafe class RetainerEntruster
     private IReadOnlyList<EntrustVisit> Plan(IReadOnlyList<string> names)
     {
         var prefix = $"{_contentId()}:";
-        var snapshots = _snapshots()
-            .Where(b => b.Key.StartsWith(prefix, StringComparison.Ordinal))
-            .ToDictionary(b => b.Name, b => (IReadOnlyCollection<HeldStack>)b.Stacks
-                .Select(s => new HeldStack(EntrustRound.Key(s.ItemId, s.Hq), s.Qty)).ToList());
-        return EntrustRound.Plan(names, snapshots, BagItems(), StackSize);
+        var mine = _snapshots().Where(b => b.Key.StartsWith(prefix, StringComparison.Ordinal)).ToList();
+        var snapshots = mine.ToDictionary(b => b.Name, b => (IReadOnlyCollection<HeldStack>)b.Stacks
+            .Select(s => new HeldStack(EntrustRound.Key(s.ItemId, s.Hq), s.Qty)).ToList());
+        var captured = mine.ToDictionary(b => b.Name, b => b.CapturedUtc);
+
+        // A venture collected since her snapshot put rewards in her bags that the snapshot can't show.
+        bool Stale(string name) =>
+            _retainers.VentureCollectedUtc(name) is { } collected
+            && captured.TryGetValue(name, out var at) && collected > at;
+
+        return EntrustRound.Plan(names, snapshots, BagItems(), StackSize, Stale);
     }
 
     private static HashSet<uint> BagItems()
@@ -299,7 +305,7 @@ public sealed unsafe class RetainerEntruster
     public string Describe(EntrustVisit visit)
     {
         if (visit.Matches < 0)
-            return $"{visit.Name} — contents never read, checked when opened";
+            return $"{visit.Name} — contents unknown (never read, or a venture since), checked when opened";
 
         const int shown = 4;
         var names = visit.Items.Take(shown).Select(ItemName).ToList();

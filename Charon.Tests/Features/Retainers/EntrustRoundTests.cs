@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using Charon.Features.Retainers;
@@ -136,5 +137,42 @@ public sealed class EntrustRoundTests
         Assert.Equal("T'sala", EntrustRound.Next(plan, []));
         Assert.Equal("Third", EntrustRound.Next(plan, ["T'sala"]));
         Assert.Null(EntrustRound.Next(plan, ["T'sala", "Third"]));
+    }
+
+    // User report 2026-10-25: after "Collect & send all" the round skipped a retainer that had plenty to take
+    // once opened by hand — venture rewards land in her bags, and collecting never opens them.
+    private static readonly DateTime Now = new(2026, 10, 25, 20, 0, 0, DateTimeKind.Utc);
+
+    private static RetainerVenture Venture(uint id, DateTime? complete) => new("T'sola", id, complete, 88, 175, 0);
+
+    [Fact]
+    public void AStaleSnapshot_IsVisitedLikeOneNeverRead()
+    {
+        // Her snapshot shares nothing with the bags, but a venture was collected since it was read.
+        var snapshots = new Dictionary<string, IReadOnlyCollection<HeldStack>> { ["T'sola"] = Held(Cotton), ["Third"] = Held(Maple) };
+
+        var plan = EntrustRound.Plan(["T'sola", "Third"], snapshots, [IronOre], StackSize, stale: name => name == "T'sola");
+
+        var visit = Assert.Single(plan);
+        Assert.Equal("T'sola", visit.Name);
+        Assert.Equal(-1, visit.Matches);
+    }
+
+    [Fact]
+    public void AFinishedVentureReplacedOrCleared_IsACollection()
+    {
+        var finished = Venture(395, Now.AddMinutes(-5));
+
+        Assert.True(EntrustRound.VentureCollected(finished, Venture(395, Now.AddHours(1)), Now)); // collected + resent
+        Assert.True(EntrustRound.VentureCollected(finished, Venture(0, null), Now));              // collected, not resent
+    }
+
+    [Fact]
+    public void NoCollection_WhenTheVentureIsUnchangedRunningOrItsTimerArrives()
+    {
+        Assert.False(EntrustRound.VentureCollected(Venture(395, Now.AddMinutes(-5)), Venture(395, Now.AddMinutes(-5)), Now));
+        Assert.False(EntrustRound.VentureCollected(Venture(395, Now.AddHours(1)), Venture(395, Now.AddHours(2)), Now));
+        Assert.False(EntrustRound.VentureCollected(Venture(395, null), Venture(395, Now.AddMinutes(-5)), Now));
+        Assert.False(EntrustRound.VentureCollected(Venture(0, null), Venture(395, Now.AddHours(1)), Now));
     }
 }

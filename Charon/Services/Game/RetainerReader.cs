@@ -30,6 +30,9 @@ public sealed unsafe class RetainerReader
     private readonly IPluginLog _log;
 
     private List<RetainerVenture> _cached = new();
+
+    /// <summary>When each retainer's venture was last seen collected (by Charon or by hand), by name. This session only.</summary>
+    private readonly Dictionary<string, DateTime> _collectedUtc = new(StringComparer.OrdinalIgnoreCase);
     private DateTime _cachedAtUtc = DateTime.MinValue;
     private DateTime _timersRequestedUtc = DateTime.MinValue;
 
@@ -37,6 +40,9 @@ public sealed unsafe class RetainerReader
     {
         _log = log;
     }
+
+    /// <summary>When a venture was last seen collected from this retainer this session; null if not seen.</summary>
+    public DateTime? VentureCollectedUtc(string name) => _collectedUtc.TryGetValue(name, out var at) ? at : null;
 
     /// <summary>Whether the game actually handed over retainer data this read.</summary>
     public bool Loaded { get; private set; }
@@ -102,6 +108,13 @@ public sealed unsafe class RetainerReader
             _log.Warning(ex, "Retainer read threw");
             loaded = false;
             list.Clear();
+        }
+
+        foreach (var now in list)
+        {
+            var before = _cached.Find(r => string.Equals(r.Name, now.Name, StringComparison.OrdinalIgnoreCase));
+            if (before != null && EntrustRound.VentureCollected(before, now, utcNow))
+                _collectedUtc[now.Name] = utcNow;
         }
 
         Loaded = loaded;

@@ -8,7 +8,8 @@ namespace Charon.Features.Retainers;
 public sealed record HeldStack(uint Key, int Qty);
 
 /// <summary>Who an entrust round would visit, and why.</summary>
-/// <param name="Matches">Items in the player's bags this retainer already holds; -1 when her contents were never read.</param>
+/// <param name="Matches">Items in the player's bags this retainer already holds; -1 when her contents are unknown —
+/// never read, or a venture was collected from her since they were (<see cref="EntrustRound.VentureCollected"/>).</param>
 /// <param name="Items">The matching item keys (<see cref="EntrustRound.Key"/>) — empty when never read.</param>
 public sealed record EntrustVisit(string Name, int Matches, IReadOnlyList<uint> Items);
 
@@ -33,6 +34,11 @@ public sealed record EntrustVisit(string Name, int Matches, IReadOnlyList<uint> 
 /// stack of it with room left — a full 999 takes nothing more.
 /// An unknown stack size (0, sheet unreadable) is not used to rule anything out.
 ///
+/// A snapshot goes STALE when a venture is collected from her after it was read (user report, 2026-10-25:
+/// the round skipped a retainer that then had plenty to take once opened by hand). Venture rewards land in
+/// the retainer's own inventory, and collecting never opens her bags, so the snapshot can't know about them.
+/// A stale retainer is planned like one never read: visited, and her button decides.
+///
 /// Like a venture round, the next retainer is asked of live state each time, never a list decided up
 /// front; a retainer is visited at most once per round.
 /// </summary>
@@ -54,17 +60,19 @@ public static class EntrustRound
     /// <param name="snapshots">The stacks each retainer held when last read; a missing name means never read.</param>
     /// <param name="bagItems">Item keys in the player's bags right now.</param>
     /// <param name="stackSize">An item id's stack size from the sheet; 0 when unknown.</param>
+    /// <param name="stale">True for a retainer whose snapshot predates a venture collected from her.</param>
     public static IReadOnlyList<EntrustVisit> Plan(
         IReadOnlyList<string> retainers,
         IReadOnlyDictionary<string, IReadOnlyCollection<HeldStack>> snapshots,
         IReadOnlyCollection<uint> bagItems,
-        Func<uint, int> stackSize)
+        Func<uint, int> stackSize,
+        Func<string, bool>? stale = null)
     {
         var bags = bagItems.Where(k => !IsCrystal(k) && stackSize(ItemIdOf(k)) != 1).ToHashSet();
         var visits = new List<EntrustVisit>();
         foreach (var name in retainers)
         {
-            if (!snapshots.TryGetValue(name, out var held))
+            if (!snapshots.TryGetValue(name, out var held) || stale?.Invoke(name) == true)
             {
                 visits.Add(new EntrustVisit(name, -1, []));
                 continue;
@@ -82,6 +90,16 @@ public static class EntrustRound
 
         return visits;
     }
+
+    /// <summary>
+    /// Whether her venture was collected between two reads of the roster: a FINISHED venture (its completion
+    /// time has passed) that is now gone or replaced by another. Collecting is what puts the rewards in her bags.
+    /// A venture whose timer had not arrived yet (null) is never counted — its timer arriving is not a collection.
+    /// </summary>
+    public static bool VentureCollected(RetainerVenture before, RetainerVenture after, DateTime nowUtc) =>
+        before.VentureId != 0
+        && before.CompleteUtc is { } done && done <= nowUtc
+        && (after.VentureId != before.VentureId || after.CompleteUtc != before.CompleteUtc);
 
     /// <summary>A stack can take more units — or its size is unknown, which rules nothing out.</summary>
     public static bool HasRoom(int qty, int stackSize) => stackSize <= 0 || (stackSize > 1 && qty < stackSize);
