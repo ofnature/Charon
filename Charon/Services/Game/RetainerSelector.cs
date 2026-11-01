@@ -333,12 +333,12 @@ public sealed unsafe class RetainerSelector
         // The row comes from the LIST'S OWN VALUES, never from the retainer array's order: a gap in
         // that array (an unpaid or empty slot) made a sorted position point one row past the
         // wanted retainer, onto a slot the game refused to summon.
-        var (texts, rowCount) = ReadListTexts(addon);
-        var sorted = RetainerListRows.RowOf(texts, rowCount, retainer);
+        var (texts, _) = ReadListTexts(addon);
+        var sorted = RetainerListRows.RowOf(texts, retainer);
         if (sorted < 0)
         {
             Status = $"{retainer} is not a row in the list (it shows: "
-                     + $"{string.Join(", ", RetainerListRows.Names(texts, rowCount))})";
+                     + $"{string.Join(", ", RetainerListRows.Names(texts))})";
             Note(nowUtc, true, null, null, Status);
             return;
         }

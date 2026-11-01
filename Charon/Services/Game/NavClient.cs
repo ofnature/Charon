@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Numerics;
 using System.Threading.Tasks;
@@ -40,6 +41,8 @@ public sealed class NavClient
     private ICallGateSubscriber<bool>? _pathIsRunning;
     private ICallGateSubscriber<Vector3, bool, float, bool>? _pathfindAndMoveCloseTo;
     private ICallGateSubscriber<object>? _pathStop;
+    private ICallGateSubscriber<Vector3, Vector3, bool, Task<List<Vector3>>>? _pathfind;
+    private ICallGateSubscriber<List<Vector3>, bool, object>? _pathMoveTo;
 
     // vnavmesh-only.
     private ICallGateSubscriber<bool>? _vnavIsReady;
@@ -49,6 +52,7 @@ public sealed class NavClient
     private ICallGateSubscriber<bool>? _ariadneIsConnected;
     private ICallGateSubscriber<int>? _ariadneZoneStatus;
     private ICallGateSubscriber<Vector3, float, float, Task<Vector3?>>? _ariadneNearestReachable;
+    private ICallGateSubscriber<Vector3, Vector3, bool, Vector3, float, Task<List<Vector3>>>? _ariadnePathfindAvoid;
 
     // The in-flight/last async reachability answer (Ariadne mode). Keyed loosely by destination:
     // a new destination retires the old query.
@@ -98,6 +102,68 @@ public sealed class NavClient
     {
         EnsureSubscribers();
         return TryInvoke(() => _pathfindAndMoveCloseTo!.InvokeFunc(destination, false, range));
+    }
+
+    /// <summary>
+    /// The route the provider WOULD walk from <paramref name="from"/> to <paramref name="to"/>, without
+    /// walking it (<c>Nav.Pathfind</c> — the same shape under both prefixes). Null when the call could not be
+    /// made; an empty list means no route. Never throws.
+    /// </summary>
+    public Task<List<Vector3>>? Pathfind(Vector3 from, Vector3 to)
+    {
+        EnsureSubscribers();
+        try
+        {
+            return _pathfind!.InvokeFunc(from, to, false);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    /// <summary>True when the provider can plan a route that keeps clear of a point (Ariadne only).</summary>
+    public bool CanAvoid
+    {
+        get
+        {
+            EnsureSubscribers();
+            return _builtFor == ProviderAriadne;
+        }
+    }
+
+    /// <summary>
+    /// A route that keeps out of a sphere around <paramref name="avoid"/> — Ariadne's
+    /// <c>Nav.PathfindAvoid</c>. Null on vnavmesh (it has no such query) or when the call fails.
+    /// </summary>
+    public Task<List<Vector3>>? PathfindAvoid(Vector3 from, Vector3 to, Vector3 avoid, float radius)
+    {
+        EnsureSubscribers();
+        if (_builtFor != ProviderAriadne)
+            return null;
+        try
+        {
+            return _ariadnePathfindAvoid!.InvokeFunc(from, to, false, avoid, radius);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    /// <summary>Walk a route WE planned (<c>Path.MoveTo</c>); neither provider re-plans waypoints it was given.</summary>
+    public bool MoveAlong(List<Vector3> waypoints)
+    {
+        EnsureSubscribers();
+        try
+        {
+            _pathMoveTo!.InvokeAction(waypoints, false);
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     public void Stop()
@@ -185,12 +251,15 @@ public sealed class NavClient
         _pathIsRunning = _pluginInterface.GetIpcSubscriber<bool>(prefix + "Path.IsRunning");
         _pathfindAndMoveCloseTo = _pluginInterface.GetIpcSubscriber<Vector3, bool, float, bool>(prefix + "SimpleMove.PathfindAndMoveCloseTo");
         _pathStop = _pluginInterface.GetIpcSubscriber<object>(prefix + "Path.Stop");
+        _pathfind = _pluginInterface.GetIpcSubscriber<Vector3, Vector3, bool, Task<List<Vector3>>>(prefix + "Nav.Pathfind");
+        _pathMoveTo = _pluginInterface.GetIpcSubscriber<List<Vector3>, bool, object>(prefix + "Path.MoveTo");
 
         if (provider == ProviderAriadne)
         {
             _ariadneIsConnected = _pluginInterface.GetIpcSubscriber<bool>("Ariadne.IsConnected");
             _ariadneZoneStatus = _pluginInterface.GetIpcSubscriber<int>("Ariadne.ZoneStatus");
             _ariadneNearestReachable = _pluginInterface.GetIpcSubscriber<Vector3, float, float, Task<Vector3?>>("Ariadne.Query.Mesh.NearestPointReachable");
+            _ariadnePathfindAvoid = _pluginInterface.GetIpcSubscriber<Vector3, Vector3, bool, Vector3, float, Task<List<Vector3>>>("Ariadne.Nav.PathfindAvoid");
         }
         else
         {

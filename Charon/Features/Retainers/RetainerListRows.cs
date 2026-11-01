@@ -17,7 +17,7 @@ namespace Charon.Features.Retainers;
 /// does this.
 ///
 /// LAYOUT, read off a real <c>RetainerList</c> (2026-09-27, two retainers), not inferred:
-///   [0]  row count                        (2)
+///   [0]  2 on a two-retainer account — NOT trusted as the row count (see RowOf)
 ///   [1]  venture tokens                   (511 — the menu showed "Ventures: 511")
 ///   [2]  unknown                          (2)
 ///   then 10 values per row, starting at [3]:
@@ -38,44 +38,43 @@ public static class RetainerListRows
     public const int NameOffset = 0;
 
     /// <summary>
-    /// The row whose name matches, or -1. <paramref name="texts"/> holds each value's text, or null
-    /// for a non-text value, in array order; <paramref name="rowCount"/> is value [0].
+    /// The row whose name matches, or -1. <paramref name="texts"/> holds each value's text, or null for a
+    /// non-text value, in array order.
     ///
-    /// Refuses rather than guesses: a row count the array cannot hold, or a name slot that is not
-    /// text, returns -1 — firing a row that does not match its name is exactly the bug this fixes.
+    /// Rows are read until a row's name slot holds no text — NOT up to value [0]. Value [0] was taken as
+    /// the row count off a two-retainer account, where [0] and [2] both read 2; the roommate's
+    /// eight-retainer account then collected nothing past the second row (user, 2026-11-01: "cannot
+    /// collect any outside the default 2 slots"), which is what a 2 that means something else (the two
+    /// free retainer slots?) bounding the search would do. The packed names themselves are the evidence of
+    /// how many rows there are; only an exact name in a name slot ever matches, so reading on is safe.
     /// </summary>
-    public static int RowOf(IReadOnlyList<string?> texts, int rowCount, string name)
+    public static int RowOf(IReadOnlyList<string?> texts, string name)
     {
-        if (string.IsNullOrWhiteSpace(name) || rowCount <= 0 || texts.Count == 0)
+        if (string.IsNullOrWhiteSpace(name))
             return -1;
 
-        for (var row = 0; row < rowCount; row++)
+        var row = 0;
+        foreach (var candidate in NameSlots(texts))
         {
-            var index = Header + row * Stride + NameOffset;
-            if (index >= texts.Count)
-                return -1; // the array is shorter than the count claims — do not trust either
-
-            var candidate = texts[index];
-            if (candidate != null && string.Equals(candidate, name, StringComparison.OrdinalIgnoreCase))
+            if (string.Equals(candidate, name, StringComparison.OrdinalIgnoreCase))
                 return row;
+            row++;
         }
 
         return -1;
     }
 
     /// <summary>Every name the list shows, in row order — for the trace and for tests.</summary>
-    public static List<string> Names(IReadOnlyList<string?> texts, int rowCount)
-    {
-        var names = new List<string>();
-        for (var row = 0; row < rowCount; row++)
-        {
-            var index = Header + row * Stride + NameOffset;
-            if (index >= texts.Count)
-                break;
-            if (texts[index] is { Length: > 0 } text)
-                names.Add(text);
-        }
+    public static List<string> Names(IReadOnlyList<string?> texts) => new(NameSlots(texts));
 
-        return names;
+    /// <summary>The name slot of each row, in order, until one holds no text (the end of the packed rows).</summary>
+    private static IEnumerable<string> NameSlots(IReadOnlyList<string?> texts)
+    {
+        for (var index = Header + NameOffset; index < texts.Count; index += Stride)
+        {
+            if (texts[index] is not { Length: > 0 } name)
+                yield break;
+            yield return name;
+        }
     }
 }

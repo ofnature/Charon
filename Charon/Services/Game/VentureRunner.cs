@@ -410,11 +410,11 @@ public sealed unsafe class VentureRunner
         if (list == null || !list->IsReady || !list->IsVisible)
             return false;
 
-        var (texts, rowCount) = RetainerSelector.ReadListTexts(list);
-        var row = RetainerListRows.RowOf(texts, rowCount, TargetName!);
+        var (texts, _) = RetainerSelector.ReadListTexts(list);
+        var row = RetainerListRows.RowOf(texts, TargetName!);
         if (row < 0)
         {
-            Stop($"{TargetName} is not in the retainer list (it shows: {string.Join(", ", RetainerListRows.Names(texts, rowCount))})");
+            Stop($"{TargetName} is not in the retainer list (it shows: {string.Join(", ", RetainerListRows.Names(texts))})");
             return false;
         }
 

@@ -137,9 +137,12 @@ public sealed class EspOverlayWindow : Window
 
             // The colour that can be a mimic on this floor set (silver 31-60, gold above) says so — the
             // same rule that stops auto-open touching it (FloorClock.MimicCoffer).
-            if ((obj.BaseId == DeepDungeonIds.SilverChest && mimicColour == CofferKind.Silver)
-                || (obj.BaseId == DeepDungeonIds.GoldChest && mimicColour == CofferKind.Gold))
+            if (obj.BaseId == DeepDungeonIds.SilverChest && mimicColour == CofferKind.Silver)
                 visual = visual with { Color = MimicCofferColor, Label = $"{visual.Label} (mimic?)" };
+            else if (obj.BaseId == DeepDungeonIds.GoldChest && mimicColour == CofferKind.Gold)
+                // Gold-set mimics shrug off stuns (Deep Ducking excludes them from its stun rotation), so the
+                // label says so before anyone plans to lock one down: interrupt it, or Purity, instead.
+                visual = visual with { Color = MimicCofferColor, Label = $"{visual.Label} (mimic? stun-immune)" };
             if (visual.Kind == FloorKind.None)
             {
                 // An unrecognised EventObj is either scenery or an id we don't know yet (a newer

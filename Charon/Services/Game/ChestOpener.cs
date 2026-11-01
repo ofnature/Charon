@@ -40,12 +40,17 @@ public sealed unsafe class ChestOpener
 
     /// <summary>Coffers we have already reached for, by entity id — see <see cref="TryOpenCoffer"/>.</summary>
     private readonly Dictionary<uint, DateTime> _cofferTouched = new();
+    private readonly IPartyList _partyList;
+
+    /// <summary>How far out a hostile in combat with the party still counts as a threat to a silver coffer.</summary>
+    private const float ThreatRange = 50f;
     private static readonly TimeSpan CofferRetry = TimeSpan.FromSeconds(10);
 
     public ChestOpener(IObjectTable objectTable, ICondition condition, IDataManager dataManager,
         InteractHelper interact, Func<bool> enabled, Func<float> openRange, IPluginLog log,
-        Func<uint> deepDungeonContentId)
+        Func<uint> deepDungeonContentId, IPartyList partyList)
     {
+        _partyList = partyList;
         _deepDungeonContentId = deepDungeonContentId;
         _objectTable = objectTable;
         _condition = condition;
@@ -150,6 +155,49 @@ public sealed unsafe class ChestOpener
         }
     }
 
+    /// <summary>The party's HP as the object table shows it — just us when solo; members out of sight are skipped.</summary>
+    private List<PartyVitals> PartyVitalsNear(IGameObject local)
+    {
+        var vitals = new List<PartyVitals>();
+        if (_partyList.Length == 0)
+        {
+            if (local is ICharacter self)
+                vitals.Add(new PartyVitals(self.Name.TextValue, self.CurrentHp, self.MaxHp));
+            return vitals;
+        }
+
+        foreach (var member in _partyList)
+        {
+            if (_objectTable.SearchByEntityId(member.EntityId) is ICharacter character)
+                vitals.Add(new PartyVitals(character.Name.TextValue, character.CurrentHp, character.MaxHp));
+        }
+
+        return vitals;
+    }
+
+    /// <summary>Hostiles in combat whose target is one of us — within <see cref="ThreatRange"/>.</summary>
+    private int ThreatsToParty(IGameObject local)
+    {
+        var ours = new HashSet<ulong> { local.GameObjectId };
+        foreach (var member in _partyList)
+            ours.Add(member.EntityId);
+
+        var threats = 0;
+        foreach (var obj in _objectTable)
+        {
+            if (obj is not Dalamud.Game.ClientState.Objects.Types.IBattleNpc npc || npc.CurrentHp == 0
+                || npc.BattleNpcKind != Dalamud.Game.ClientState.Objects.Enums.BattleNpcSubKind.Combatant
+                || !npc.StatusFlags.HasFlag(Dalamud.Game.ClientState.Objects.Enums.StatusFlags.InCombat)
+                || Vector3.Distance(npc.Position, local.Position) > ThreatRange)
+                continue;
+
+            if (ours.Contains(npc.TargetObjectId))
+                threats++;
+        }
+
+        return threats;
+    }
+
     /// <summary>
     /// Deep-dungeon coffers (bronze/silver/gold and the dug-up Accursed Hoard), which the game
     /// models as EventObj rather than Treasure. Rules are NecroLens's (MIT), which are stricter
@@ -157,8 +205,9 @@ public sealed unsafe class ChestOpener
     /// - the mimic coffer id is never touched;
     /// - the coffer colour that can be a MIMIC on this floor set is never auto-opened
     ///   (<see cref="FloorClock.MimicCoffer"/> — silver on floors 31-60, gold above);
-    /// - a SILVER coffer is left alone below 77% HP — silver coffers can be trap chests, and the
-    ///   damage has killed unattended toons;
+    /// - a SILVER coffer is opened only with the whole party at full HP and no hostile in combat with any
+    ///   of them (<see cref="SilverCofferPolicy"/>, Deep Ducking's rule) — silver coffers can be trap
+    ///   chests, and the damage has killed unattended toons;
     /// - per-type interact reach (bronze 3.1y, the rest 4.4y), taken together with the user's own
     ///   range so a tightened slider still wins;
     /// - an EventObj carries no "opened" flag, so an interacted coffer is remembered by entity id
@@ -207,11 +256,14 @@ public sealed unsafe class ChestOpener
             return false;
         }
 
-        if (silver && local is ICharacter character && character.MaxHp > 0
-            && character.CurrentHp <= character.MaxHp * 0.77f)
+        if (silver)
         {
-            Status = "holding — silver coffer below 77% HP";
-            return false;
+            var (mayOpen, reason) = SilverCofferPolicy.Decide(PartyVitalsNear(local), ThreatsToParty(local));
+            if (!mayOpen)
+            {
+                Status = reason;
+                return false;
+            }
         }
 
         if (_cofferTouched.TryGetValue(obj.EntityId, out var touchedAt) && now - touchedAt < CofferRetry)

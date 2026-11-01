@@ -28,7 +28,7 @@ namespace Charon;
 
 public sealed class CharonPlugin : IDalamudPlugin
 {
-    public const string PluginVersion = "0.1.57";
+    public const string PluginVersion = "0.1.58";
     private const string CommandName = "/charon";
 
     /// <summary>
@@ -63,6 +63,7 @@ public sealed class CharonPlugin : IDalamudPlugin
     private readonly TradeInterop _trade;
     private readonly MountStateReader _mountReader;
     private readonly NavClient _nav;
+    private TrapAwareFollow? _trapFollow;
     private readonly HealWatchManager _healWatch;
     private readonly HealExecutor _healExecutor;
     private readonly InviteManager _groupInvites;
@@ -422,9 +423,10 @@ public sealed class CharonPlugin : IDalamudPlugin
             (op, ok, detail) => _levelingIpc.PublishCompleted(op, ok, detail), log);
         // The reader is built first: the chest opener asks it which coffer colour can be a mimic.
         _ddReader = new DeepDungeonReader(log);
+        _trapFollow = new TrapAwareFollow(_nav, _objectTable, () => _ddReader.GetSnapshot().Active, log);
         _chests = new ChestOpener(_objectTable, _condition, dataManager, _interact,
             () => _config.AutoOpenChestsEnabled, () => _config.ChestOpenRange, log,
-            () => _ddReader.GetSnapshot().ContentId);
+            () => _ddReader.GetSnapshot().ContentId, _partyList);
         _qte = new QteSolver(gameGui, gameConfig, () => _config.AutoQteEnabled, log);
         // Shares the context-menu machinery with the sellers — one of them at a time.
         _saddlebag = new SaddlebagEntruster(gameGui, dataManager,
@@ -1919,7 +1921,19 @@ public sealed class CharonPlugin : IDalamudPlugin
 
         if ((!_followNavIssued || !running || drifted) && now - _lastFollowNavUtc > TimeSpan.FromSeconds(0.5))
         {
-            if (_nav.MoveCloseTo(target, _config.FollowDistance))
+            // In a deep dungeon with traps revealed, the route is planned and checked first — kept off
+            // the traps where there is a way round, said plainly where there is not (TrapAwareFollow).
+            var me = _objectTable.LocalPlayer?.Position;
+            var step = me is { } from && _trapFollow != null
+                ? _trapFollow.Issue(from, target, _config.FollowDistance, now)
+                : TrapFollowStep.NotNeeded;
+            if (step == TrapFollowStep.Planning)
+            {
+                _followFleetStatus += $" — {_trapFollow!.Note}";
+                return;
+            }
+
+            if (step == TrapFollowStep.Moving || _nav.MoveCloseTo(target, _config.FollowDistance))
             {
                 _followNavIssued = true;
                 _lastFollowNavTarget = target;
@@ -1937,6 +1951,8 @@ public sealed class CharonPlugin : IDalamudPlugin
         // The nav half of the story. Without it a stalled follower and a walking one print the
         // same line, which is how this stayed invisible.
         _followFleetStatus += running ? " [path running]" : " [path idle]";
+        if (_trapFollow is { Note.Length: > 0 } trapFollow)
+            _followFleetStatus += $" — traps: {trapFollow.Note}";
     }
 
     private void StopFollowNavIfOurs()
