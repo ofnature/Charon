@@ -8,6 +8,7 @@ using Dalamud.Interface.Windowing;
 using Dalamud.Plugin.Services;
 using Charon.Features.DeepDungeon;
 using Charon.Services.Game;
+using Charon.Windows.Components;
 
 namespace Charon.Windows;
 
@@ -22,12 +23,12 @@ namespace Charon.Windows;
 /// </summary>
 public sealed class EspOverlayWindow : Window
 {
-    private const int CircleSegments = 48;
     private const float MobDrawRange = 50f;
     private const float ChestDrawRange = 35f;
 
     private readonly IObjectTable _objectTable;
     private readonly IGameGui _gameGui;
+    private readonly WorldShapes _shapes;
     private readonly IClientState _clientState;
     private readonly IPluginLog _log;
     private readonly MobDatabase _mobs;
@@ -61,6 +62,7 @@ public sealed class EspOverlayWindow : Window
     {
         _objectTable = objectTable;
         _gameGui = gameGui;
+        _shapes = new WorldShapes(gameGui);
         _clientState = clientState;
         _log = log;
         _mobs = mobs;
@@ -109,14 +111,14 @@ public sealed class EspOverlayWindow : Window
             var at = new Vector3(spot.X, spot.Y, spot.Z);
             if (spot.Kind == SpotKind.Trap)
             {
-                DrawWorldCircle(drawList, at, LikelySpotRadius, LikelyTrapColor, filled: false);
+                _shapes.Circle(drawList, at, LikelySpotRadius, LikelyTrapColor, filled: false);
                 continue;
             }
 
             // Hoard spots are a TRIPLE ring (user, 2026-10-06): a single outline read as one more trap
             // guess among the orange ones. Three concentric rings are unmistakable at any distance.
             foreach (var radius in LikelyHoardRings)
-                DrawWorldCircle(drawList, at, radius, LikelyHoardColor, filled: false);
+                _shapes.Circle(drawList, at, radius, LikelyHoardColor, filled: false);
         }
 
         foreach (var obj in _objectTable)
@@ -160,7 +162,7 @@ public sealed class EspOverlayWindow : Window
             {
                 hoardDistance = distance;
                 if (_showHoardLine())
-                    DrawWorldLine(drawList, local.Position, obj.Position, ImGui.GetColorU32(visual.Color));
+                    _shapes.Line(drawList, local.Position, obj.Position, ImGui.GetColorU32(visual.Color));
             }
 
             // Traps carry their OWN toggle and no distance cap — NecroLens draws them wherever
@@ -217,19 +219,19 @@ public sealed class EspOverlayWindow : Window
         switch (aggro)
         {
             case MobAggro.Sight:
-                DrawCone(drawList, obj.Position, obj.Rotation, aggroRange, color);
+                _shapes.Cone(drawList, obj.Position, obj.Rotation, aggroRange, color);
                 break;
             case MobAggro.Sound:
-                DrawWorldCircle(drawList, obj.Position, aggroRange, color, filled: false);
-                DrawWorldCircle(drawList, obj.Position, npc.HitboxRadius, color, filled: true);
+                _shapes.Circle(drawList, obj.Position, aggroRange, color, filled: false);
+                _shapes.Circle(drawList, obj.Position, npc.HitboxRadius, color, filled: true);
                 break;
             default:
-                DrawWorldCircle(drawList, obj.Position, aggroRange, color, filled: false);
+                _shapes.Circle(drawList, obj.Position, aggroRange, color, filled: false);
                 break;
         }
 
         if (record is { Patrol: true })
-            DrawFacingArrow(drawList, obj.Position, obj.Rotation, ImGui.GetColorU32(new Vector4(1f, 0.3f, 0.3f, 1f)));
+            _shapes.FacingArrow(drawList, obj.Position, obj.Rotation, ImGui.GetColorU32(new Vector4(1f, 0.3f, 0.3f, 1f)));
 
         if (_showMobNames() && _gameGui.WorldToScreen(obj.Position, out var screen))
         {
@@ -284,121 +286,12 @@ public sealed class EspOverlayWindow : Window
     private void DrawFloorObject(ImDrawListPtr drawList, IGameObject obj, FloorVisual visual)
     {
         var packed = ImGui.GetColorU32(visual.Color);
-        DrawWorldCircle(drawList, obj.Position, visual.Radius, packed, filled: true);
+        _shapes.Circle(drawList, obj.Position, visual.Radius, packed, filled: true);
 
         if (_gameGui.WorldToScreen(obj.Position, out var screen))
         {
             var size = ImGui.CalcTextSize(visual.Label);
             drawList.AddText(new Vector2(screen.X - size.X / 2f, screen.Y - size.Y - 2f), packed, visual.Label);
         }
-    }
-
-    // --- NecroLens's projection helpers: world-radius shapes, point-by-point WorldToScreen ---
-
-    /// <summary>
-    /// A world-space line, projected in pieces. A single screen-space line fails the moment one end is
-    /// behind the camera (its projection is garbage), so the line is sampled and only the stretches in
-    /// FRONT of the camera are drawn — turn away from the hoard and the line still points toward it.
-    /// </summary>
-    private void DrawWorldLine(ImDrawListPtr drawList, Vector3 from, Vector3 to, uint color)
-    {
-        const int segments = 32;
-        var drawing = false;
-
-        for (var i = 0; i <= segments; i++)
-        {
-            var point = Vector3.Lerp(from, to, (float)i / segments);
-            if (_gameGui.WorldToScreen(point, out var screen, out _))
-            {
-                drawList.PathLineTo(screen);
-                drawing = true;
-            }
-            else if (drawing)
-            {
-                drawList.PathStroke(color, ImDrawFlags.None, 2.5f);
-                drawing = false;
-            }
-        }
-
-        if (drawing)
-            drawList.PathStroke(color, ImDrawFlags.None, 2.5f);
-        drawList.PathClear();
-    }
-
-    private void DrawWorldCircle(ImDrawListPtr drawList, Vector3 center, float radius, uint color, bool filled)
-    {
-        for (var i = 0; i <= CircleSegments; i++)
-        {
-            var angle = 2f * MathF.PI * i / CircleSegments;
-            _gameGui.WorldToScreen(
-                new Vector3(center.X + radius * MathF.Sin(angle), center.Y, center.Z + radius * MathF.Cos(angle)),
-                out var point);
-            drawList.PathLineTo(point);
-        }
-
-        if (filled)
-        {
-            drawList.PathFillConvex((color & 0x00FFFFFF) | 0x40000000);
-            // redraw the outline — the fill consumed the path
-            for (var i = 0; i <= CircleSegments; i++)
-            {
-                var angle = 2f * MathF.PI * i / CircleSegments;
-                _gameGui.WorldToScreen(
-                    new Vector3(center.X + radius * MathF.Sin(angle), center.Y, center.Z + radius * MathF.Cos(angle)),
-                    out var point);
-                drawList.PathLineTo(point);
-            }
-        }
-
-        drawList.PathStroke(color, ImDrawFlags.None, 1.5f);
-        drawList.PathClear();
-    }
-
-    /// <summary>NecroLens's sight cone: ±45° around the mob's facing (their rotation+π/4 sweep).</summary>
-    private void DrawCone(ImDrawListPtr drawList, Vector3 center, float rotation, float radius, uint color)
-    {
-        const float coneAngle = 1.571f; // 90° total
-        var start = rotation + MathF.PI / 4f;
-        var step = coneAngle / CircleSegments;
-
-        _gameGui.WorldToScreen(center, out var origin);
-        drawList.PathLineTo(origin);
-        for (var i = 0; i <= CircleSegments; i++)
-        {
-            var angle = start - i * step;
-            _gameGui.WorldToScreen(
-                new Vector3(center.X + radius * MathF.Sin(angle), center.Y, center.Z + radius * MathF.Cos(angle)),
-                out var point);
-            drawList.PathLineTo(point);
-        }
-
-        drawList.PathLineTo(origin);
-        drawList.PathFillConvex((color & 0x00FFFFFF) | 0x33000000);
-
-        drawList.PathLineTo(origin);
-        for (var i = 0; i <= CircleSegments; i++)
-        {
-            var angle = start - i * step;
-            _gameGui.WorldToScreen(
-                new Vector3(center.X + radius * MathF.Sin(angle), center.Y, center.Z + radius * MathF.Cos(angle)),
-                out var point);
-            drawList.PathLineTo(point);
-        }
-
-        drawList.PathLineTo(origin);
-        drawList.PathStroke(color, ImDrawFlags.None, 1.5f);
-        drawList.PathClear();
-    }
-
-    private void DrawFacingArrow(ImDrawListPtr drawList, Vector3 center, float rotation, uint color)
-    {
-        var tip = new Vector3(center.X + 2.2f * MathF.Sin(rotation), center.Y, center.Z + 2.2f * MathF.Cos(rotation));
-        if (!_gameGui.WorldToScreen(center, out var from) || !_gameGui.WorldToScreen(tip, out var to))
-            return;
-
-        drawList.AddLine(from, to, color, 2.5f);
-        var dir = Vector2.Normalize(to - from);
-        var normal = new Vector2(-dir.Y, dir.X);
-        drawList.AddTriangleFilled(to + dir * 6f, to + normal * 4f, to - normal * 4f, color);
     }
 }

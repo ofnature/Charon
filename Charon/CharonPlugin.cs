@@ -28,7 +28,7 @@ namespace Charon;
 
 public sealed class CharonPlugin : IDalamudPlugin
 {
-    public const string PluginVersion = "0.1.58";
+    public const string PluginVersion = "0.1.59";
     private const string CommandName = "/charon";
 
     /// <summary>
@@ -95,6 +95,7 @@ public sealed class CharonPlugin : IDalamudPlugin
     private readonly PillionRidersWindow _pillionRidersWindow;
     private readonly DeepDungeonMapWindow _ddMapWindow;
     private readonly EspOverlayWindow _ddEsp;
+    private readonly EurekaEspOverlay _eurekaEsp;
     private readonly CursorFinderOverlay _cursorFinder;
     private readonly VariantService _variant;
     private readonly VariantGuideWindow _variantGuide;
@@ -258,6 +259,8 @@ public sealed class CharonPlugin : IDalamudPlugin
 
     /// <summary>Keeps an unattended client logged in — see the class for why a busy box is still idle.</summary>
     private readonly AfkGuard _afkGuard;
+    private readonly FrameWatch _frameWatch;
+    private readonly BotRenderProfile _botRender;
 
     /// <summary>The board's last pushed visibility: a user close is a change to RECORD, not to undo.</summary>
     private bool _retainerWindowShown;
@@ -544,6 +547,9 @@ public sealed class CharonPlugin : IDalamudPlugin
         _retainerPlanner = new RetainerPlanner(_config, _ventureSheet, MarketPrice, SaveConfig);
         _retainerGear = new RetainerGearService(gameGui, dataManager, log, _gear, _retainers, _retainerContents,
             _retainerPlanner, _config, SaveConfig, () => _jobLevels.LocalContentId, () => _ventureRunner.Armed, chatGui);
+        _frameWatch = new FrameWatch(gameConfig, condition, pluginInterface);
+        _botRender = new BotRenderProfile(gameConfig, condition, _config, SaveConfig,
+            () => _jobLevels.LocalContentId, _frameWatch, log);
         _afkGuard = new AfkGuard(
             () => _config.AfkGuardEnabled,
             () => _config.AfkGuardThresholdSeconds,
@@ -622,7 +628,10 @@ public sealed class CharonPlugin : IDalamudPlugin
             _palaceSpots,
             _variant,
             () => _variantGuide!.IsOpen = true,
-            SetMainMinimized);
+            SetMainMinimized,
+            () => _frameWatch.Status,
+            _botRender,
+            EurekaStatus);
         _mainWindow.IsOpen = _config.MainWindowVisible && !_config.MainWindowMinimized;
         _windowSystem.AddWindow(_mainWindow);
 
@@ -695,6 +704,11 @@ public sealed class CharonPlugin : IDalamudPlugin
                 _config.DeepDungeonEspLikelyTraps, _config.DeepDungeonEspLikelyHoards),
             () => _ddReader.GetSnapshot().ContentId);
         _windowSystem.AddWindow(_ddEsp);
+
+        _eurekaEsp = new EurekaEspOverlay(_objectTable, gameGui, _clientState,
+            () => _config.EurekaEspMobs, () => _config.EurekaEspMobNames,
+            () => _config.EurekaEspElementalSpots, () => _config.EurekaEspCofferSpots);
+        _windowSystem.AddWindow(_eurekaEsp);
 
         _cursorFinder = new CursorFinderOverlay(
             () => !_config.CursorFinderCombatOnly || _condition[ConditionFlag.InCombat],
@@ -793,6 +807,7 @@ public sealed class CharonPlugin : IDalamudPlugin
 
         _relay.OnMessage -= OnRelayMessage;
         _commend.Dispose();
+        _botRender.Dispose(); // puts the game's own settings back
         _palaceSpots.Dispose();
         _retainerGear.Dispose();
         _pomanders.Dispose();
@@ -1181,6 +1196,16 @@ public sealed class CharonPlugin : IDalamudPlugin
             _mainWindow.IsOpen = true;
     }
 
+    /// <summary>The Eureka ESP's Debug line: what it drew, or why it is not drawing.</summary>
+    private string EurekaStatus()
+    {
+        if (!_config.EurekaEspEnabled)
+            return "off";
+        if (!Charon.Features.Eureka.EurekaZones.IsEureka(_clientState.TerritoryType))
+            return "not in Eureka";
+        return _eurekaEsp.Status;
+    }
+
     /// <summary>
     /// Minimise the main window to its edge tab, or restore it - Odysseus's minimise-to-tab. Minimised, the
     /// window is a "Charon" tab on the edge (stacked with Daedalus's and Odysseus's via the shared layout)
@@ -1354,6 +1379,8 @@ public sealed class CharonPlugin : IDalamudPlugin
         _chests.Update(now);
         _qte.Update(now);
         _afkGuard.Update(now);
+        _frameWatch.Update(framework, now);
+        _botRender.Update(now); // after the frame watch: it reads the focus state from there
         _retainerContents.Update(now);
         _retainerSelector.Update(now);
         _retainerGear.Update(now);
@@ -1406,6 +1433,8 @@ public sealed class CharonPlugin : IDalamudPlugin
         var docked = _config.EdgeDockEnabled;
         _ddMapWindow.IsOpen = _config.DeepDungeonMapEnabled && ddActive && !docked;
         _ddEsp.IsOpen = _config.DeepDungeonEspEnabled && ddActive;
+        _eurekaEsp.IsOpen = _config.EurekaEspEnabled && _objectTable.LocalPlayer != null
+                            && Charon.Features.Eureka.EurekaZones.IsEureka(_clientState.TerritoryType);
         _cursorFinder.IsOpen = _config.CursorFinderEnabled || _config.CursorDotEnabled;
         UpdateVariantWindows(docked);
         _variant.Update(now);

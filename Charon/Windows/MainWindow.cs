@@ -18,6 +18,7 @@ using Charon.Features.Consumables;
 using Charon.Features.Loot;
 using Charon.Features.GrandCompany;
 using Charon.Features.Retainers;
+using Charon.Features.Tweaks;
 using Charon.Features.Weeklies;
 using Charon.Services;
 using Charon.Services.Game;
@@ -59,6 +60,7 @@ public sealed class MainWindow : Window
         Tweaks,
         DeepDungeon,
         Variant,
+        Eureka,
         Debug,
     }
 
@@ -129,6 +131,9 @@ public sealed class MainWindow : Window
     private readonly Func<string> _sprintStatus;
     private readonly Func<string> _navStatus;
     private readonly Func<string> _qolStatus;
+    private readonly Func<string> _frameStatus;
+    private readonly BotRenderProfile _botRender;
+    private readonly Func<string> _eurekaStatus;
     private readonly Func<string> _lootStatus;
     private readonly Func<string> _levelingStatus;
     private readonly QuickKillExecutor _quickKill;
@@ -236,7 +241,10 @@ public sealed class MainWindow : Window
         PalaceSpotService palaceSpots,
         VariantService variant,
         Action openVariantGuide,
-        Action<bool> setMinimized)
+        Action<bool> setMinimized,
+        Func<string> frameStatus,
+        BotRenderProfile botRender,
+        Func<string> eurekaStatus)
         : base("Charon##CharonMain")
     {
         BgAlpha = CharonTheme.PanelAlpha;
@@ -289,6 +297,9 @@ public sealed class MainWindow : Window
         _variant = variant;
         _openVariantGuide = openVariantGuide;
         _setMinimized = setMinimized;
+        _frameStatus = frameStatus;
+        _botRender = botRender;
+        _eurekaStatus = eurekaStatus;
         _isFreeTrial = isFreeTrial;
         _lootWatcher = lootWatcher;
         _collection = collection;
@@ -560,6 +571,8 @@ public sealed class MainWindow : Window
             _section = Section.DeepDungeon;
         if (SidebarTab.Draw("Variant", FontAwesomeIcon.Route, _section == Section.Variant))
             _section = Section.Variant;
+        if (SidebarTab.Draw("Eureka", FontAwesomeIcon.Wind, _section == Section.Eureka))
+            _section = Section.Eureka;
 
         DrawCategoryHeader("System");
         if (SidebarTab.Draw("Debug", FontAwesomeIcon.Bug, _section == Section.Debug))
@@ -598,6 +611,7 @@ public sealed class MainWindow : Window
             case Section.Tweaks: DrawTweaksSection(); break;
             case Section.DeepDungeon: DrawDeepDungeonSection(); break;
             case Section.Variant: DrawVariantSection(); break;
+            case Section.Eureka: DrawEurekaSection(); break;
             case Section.Debug: DrawDebugSection(); break;
         }
     }
@@ -3326,6 +3340,9 @@ public sealed class MainWindow : Window
 
         ImGui.Spacing();
         DrawAfkGuardBlock();
+
+        ImGui.Spacing();
+        DrawBotRenderBlock();
     }
 
     /// <summary>Deep-dungeon specific tools: the floor map and the ESP overlay.</summary>
@@ -3443,6 +3460,77 @@ public sealed class MainWindow : Window
     /// The variant dungeons: this character's record (the game's own), every route's steps, and the route
     /// being guided — which the in-dungeon window and the world markers follow.
     /// </summary>
+    /// <summary>Eureka: the ESP overlay's switches, its legend, and where its facts come from.</summary>
+    private void DrawEurekaSection()
+    {
+        DrawPageHeader("Eureka");
+
+        var esp = _config.EurekaEspEnabled;
+        if (ImGui.Checkbox("Eureka ESP overlay##eureka", ref esp))
+        {
+            _config.EurekaEspEnabled = esp;
+            _save();
+        }
+        CharonTheme.HelpMarker("Draws over the world in Anemos, Pagos, Pyros and Hydatos: each mob's aggro\n"
+                               + "by how it notices you, the friendly elementals and where they spawn, and\n"
+                               + "bunny coffers with their spots while the coffer hunt is on.");
+
+        if (esp)
+        {
+            ImGui.Indent();
+            var mobs = _config.EurekaEspMobs;
+            if (ImGui.Checkbox("Mob aggro##eureka", ref mobs))
+            {
+                _config.EurekaEspMobs = mobs;
+                _save();
+            }
+
+            var names = _config.EurekaEspMobNames;
+            if (ImGui.Checkbox("Mob names and levels##eureka", ref names))
+            {
+                _config.EurekaEspMobNames = names;
+                _save();
+            }
+            CharonTheme.HelpMarker("Mobs 2 or more elemental levels BELOW you do not attack unless you hit\n"
+                                   + "them (Console Games Wiki). Those are drawn faded and say \"ignores you\".");
+
+            var elementalSpots = _config.EurekaEspElementalSpots;
+            if (ImGui.Checkbox("Elemental spawn spots##eureka", ref elementalSpots))
+            {
+                _config.EurekaEspElementalSpots = elementalSpots;
+                _save();
+            }
+            CharonTheme.HelpMarker("The friendly elemental (one kind per zone) buffs damage and elemental\n"
+                                   + "EXP. It spawns on a fixed set of spots; the live one is drawn filled.");
+
+            var cofferSpots = _config.EurekaEspCofferSpots;
+            if (ImGui.Checkbox("Bunny coffer spots##eureka", ref cofferSpots))
+            {
+                _config.EurekaEspCofferSpots = cofferSpots;
+                _save();
+            }
+            CharonTheme.HelpMarker("Shown only while you have the coffer hunt buff (Cache Me if You Can), with\n"
+                                   + "a line to the nearest spot. Pagos, Pyros and Hydatos; Anemos has no bunnies.");
+            ImGui.Unindent();
+        }
+
+        ImGui.Spacing();
+        Styling.Text("Legend", CharonTheme.TextMuted);
+        DrawStatusLine("Cone = sight (true sight in pink) · ring with a filled core = sound · violet ring = magic "
+                       + "(sprites: don't cast near them) · dark red ring = low HP (Ashkin, night) · grey ring = "
+                       + "no aggro on record. A \"?\" means the type comes from a family rule or one weak source.",
+            CharonTheme.TextDim);
+        DrawStatusLine("Aggro ranges are drawn as hitbox + 10 yalms — Eureka's real radii are not published. "
+                       + "Pyros is covered almost mob by mob, Hydatos partly; most of Anemos and Pagos is unknown.",
+            CharonTheme.TextDim);
+        DrawStatusLine("Sources: community Eureka Bestiary sheet, Console Games Wiki and guides (facts only); "
+                       + "elemental spots from EurekaHelper (Apache-2.0), coffer spots from Eureka Linker (MIT).",
+            CharonTheme.TextDisabled);
+
+        ImGui.Spacing();
+        DrawStatusLine(_eurekaStatus(), CharonTheme.TextDim);
+    }
+
     private void DrawVariantSection()
     {
         DrawPageHeader("Variant", $"Every route through the four variant dungeons · {VariantView.Summary(_variant)}");
@@ -3765,6 +3853,103 @@ public sealed class MainWindow : Window
             _afkGuard.StuckNudges > 0 ? CharonTheme.StatusYellow : CharonTheme.TextDim);
     }
 
+    private void DrawBotRenderBlock()
+    {
+        var contentId = _localContentId();
+        var setting = _config.RenderProfileFor(contentId);
+
+        var on = setting.Enabled;
+        using (ImRaii.Disabled(contentId == 0))
+        {
+            if (ImGui.Checkbox("Turn rendering down in the background (this character)##botrender", ref on))
+            {
+                setting.Enabled = on;
+                _save();
+            }
+        }
+
+        CharonTheme.HelpMarker("For a bot nobody is watching: while this client's window is in the\n"
+                               + "background, Charon turns the game's own graphics settings down, and\n"
+                               + "puts them back the moment you click into the window.\n\n"
+                               + "Set per character, so it never touches the toon you are playing.\n\n"
+                               + "These are the game's System settings, which every client on this PC\n"
+                               + "shares through one settings file. Charon only changes them inside this\n"
+                               + "client and puts them back when the window is focused, you log out or the\n"
+                               + "plugin unloads. If the client crashes while they are down, Charon puts\n"
+                               + "them back the next time this character logs in.");
+
+        if (on)
+        {
+            ImGui.Indent();
+
+            var cap = setting.CapFrameRate;
+            if (ImGui.Checkbox("Cap the frame rate##botrender", ref cap))
+            {
+                setting.CapFrameRate = cap;
+                _save();
+            }
+
+            CharonTheme.HelpMarker("Turns on the game's own \"limit frame rate when inactive\" for this client.\n"
+                                   + "Every plugin, the rotation and the boss AI included, decides once per\n"
+                                   + "frame, so this also slows how fast the bot reacts. The Frames line on the\n"
+                                   + "Debug page shows the rate it actually gives.");
+
+            if (cap)
+            {
+                ImGui.Indent();
+                var lift = setting.LiftCapInCombat;
+                if (ImGui.Checkbox("Lift the cap in combat##botrender", ref lift))
+                {
+                    setting.LiftCapInCombat = lift;
+                    _save();
+                }
+
+                CharonTheme.HelpMarker("Full frame rate while this toon is in combat, so the rotation and\n"
+                                       + "dodging get every frame they can.");
+                ImGui.Unindent();
+            }
+
+            var fewer = setting.FewerCharacters;
+            if (ImGui.Checkbox("Fewest characters on screen##botrender", ref fewer))
+            {
+                setting.FewerCharacters = fewer;
+                _save();
+            }
+
+            CharonTheme.HelpMarker("Sets the character display limit to Minimum. Drawing fewer players\n"
+                                   + "is the usual fix for frame drops in busy places.");
+
+            var low = setting.LowResolution;
+            if (ImGui.Checkbox("Lower 3D resolution##botrender", ref low))
+            {
+                setting.LowResolution = low;
+                _save();
+            }
+
+            CharonTheme.HelpMarker("Turns 3D resolution scaling down to the value below. Under 50% goes past\n"
+                                   + "the lowest System Configuration offers. With DLSS, upscaling is switched\n"
+                                   + "to AMD FSR while it is down, because DLSS ignores the scale.");
+
+            if (low)
+            {
+                ImGui.Indent();
+                var percent = BotRenderPolicy.ClampPercent(setting.ResolutionPercent);
+                ImGui.SetNextItemWidth(200f);
+                if (ImGui.SliderInt("Resolution##botrender", ref percent, BotRenderPolicy.MinResolutionPercent, 100, "%d%%"))
+                {
+                    setting.ResolutionPercent = percent;
+                    _save();
+                }
+
+                ImGui.Unindent();
+            }
+
+            ImGui.Unindent();
+        }
+
+        DrawStatusLine(_botRender.Status, CharonTheme.TextDim);
+    }
+
     private void DrawDebugSection()
     {
         DrawPageHeader("Debug");
@@ -3786,12 +3971,15 @@ public sealed class MainWindow : Window
         DrawStatusLine($"Sprint: {_sprintStatus()}");
         DrawStatusLine($"Nav: {_navStatus()}");
         DrawStatusLine($"QoL: {_qolStatus()}");
+        DrawStatusLine($"Frames: {_frameStatus()}");
+        DrawStatusLine($"Bot render: {_botRender.Status}");
         DrawStatusLine($"Loot: {_lootStatus()}");
         DrawStatusLine($"Leveling: {_levelingStatus()}");
         // Reading the line IS the refresh — the reader is lazy and nothing else polls it here.
         _weeklies.Read(DateTime.UtcNow);
         DrawStatusLine($"Weeklies: {_weeklies.Status}");
         DrawStatusLine($"Variant: {_variant.Status}");
+        DrawStatusLine($"Eureka: {_eurekaStatus()}");
 
         // Read-only: this never opens a bell, so it is safe on a hand-played box.
         _retainers.Read(DateTime.UtcNow);

@@ -261,6 +261,23 @@ public sealed class CharonConfig : IPluginConfiguration
     /// <summary>Draw likely HOARD spots, until Intuition says where (or whether) the hoard is.</summary>
     public bool DeepDungeonEspLikelyHoards { get; set; } = true;
 
+    // Eureka
+    /// <summary>The Eureka ESP overlay, shown only in the four Eureka zones. On by default like the
+    /// deep-dungeon ESP: it only draws, and only there.</summary>
+    public bool EurekaEspEnabled { get; set; } = true;
+
+    /// <summary>Each mob's aggro shape by how it notices you.</summary>
+    public bool EurekaEspMobs { get; set; } = true;
+
+    /// <summary>Mob name and level beside the aggro type.</summary>
+    public bool EurekaEspMobNames { get; set; } = true;
+
+    /// <summary>Where the friendly elementals can spawn.</summary>
+    public bool EurekaEspElementalSpots { get; set; } = true;
+
+    /// <summary>Bunny coffer spots, and a line to the nearest, while the coffer hunt is on.</summary>
+    public bool EurekaEspCofferSpots { get; set; } = true;
+
     /// <summary>Palace Pal's saved spots have been imported on this machine (Charon.json and the spot
     /// file are both per machine). The import button stays available — it is idempotent.</summary>
     public bool PalacePalImported { get; set; }
@@ -380,6 +397,57 @@ public sealed class CharonConfig : IPluginConfiguration
     /// <summary>How idle, in seconds, before the nudge. The client logs out around 30 minutes; 10 is early
     /// enough to be safe with a wide margin and late enough to be rare.</summary>
     public int AfkGuardThresholdSeconds { get; set; } = 600;
+
+    /// <summary>One character's bot render profile. A new entry is OFF with every part ticked, so
+    /// switching it on gives the whole profile.</summary>
+    public sealed class RenderProfileSetting
+    {
+        public bool Enabled { get; set; }
+        public bool CapFrameRate { get; set; } = true;
+        public bool LiftCapInCombat { get; set; } = true;
+        public bool FewerCharacters { get; set; } = true;
+        public bool LowResolution { get; set; } = true;
+
+        /// <summary>3D resolution to turn down to, in percent; below 50 goes past the game's own floor.</summary>
+        public int ResolutionPercent { get; set; } = Features.Tweaks.BotRenderPolicy.DefaultResolutionPercent;
+    }
+
+    /// <summary>
+    /// Bot render profile, PER CHARACTER (keyed by content id) for the Quick Kill reason: this file is
+    /// shared by every client on the PC, and the profile belongs on the bots, never on the toon a
+    /// person is playing. A character with no entry is OFF.
+    /// </summary>
+    public Dictionary<ulong, RenderProfileSetting> RenderProfileByCharacter { get; set; } = new();
+
+    /// <summary>This character's render profile entry, created on first use. Content id 0 gets a
+    /// throwaway OFF entry that is never stored.</summary>
+    public RenderProfileSetting RenderProfileFor(ulong contentId)
+    {
+        if (contentId == 0)
+            return new RenderProfileSetting();
+
+        if (!RenderProfileByCharacter.TryGetValue(contentId, out var setting))
+        {
+            setting = new RenderProfileSetting();
+            RenderProfileByCharacter[contentId] = setting;
+        }
+
+        return setting;
+    }
+
+    /// <summary>A game setting the render profile changed: what it was, and what Charon set.</summary>
+    public sealed class RenderOverride
+    {
+        public uint Original { get; set; }
+        public uint Applied { get; set; }
+    }
+
+    /// <summary>
+    /// Settings the render profile currently has changed, per character, by option name — written
+    /// as they are applied so a client that crashes mid-profile can put them back the next time that
+    /// character logs in. Best effort: another client saving this shared file can overwrite it.
+    /// </summary>
+    public Dictionary<ulong, Dictionary<string, RenderOverride>> RenderProfileRestore { get; set; } = new();
 
     // Retainers section
     /// <summary>The retainer board (standalone window), opened by its own button in the bell overlay.</summary>
