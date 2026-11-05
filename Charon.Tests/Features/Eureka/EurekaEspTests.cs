@@ -65,6 +65,57 @@ public sealed class EurekaEspTests
         Assert.False(EurekaAggroRules.IgnoresYou(mobLevel: 0, playerLevel: 30));
     }
 
+    [Theory]
+    [InlineData(10, 10, EurekaExpBand.Chain)] // your own level chains
+    [InlineData(15, 10, EurekaExpBand.Chain)]
+    [InlineData(16, 10, EurekaExpBand.Peak)]  // peaks at 6 above
+    [InlineData(18, 10, EurekaExpBand.Peak)]
+    [InlineData(19, 10, EurekaExpBand.None)]  // more than 8 apart: nothing
+    [InlineData(9, 10, EurekaExpBand.Low)]    // below you: no chain
+    [InlineData(2, 10, EurekaExpBand.Low)]
+    [InlineData(1, 10, EurekaExpBand.None)]
+    [InlineData(0, 10, EurekaExpBand.Unknown)]
+    [InlineData(5, 0, EurekaExpBand.Unknown)]
+    public void ExpBand_FollowsTheWikiRule(int mob, int player, EurekaExpBand expected)
+    {
+        Assert.Equal(expected, EurekaExp.Band(mob, player));
+    }
+
+    [Fact]
+    public void Fates_AreFoundById_AndBunniesKeepTheirOwnName()
+    {
+        var dragon = EurekaFates.Find(1353);
+        Assert.Equal("Ash Dragon", dragon!.Value.Boss);
+        Assert.Equal(EurekaFateKind.NotoriousMonster, dragon.Value.Kind);
+        Assert.Equal("NM Ash Dragon Lv22 · 45% · 230y", EurekaFates.Label(dragon, "Ash the Magic Dragon", 45, 230.2f));
+
+        var bunny = EurekaFates.Find(1367);
+        Assert.Equal(EurekaFateKind.Bunny, bunny!.Value.Kind);
+        Assert.Equal("Bunny FATE · Down the Rabbit Hole · 0% · 12y",
+            EurekaFates.Label(bunny, "Down the Rabbit Hole", 0, 12f));
+
+        Assert.Null(EurekaFates.Find(1));
+        Assert.Equal("FATE Something New · 10% · 5y", EurekaFates.Label(null, "Something New", 10, 5f));
+    }
+
+    [Fact]
+    public void FateData_Has72Fates_AllInEureka_NoDuplicates()
+    {
+        Assert.Equal(72, EurekaFateData.Fates.Length);
+        Assert.Equal(72, EurekaFateData.Fates.Select(f => f.FateId).Distinct().Count());
+        Assert.All(EurekaFateData.Fates, f => Assert.True(EurekaZones.IsEureka(f.Territory)));
+        Assert.Equal(5, EurekaFateData.Fates.Count(f => f.Kind == EurekaFateKind.Bunny));
+    }
+
+    [Fact]
+    public void OnlyPreparingAndRunningFates_AreLive()
+    {
+        Assert.True(EurekaFates.IsLive(3));
+        Assert.True(EurekaFates.IsLive(4));
+        Assert.False(EurekaFates.IsLive(5));
+        Assert.False(EurekaFates.IsLive(7));
+    }
+
     [Fact]
     public void TheData_HasNoDuplicateKeys_AndNoUnknownRows()
     {

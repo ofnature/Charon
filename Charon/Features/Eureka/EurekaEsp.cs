@@ -120,6 +120,96 @@ public static class EurekaAggroRules
         mobLevel > 0 && playerLevel > 0 && playerLevel - mobLevel >= LevelsAboveToBeIgnored;
 }
 
+/// <summary>How much elemental EXP a mob is worth to you, by level difference (Console Games Wiki,
+/// "Elemental EXP"): more for a mob above you, peaking at 6 levels higher; nothing once the gap is more
+/// than 8 either way; and only a kill at or above your level starts or continues an EXP chain.</summary>
+public enum EurekaExpBand
+{
+    /// <summary>A level was not read.</summary>
+    Unknown,
+
+    /// <summary>More than 8 levels apart.</summary>
+    None,
+
+    /// <summary>Below you: some EXP, no chain.</summary>
+    Low,
+
+    /// <summary>Your level up to 5 above: good EXP, and it chains.</summary>
+    Chain,
+
+    /// <summary>6 to 8 above: the most EXP a kill gives, and it chains.</summary>
+    Peak,
+}
+
+public static class EurekaExp
+{
+    public const int PeakLevelsAbove = 6;
+    public const int MaxLevelGap = 8;
+
+    public static EurekaExpBand Band(int mobLevel, int playerLevel)
+    {
+        if (mobLevel <= 0 || playerLevel <= 0)
+            return EurekaExpBand.Unknown;
+        var above = mobLevel - playerLevel;
+        if (Math.Abs(above) > MaxLevelGap)
+            return EurekaExpBand.None;
+        if (above >= PeakLevelsAbove)
+            return EurekaExpBand.Peak;
+        return above >= 0 ? EurekaExpBand.Chain : EurekaExpBand.Low;
+    }
+
+    public static string Label(EurekaExpBand band) => band switch
+    {
+        EurekaExpBand.Peak => "peak EXP",
+        EurekaExpBand.Chain => "EXP, chains",
+        EurekaExpBand.Low => "low EXP",
+        EurekaExpBand.None => "no EXP",
+        _ => "",
+    };
+}
+
+public enum EurekaFateKind
+{
+    NotoriousMonster,
+    Bunny,
+
+    /// <summary>Hydatos's Ovni and the Baldesion Arsenal support FATE.</summary>
+    Special,
+}
+
+/// <summary>One Eureka FATE (<see cref="EurekaFateData"/>). <paramref name="Boss"/> is empty for bunny FATEs.</summary>
+public readonly record struct EurekaFateInfo(ushort FateId, uint Territory, string Boss, int Level, EurekaFateKind Kind);
+
+public static class EurekaFates
+{
+    private static readonly Dictionary<ushort, EurekaFateInfo> ById = Build();
+
+    private static Dictionary<ushort, EurekaFateInfo> Build()
+    {
+        var map = new Dictionary<ushort, EurekaFateInfo>();
+        foreach (var fate in EurekaFateData.Fates)
+            map.TryAdd(fate.FateId, fate);
+        return map;
+    }
+
+    public static EurekaFateInfo? Find(ushort fateId) => ById.TryGetValue(fateId, out var info) ? info : null;
+
+    /// <summary>Dalamud's FateState: 3 = Preparing, 4 = Running. Ending/Ended/Failed are over.</summary>
+    public static bool IsLive(int state) => state is 3 or 4;
+
+    /// <summary>"NM Ash Dragon Lv22 · 45% · 230y". A FATE missing from the table still gets its own name.</summary>
+    public static string Label(EurekaFateInfo? info, string fateName, int progress, float distance)
+    {
+        var what = info switch
+        {
+            { Kind: EurekaFateKind.Bunny } => $"Bunny FATE · {fateName}",
+            { Boss.Length: > 0 } i => $"{(i.Kind == EurekaFateKind.NotoriousMonster ? "NM" : "FATE")} {i.Boss} Lv{i.Level}",
+            _ => $"FATE {fateName}",
+        };
+        return $"{what} · {progress}% · {distance:0}y";
+    }
+}
+
 /// <summary>Spot lists by distance.</summary>
 public static class EurekaSpots
 {

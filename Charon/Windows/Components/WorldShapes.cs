@@ -126,11 +126,15 @@ public sealed class WorldShapes
     }
 
     /// <summary>Text centred just above a world point; nothing when the point is off screen.</summary>
-    public void Label(ImDrawListPtr drawList, Vector3 at, string text, uint color)
+    public void Label(ImDrawListPtr drawList, Vector3 at, string text, uint color) => Label(drawList, at, text, color, 0);
+
+    /// <summary>The same, raised <paramref name="linesUp"/> text lines so a second label stacks above the first.</summary>
+    public void Label(ImDrawListPtr drawList, Vector3 at, string text, uint color, int linesUp)
     {
         if (!_gameGui.WorldToScreen(at, out var screen))
             return;
         var size = ImGui.CalcTextSize(text);
-        drawList.AddText(new Vector2(screen.X - size.X / 2f, screen.Y - size.Y - 2f), color, text);
+        var raise = linesUp * ImGui.GetTextLineHeightWithSpacing();
+        drawList.AddText(new Vector2(screen.X - size.X / 2f, screen.Y - size.Y - 2f - raise), color, text);
     }
 }

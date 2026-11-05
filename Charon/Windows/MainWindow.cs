@@ -9,6 +9,7 @@ using Dalamud.Interface.Utility.Raii;
 using Dalamud.Interface.Windowing;
 using Charon.Features.AutoAccept;
 using Charon.Features.AutoPillion;
+using Charon.Features.Eureka;
 using Charon.Features.Follow;
 using Charon.Features.Gear;
 using Charon.Features.GroupManagement;
@@ -134,6 +135,8 @@ public sealed class MainWindow : Window
     private readonly Func<string> _frameStatus;
     private readonly BotRenderProfile _botRender;
     private readonly Func<string> _eurekaStatus;
+    private readonly Func<(uint Territory, IReadOnlySet<ushort>? Live)> _eurekaNow;
+    private int _eurekaZonePick; // 0 = the zone you are in, else 1-4 = Anemos..Hydatos
     private readonly Func<string> _lootStatus;
     private readonly Func<string> _levelingStatus;
     private readonly QuickKillExecutor _quickKill;
@@ -244,7 +247,8 @@ public sealed class MainWindow : Window
         Action<bool> setMinimized,
         Func<string> frameStatus,
         BotRenderProfile botRender,
-        Func<string> eurekaStatus)
+        Func<string> eurekaStatus,
+        Func<(uint Territory, IReadOnlySet<ushort>? Live)> eurekaNow)
         : base("Charon##CharonMain")
     {
         BgAlpha = CharonTheme.PanelAlpha;
@@ -300,6 +304,7 @@ public sealed class MainWindow : Window
         _frameStatus = frameStatus;
         _botRender = botRender;
         _eurekaStatus = eurekaStatus;
+        _eurekaNow = eurekaNow;
         _isFreeTrial = isFreeTrial;
         _lootWatcher = lootWatcher;
         _collection = collection;
@@ -3511,8 +3516,40 @@ public sealed class MainWindow : Window
             }
             CharonTheme.HelpMarker("Shown only while you have the coffer hunt buff (Cache Me if You Can), with\n"
                                    + "a line to the nearest spot. Pagos, Pyros and Hydatos; Anemos has no bunnies.");
+
+            var fates = _config.EurekaEspFates;
+            if (ImGui.Checkbox("Lines to live NMs and bunny FATEs##eureka", ref fates))
+            {
+                _config.EurekaEspFates = fates;
+                _save();
+            }
+            CharonTheme.HelpMarker("A line from you to every notorious monster, bunny FATE and Ovni that is up,\n"
+                                   + "wherever it is in the zone, labelled with the boss, its level, progress and\n"
+                                   + "distance. NM list from EurekaHelper (Apache-2.0).");
+
+            var exp = _config.EurekaEspExp;
+            if (ImGui.Checkbox("Colour mobs by EXP##eureka", ref exp))
+            {
+                _config.EurekaEspExp = exp;
+                _save();
+            }
+            CharonTheme.HelpMarker("Mob labels say what a kill is worth at your elemental level (Console Games\n"
+                                   + "Wiki): bright green = peak EXP (6-8 levels above you), green = EXP that\n"
+                                   + "chains (your level to 5 above), white = low EXP (below you, no chain),\n"
+                                   + "grey = no EXP (more than 8 levels apart).");
+
+            var triggers = _config.EurekaEspNmTriggers;
+            if (ImGui.Checkbox("NM trigger mobs##eureka", ref triggers))
+            {
+                _config.EurekaEspNmTriggers = triggers;
+                _save();
+            }
+            CharonTheme.HelpMarker("Over every mob whose kills spawn a notorious monster: which NM, and whether the\n"
+                                   + "weather and time of day allow it now (amber) or how long until they do.");
             ImGui.Unindent();
         }
+
+        DrawEurekaSpawnTable();
 
         ImGui.Spacing();
         Styling.Text("Legend", CharonTheme.TextMuted);
@@ -3529,6 +3566,70 @@ public sealed class MainWindow : Window
 
         ImGui.Spacing();
         DrawStatusLine(_eurekaStatus(), CharonTheme.TextDim);
+    }
+
+    /// <summary>Every NM in one Eureka zone: its trigger mob, what it needs and when that next happens.</summary>
+    private void DrawEurekaSpawnTable()
+    {
+        var (here, live) = _eurekaNow();
+        var zones = new[] { EurekaZones.Anemos, EurekaZones.Pagos, EurekaZones.Pyros, EurekaZones.Hydatos };
+        var inEureka = EurekaZones.IsEureka(here);
+        var labels = new[] { inEureka ? $"Where I am ({EurekaZones.Name(here)})" : "Where I am (not in Eureka)" }
+            .Concat(zones.Select(EurekaZones.Name)).ToArray();
+        var zone = _eurekaZonePick > 0 ? zones[_eurekaZonePick - 1] : inEureka ? here : EurekaZones.Anemos;
+
+        ImGui.Spacing();
+        Styling.Text("Notorious monsters", CharonTheme.TextMuted);
+        ImGui.SetNextItemWidth(220f);
+        ImGui.Combo("##eurekaZone", ref _eurekaZonePick, labels, labels.Length);
+
+        var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        var weather = EorzeaClock.WeatherAt(zone, now);
+        var nextWeather = (now / EorzeaClock.WeatherPeriodSeconds + 1) * EorzeaClock.WeatherPeriodSeconds;
+        var hour = EorzeaClock.Hour(now);
+        DrawStatusLine($"{EurekaZones.Name(zone)} now: {EurekaWeather.Name(weather)} · {(EorzeaClock.IsNight(now) ? "night" : "day")} "
+                       + $"(Eorzea {hour:00}:00) · weather changes in {EurekaSpawns.Span(nextWeather - now)}"
+                       + (zone == here && live == null ? " · live NMs not read (ESP off)" : ""),
+            CharonTheme.TextDim);
+
+        if (!ImGui.BeginTable("eurekaNms", 4,
+                ImGuiTableFlags.BordersInnerV | ImGuiTableFlags.RowBg | ImGuiTableFlags.SizingFixedFit))
+            return;
+        ImGui.TableSetupColumn("NM", ImGuiTableColumnFlags.WidthFixed, 190f);
+        ImGui.TableSetupColumn("Kill", ImGuiTableColumnFlags.WidthFixed, 170f);
+        ImGui.TableSetupColumn("Needs", ImGuiTableColumnFlags.WidthStretch);
+        ImGui.TableSetupColumn("When", ImGuiTableColumnFlags.WidthFixed, 130f);
+        ImGui.TableHeadersRow();
+
+        foreach (var trigger in EurekaSpawns.InZone(zone)
+                     .OrderBy(t => EurekaFates.Find(t.FateId)?.Level ?? 0))
+        {
+            var nm = EurekaFates.Find(trigger.FateId);
+            ImGui.TableNextRow();
+            ImGui.TableNextColumn();
+            ImGui.TextUnformatted(nm is { } n ? $"{n.Boss} (Lv{n.Level})" : $"FATE {trigger.FateId}");
+            ImGui.TableNextColumn();
+            ImGui.TextUnformatted(trigger.TriggerName);
+            ImGui.TableNextColumn();
+            var needs = trigger.Needs();
+            ImGui.TextColored(needs.Length == 0 ? CharonTheme.TextDisabled : CharonTheme.TextDim,
+                needs.Length == 0 ? "anytime" : needs);
+            ImGui.TableNextColumn();
+            if (zone == here && live != null && live.Contains(trigger.FateId))
+            {
+                ImGui.TextColored(CharonTheme.AccentAmber, "UP NOW");
+                continue;
+            }
+
+            var window = EurekaSpawns.NextWindow(trigger, now);
+            var open = window is { } w && w.Start <= now;
+            ImGui.TextColored(open ? CharonTheme.StatusGreen : CharonTheme.TextDim, EurekaSpawns.Describe(window, now));
+        }
+
+        ImGui.EndTable();
+        DrawStatusLine("\"When\" is the weather and time of day only: an NM also needs its trigger mobs killed, and "
+                       + "respawns about 2 hours after it was last defeated, which Charon cannot see. Spawn data "
+                       + "from EurekaHelper (Apache-2.0); Mercury tracks the respawn timers.", CharonTheme.TextDisabled);
     }
 
     private void DrawVariantSection()

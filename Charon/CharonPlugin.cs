@@ -28,7 +28,7 @@ namespace Charon;
 
 public sealed class CharonPlugin : IDalamudPlugin
 {
-    public const string PluginVersion = "0.1.59";
+    public const string PluginVersion = "0.1.60";
     private const string CommandName = "/charon";
 
     /// <summary>
@@ -344,7 +344,8 @@ public sealed class CharonPlugin : IDalamudPlugin
         IGameConfig gameConfig,
         IChatGui chatGui,
         INotificationManager notifications,
-        IPluginLog log)
+        IPluginLog log,
+        IFateTable fateTable)
     {
         _pluginInterface = pluginInterface;
         _commandManager = commandManager;
@@ -631,7 +632,8 @@ public sealed class CharonPlugin : IDalamudPlugin
             SetMainMinimized,
             () => _frameWatch.Status,
             _botRender,
-            EurekaStatus);
+            EurekaStatus,
+            EurekaNow);
         _mainWindow.IsOpen = _config.MainWindowVisible && !_config.MainWindowMinimized;
         _windowSystem.AddWindow(_mainWindow);
 
@@ -705,9 +707,10 @@ public sealed class CharonPlugin : IDalamudPlugin
             () => _ddReader.GetSnapshot().ContentId);
         _windowSystem.AddWindow(_ddEsp);
 
-        _eurekaEsp = new EurekaEspOverlay(_objectTable, gameGui, _clientState,
+        _eurekaEsp = new EurekaEspOverlay(_objectTable, gameGui, _clientState, fateTable,
             () => _config.EurekaEspMobs, () => _config.EurekaEspMobNames,
-            () => _config.EurekaEspElementalSpots, () => _config.EurekaEspCofferSpots);
+            () => _config.EurekaEspElementalSpots, () => _config.EurekaEspCofferSpots,
+            () => _config.EurekaEspFates, () => _config.EurekaEspExp, () => _config.EurekaEspNmTriggers);
         _windowSystem.AddWindow(_eurekaEsp);
 
         _cursorFinder = new CursorFinderOverlay(
@@ -1197,6 +1200,17 @@ public sealed class CharonPlugin : IDalamudPlugin
     }
 
     /// <summary>The Eureka ESP's Debug line: what it drew, or why it is not drawing.</summary>
+    /// <summary>The zone for the Eureka page, and the FATEs live there - null when the overlay is not
+    /// running in Eureka, since its set would be stale.</summary>
+    private (uint Territory, IReadOnlySet<ushort>? Live) EurekaNow()
+    {
+        var territory = (uint)_clientState.TerritoryType;
+        var live = _config.EurekaEspEnabled && _eurekaEsp.IsOpen && Charon.Features.Eureka.EurekaZones.IsEureka(territory)
+            ? _eurekaEsp.LiveFateIds
+            : null;
+        return (territory, live);
+    }
+
     private string EurekaStatus()
     {
         if (!_config.EurekaEspEnabled)

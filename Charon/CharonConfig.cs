@@ -278,6 +278,15 @@ public sealed class CharonConfig : IPluginConfiguration
     /// <summary>Bunny coffer spots, and a line to the nearest, while the coffer hunt is on.</summary>
     public bool EurekaEspCofferSpots { get; set; } = true;
 
+    /// <summary>A line to every live Eureka FATE (NMs, bunny FATEs, Ovni), at any distance.</summary>
+    public bool EurekaEspFates { get; set; } = true;
+
+    /// <summary>Colour mob labels by how much elemental EXP they are worth to you.</summary>
+    public bool EurekaEspExp { get; set; } = true;
+
+    /// <summary>Over each NM trigger mob: the NM it spawns, and whether the weather and time allow it now.</summary>
+    public bool EurekaEspNmTriggers { get; set; } = true;
+
     /// <summary>Palace Pal's saved spots have been imported on this machine (Charon.json and the spot
     /// file are both per machine). The import button stays available — it is idempotent.</summary>
     public bool PalacePalImported { get; set; }
