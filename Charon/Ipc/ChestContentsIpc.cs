@@ -18,7 +18,7 @@ namespace Charon.Ipc;
 /// | Charon.Chest.GetContentsJson     | Func&lt;string&gt;       | every captured chest page: stacks (HQ its own flag), units, capturedUtc, and whether anything is known at all |
 /// | Charon.Chest.Status              | Func&lt;string&gt;       | one line: pages, stacks, units and how old the snapshot is                                                       |
 /// | Charon.Containers.GetItemJson    | Func&lt;uint, string&gt; | ONE answer across both stores: per retainer NQ/HQ with its age, per chest page NQ/HQ, and the total             |
-/// | Charon.Chest.RequestFetch        | Func&lt;uint, int, bool, bool&gt; | itemId, quantity, hq → withdraw into the bags (HQ-only refused); false = refused                   |
+/// | Charon.Chest.RequestFetch        | Func&lt;uint, int, bool, bool&gt; | itemId, quantity, hq → withdraw into the bags (HQ-only refused), loading unviewed tabs itself; false = refused |
 /// | Charon.Chest.RequestDeposit      | Func&lt;uint, int, bool, bool&gt; | itemId, quantity, hq → deposit up to quantity of that quality from the bags; false = refused        |
 /// | Charon.Chest.FetchBusy           | Func&lt;bool&gt;         | true while ANY chest move runs (a fetch, a deposit, or the player's own buttons)                               |
 /// | Charon.Chest.FetchStatus         | Func&lt;string&gt;       | the last finished chest operation, or why the last one was refused ("Deposited 2 of 2 moves")                  |
@@ -167,6 +167,8 @@ public sealed class ChestContentsIpc : IDisposable
     /// <summary>
     /// Withdraw from the FC chest for another plugin. The chest is the source BEFORE retainers in
     /// a crafter's order, and unlike a retainer it needs no bell — only the chest window open.
+    /// Nobody has to click tabs: true means accepted (moving, or loading tabs to find the item), and
+    /// the outcome is on FetchStatus once FetchBusy goes false — including "not in the chest".
     ///
     /// HQ-ONLY IS REFUSED, not silently substituted: the underlying withdraw drains NQ first and
     /// then HQ, so it cannot promise HQ units, and handing a crafter NQ when it asked for HQ would
@@ -199,23 +201,18 @@ public sealed class ChestContentsIpc : IDisposable
             return false;
         }
 
-        // The store says WHICH page holds it; the withdraw itself re-reads the live page, so a
-        // stale snapshot costs a refusal rather than a wrong move.
-        var pages = ChestContents.Find(_chest(), itemId);
-        if (pages.Count == 0)
-        {
-            Status = $"RequestFetch → refused (no page is known to hold {itemId})";
-            return false;
-        }
-
-        var page = pages.OrderByDescending(p => p.Nq + p.Hq).First().Page;
-        var queued = _fcChest.StartWithdrawAmount(page, itemId, quantity);
-        var started = queued > 0;
+        // The store only says which tab to LOOK AT first: the withdraw reads the live tabs, and loads any
+        // tab not viewed this session by switching the chest to it, so a stale or empty snapshot costs a
+        // few seconds of looking rather than a refusal or a wrong move.
+        var likely = ChestContents.Find(_chest(), itemId)
+            .OrderByDescending(p => p.Nq + p.Hq).Select(p => p.Page).ToList();
+        var started = _fcChest.StartFetch(itemId, quantity, likely);
 
         Status = started
-            ? $"RequestFetch → {itemId} x{quantity} from page {page}: {queued} move(s)"
+            ? $"RequestFetch → {itemId} x{quantity} (snapshot pages: {(likely.Count == 0 ? "none" : string.Join(", ", likely))}): {_fcChest.Status}"
             : $"RequestFetch → refused ({_fcChest.LastOperation})";
-        _log.Debug("[Chest] IPC fetch {0} x{1} page {2} → {3} move(s)", itemId, quantity, page, queued);
+        _log.Debug("[Chest] IPC fetch {0} x{1}, snapshot pages [{2}] → {3}", itemId, quantity,
+            string.Join(", ", likely), started ? _fcChest.Status : _fcChest.LastOperation);
         return started;
     }
 

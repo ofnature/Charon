@@ -165,7 +165,8 @@ public sealed unsafe class FcChestManager
     public IReadOnlyList<ChestLogEntry> OperationLog => _operationLog;
 
     public bool Busy => _pending.Count > 0 || _inFlight != null || _seedReturn != null
-                        || _qtyQueue.Count > 0 || _qtyInFlight != null || _walkTarget > 0;
+                        || _qtyQueue.Count > 0 || _qtyInFlight != null || _walkTarget > 0
+                        || _fetchSearch != null;
 
     /// <summary>Set by <see cref="StopAfterCurrentMove"/>; cleared when the stop lands or a new operation starts.</summary>
     private bool _stopRequested;
@@ -328,6 +329,21 @@ public sealed unsafe class FcChestManager
             return 0;
         }
 
+        var moves = PlanWithdrawFrom([page], itemId, amount);
+        if (moves.Count == 0)
+        {
+            LastOperation = "Withdraw: no room in bags (or nothing to take)";
+            OperationJustFinished = true;
+            return 0;
+        }
+
+        BeginQuantityOperation(moves, "Withdrew");
+        return moves.Count;
+    }
+
+    /// <summary>Withdraw moves for up to <paramref name="amount"/> of the item from these (loaded) pages' stacks.</summary>
+    private List<PlannedMove> PlanWithdrawFrom(IReadOnlyList<int> pages, uint itemId, int amount)
+    {
         var moves = new List<PlannedMove>();
         var empties = FreeSlots(PlayerBags);
 
@@ -339,7 +355,8 @@ public sealed unsafe class FcChestManager
             if (remaining <= 0)
                 break;
 
-            var chestStacks = ReadInvStacks(PageType(page)).Where(s => s.ItemId == itemId && s.Hq == hq).ToList();
+            var chestStacks = pages.SelectMany(p => ReadInvStacks(PageType(p)))
+                .Where(s => s.ItemId == itemId && s.Hq == hq).ToList();
             if (chestStacks.Count == 0)
                 continue;
 
@@ -354,15 +371,134 @@ public sealed unsafe class FcChestManager
             empties = empties.Where(e => !used.Contains((e.Container, e.Slot))).ToList();
         }
 
-        if (moves.Count == 0)
+        return moves;
+    }
+
+    // --- Fetch for another plugin: finds the item's tab itself --------------------------------
+
+    /// <summary>A fetch still looking for its item: the tabs left to load, best guess first.</summary>
+    private sealed record FetchSearch(uint ItemId, int Amount, Queue<int> Pages, List<int> NoLoad);
+
+    private FetchSearch? _fetchSearch;
+    private int _fetchTab = -1;
+    private bool _fetchTabFired;
+    private DateTime _fetchTabDeadlineUtc;
+
+    /// <summary>
+    /// Withdraw <paramref name="amount"/> of an item (NQ first, then HQ) for another plugin with nobody at
+    /// the keyboard: tabs not viewed this session are loaded by switching the chest to them, the snapshot's
+    /// <paramref name="likelyPages"/> first and then every other tab, until the loaded tabs hold the amount
+    /// or none is left; then the withdraw runs on the move queue like any other, from every loaded tab that
+    /// holds the item. False, with the reason in <see cref="LastOperation"/>, when it cannot start — including
+    /// every tab already loaded and none holding the item.
+    /// </summary>
+    public bool StartFetch(uint itemId, int amount, IReadOnlyList<int> likelyPages)
+    {
+        string? refusal = !_mover.Available ? "quantity moves unavailable (signature not resolved)"
+            : Busy ? "another operation is still running"
+            : !IsChestOpen() ? "the FC chest isn't open"
+            : amount <= 0 ? "nothing asked for"
+            : null;
+        if (refusal != null)
         {
-            LastOperation = "Withdraw: no room in bags (or nothing to take)";
+            LastOperation = $"Withdraw: {refusal}";
             OperationJustFinished = true;
-            return 0;
+            return false;
         }
 
-        BeginQuantityOperation(moves, "Withdrew");
-        return moves.Count;
+        var unloaded = ChestTabSearch.Order(likelyPages, IsPageLoaded);
+        if (ChestTabSearch.Done(LoadedUnits(itemId), amount, unloaded.Count))
+            return QueueFetch(itemId, amount, []);
+
+        _operationLog.Clear();
+        _stopRequested = false;
+        _fetchSearch = new FetchSearch(itemId, amount, new Queue<int>(unloaded), []);
+        _fetchTab = -1;
+        Status = $"looking for {ItemName(itemId)} in the chest…";
+        return true;
+    }
+
+    /// <summary>Units of the item, any quality, on the tabs loaded right now.</summary>
+    private int LoadedUnits(uint itemId) =>
+        Enumerable.Range(1, 5).Where(IsPageLoaded)
+            .SelectMany(p => ReadInvStacks(PageType(p))).Where(s => s.ItemId == itemId).Sum(s => s.Quantity);
+
+    private bool QueueFetch(uint itemId, int amount, IReadOnlyList<int> noLoad)
+    {
+        var loaded = Enumerable.Range(1, 5).Where(IsPageLoaded).ToList();
+        var moves = PlanWithdrawFrom(loaded, itemId, amount);
+        if (moves.Count > 0)
+        {
+            BeginQuantityOperation(moves, "Withdrew");
+            return true;
+        }
+
+        LastOperation = LoadedUnits(itemId) > 0
+            ? "Withdraw: no room in the bags"
+            : $"Withdraw: {ItemName(itemId)} is not in the chest (looked at tab(s) {string.Join(", ", loaded)}"
+              + (noLoad.Count > 0 ? $"; tab(s) {string.Join(", ", noLoad)} would not load)" : ")");
+        Status = "idle";
+        OperationJustFinished = true;
+        return false;
+    }
+
+    /// <summary>
+    /// One step of a fetch's tab search per call: pick the next unloaded tab, switch the chest to it (the
+    /// game's own tab click), wait for its contents to load — that is the proof the switch worked — and look
+    /// again. A tab that does not load in 4s is skipped (it may not exist in this chest) rather than ending
+    /// the fetch.
+    /// </summary>
+    private void DriveFetchSearch(DateTime nowUtc)
+    {
+        var search = _fetchSearch!;
+        if (_fetchTab < 0)
+        {
+            while (search.Pages.Count > 0 && IsPageLoaded(search.Pages.Peek()))
+                search.Pages.Dequeue();
+
+            if (ChestTabSearch.Done(LoadedUnits(search.ItemId), search.Amount, search.Pages.Count))
+            {
+                _fetchSearch = null;
+                if (QueueFetch(search.ItemId, search.Amount, search.NoLoad))
+                    _qtySettleUntilUtc = nowUtc + TabSettle; // tabs just switched — let the session settle
+                return;
+            }
+
+            _fetchTab = search.Pages.Dequeue();
+            _fetchTabFired = false;
+            _fetchTabDeadlineUtc = nowUtc + TimeSpan.FromSeconds(4);
+            Status = $"looking for {ItemName(search.ItemId)}: loading chest tab {_fetchTab}…";
+            return;
+        }
+
+        var addon = _gameGui.GetAddonByName(ChestAddonName);
+        if (addon.IsNull)
+            return; // the closed-chest abort in Update ends the search
+
+        var unit = (AtkUnitBase*)addon.Address;
+        if (IsPageLoaded(_fetchTab))
+        {
+            _log.Debug("FC chest: tab {0} loaded for a fetch (radio says {1}, value 2 says {2})",
+                _fetchTab, FcChestUi.CurrentPage(unit), FcChestUi.TabValue(unit));
+            _fetchTab = -1;
+            return;
+        }
+
+        if (!_fetchTabFired)
+        {
+            _log.Debug("FC chest: switching to tab {0} to look for {1}", _fetchTab, ItemName(search.ItemId));
+            FcChestUi.SwitchToPage(unit, _fetchTab);
+            _fetchTabFired = true;
+            return;
+        }
+
+        if (nowUtc > _fetchTabDeadlineUtc)
+        {
+            _log.Debug("FC chest: tab {0} did not load in 4s — skipped (radio says {1}, value 2 says {2})",
+                _fetchTab, FcChestUi.CurrentPage(unit), FcChestUi.TabValue(unit));
+            search.NoLoad.Add(_fetchTab);
+            _fetchTab = -1;
+        }
     }
 
     /// <summary>
@@ -878,7 +1014,7 @@ public sealed unsafe class FcChestManager
     public void Update(DateTime nowUtc)
     {
         if (_pending.Count == 0 && _inFlight == null && _seedReturn == null
-            && _qtyQueue.Count == 0 && _qtyInFlight == null && _walkTarget <= 0)
+            && _qtyQueue.Count == 0 && _qtyInFlight == null && _walkTarget <= 0 && _fetchSearch == null)
         {
             _stopRequested = false; // nothing left to stop
             return;
@@ -898,7 +1034,10 @@ public sealed unsafe class FcChestManager
             _qtyInFlight = null;
             _walkTarget = -1;
             _depositAfterWalk = false;
+            _fetchSearch = null;
+            _fetchTab = -1;
             Status = "aborted — chest closed";
+            LastOperation = "Aborted — the chest closed mid-run"; // FetchStatus must not show an older result
             OperationJustFinished = true;
             return;
         }
@@ -908,6 +1047,12 @@ public sealed unsafe class FcChestManager
             && (_seedReturn == null || _pending.Count > 0))
         {
             StopBetweenMoves();
+            return;
+        }
+
+        if (_fetchSearch != null)
+        {
+            DriveFetchSearch(nowUtc);
             return;
         }
 
@@ -1059,7 +1204,9 @@ public sealed unsafe class FcChestManager
     private void StopBetweenMoves()
     {
         var dropped = _qtyQueue.Count + _pending.Count;
-        LastOperation = _walkTarget > 0
+        LastOperation = _fetchSearch != null
+            ? $"Withdraw: stopped on request while looking for {ItemName(_fetchSearch.ItemId)}"
+            : _walkTarget > 0
             ? "Deposit all: stopped on request while loading tabs"
             : (_qtyTotal > 0
                   ? $"{_qtyVerb} {_qtySucceeded} of {_qtyTotal}"
@@ -1070,6 +1217,8 @@ public sealed unsafe class FcChestManager
         _seedReturn = null;
         _walkTarget = -1;
         _depositAfterWalk = false;
+        _fetchSearch = null;
+        _fetchTab = -1;
         _qtyTotal = 0;
         _stopRequested = false;
         Status = "stopped";
