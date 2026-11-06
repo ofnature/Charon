@@ -112,6 +112,20 @@ public sealed unsafe class VentureRunner
     /// <summary>The retainer's menu has been closed by us — the run is finished with it.</summary>
     private bool _closedThisRetainer;
 
+    /// <summary>Set by <see cref="StopAfterCurrentRetainer"/>; cleared by Arm and Stop.</summary>
+    private bool _stopAfterCurrent;
+
+    /// <summary>
+    /// The suite's "stop after this run": the retainer in hand is finished (collected, sent out, back at
+    /// the list), then the run stops instead of taking the next one. With nobody in hand, at the list,
+    /// it stops on the next tick. Does nothing while disarmed.
+    /// </summary>
+    public void StopAfterCurrentRetainer()
+    {
+        if (Armed)
+            _stopAfterCurrent = true;
+    }
+
     /// <summary>
     /// The venture the next retainer should be sent on, as planned by the window (0 = no plan: the runner
     /// then only ever reassigns or takes quick exploration, which is exactly what it did before).
@@ -151,6 +165,7 @@ public sealed unsafe class VentureRunner
         _targetSent = false;
         _sentThisRetainer = false;
         _closedThisRetainer = false;
+        _stopAfterCurrent = false;
         _selectAttempts = 0;
         _lastSessionUtc = DateTime.UtcNow;
         _repeats = 0;
@@ -207,6 +222,7 @@ public sealed unsafe class VentureRunner
         _targetSent = false;
         _sentThisRetainer = false;
         _closedThisRetainer = false;
+        _stopAfterCurrent = false;
         WantedTaskId = 0; // a stopped operation leaves no queued intention behind
         _repeats = 0;
         _lastStep = string.Empty;
@@ -236,6 +252,16 @@ public sealed unsafe class VentureRunner
             if (!VentureStep.SessionEnded(nowUtc - _lastSessionUtc, SessionGrace) && TryAdvanceTalk(nowUtc))
             {
                 _lastSessionUtc = nowUtc;
+                return;
+            }
+
+            // Asked to stop after this run: only with nobody in hand — at the list with no retainer window up,
+            // and a retainer this run aimed at either untouched or already closed (a selection still settling
+            // counts as in hand, or she would open with nobody to serve her).
+            if (_stopAfterCurrent && screen == VentureScreen.None && listOpen
+                && (TargetName == null || (_targetOpened ? _closedThisRetainer : _selectAttempts == 0)))
+            {
+                Stop("stopped on request");
                 return;
             }
 

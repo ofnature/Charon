@@ -144,6 +144,70 @@ public static class QuantityMovePlanner
         return moves;
     }
 
+    /// <summary>
+    /// Deposit up to <paramref name="amount"/> units of ONE item and quality (the caller passes only
+    /// those bag stacks and chest partials), for another plugin's exact request. Smallest bag stacks
+    /// go first (frees bag slots soonest); each fills matching partial chest stacks, then one empty
+    /// slot. With <paramref name="allowPartial"/> false only whole bag stacks that fit the amount move,
+    /// and only into empty slots. A chest without room for all of it still gets what fits.
+    /// </summary>
+    public static IReadOnlyList<PlannedMove> PlanDeposit(
+        IReadOnlyList<InvStack> bagStacks,
+        IReadOnlyList<InvStack> chestPartials,
+        IReadOnlyList<(int Container, short Slot)> emptyChestSlots,
+        int amount,
+        bool allowPartial)
+    {
+        var moves = new List<PlannedMove>();
+        if (amount <= 0)
+            return moves;
+
+        var partials = new Queue<(InvStack Stack, int Space)>(
+            chestPartials.Where(p => p.Quantity < p.MaxStack)
+                .OrderByDescending(p => p.Quantity)
+                .Select(p => (p, p.MaxStack - p.Quantity)));
+        var empties = new Queue<(int Container, short Slot)>(emptyChestSlots);
+
+        var remaining = amount;
+        foreach (var src in bagStacks.Where(s => s.Quantity > 0).OrderBy(s => s.Quantity))
+        {
+            if (remaining <= 0)
+                break;
+
+            var left = Math.Min(remaining, src.Quantity);
+            if (!allowPartial && left < src.Quantity)
+                continue; // MoveItemSlot moves whole stacks only
+
+            var slotLeft = src.Quantity;
+            while (allowPartial && left > 0 && partials.Count > 0)
+            {
+                var (dst, space) = partials.Dequeue();
+                var move = Math.Min(left, space);
+                moves.Add(new PlannedMove(src.ItemId, src.Container, src.Slot,
+                    dst.Container, dst.Slot, move, WholeStack: false));
+                left -= move;
+                slotLeft -= move;
+                remaining -= move;
+                if (space - move > 0)
+                    partials = Requeue(partials, (dst with { Quantity = dst.Quantity + move }, space - move));
+            }
+
+            if (left > 0 && empties.Count > 0)
+            {
+                var slot = empties.Dequeue();
+                moves.Add(new PlannedMove(src.ItemId, src.Container, src.Slot,
+                    slot.Container, slot.Slot, left, WholeStack: left == slotLeft));
+                remaining -= left;
+                left = 0;
+            }
+
+            if (left > 0)
+                break; // the chest is full — what fits is planned
+        }
+
+        return moves;
+    }
+
     /// <summary>How many units of the plan's item actually move (for previews/confirm text).</summary>
     public static int TotalUnits(IReadOnlyList<PlannedMove> moves) => moves.Sum(m => m.Quantity);
 

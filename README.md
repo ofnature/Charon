@@ -112,6 +112,7 @@ Consolidate and reclaim the Free Company chest, per page:
 - **Search bar on the game's chest window** — type and every item that doesn't match dims out, along with any tab holding no match. Nothing is moved; it just makes a 250-slot chest findable.
 - Manual trigger only, confirm before entrusting, gated on the chest being open with the page loaded; every move is verified against real chest state before the next one fires, and if the game refuses one the run stops and quotes the refusal rather than grinding through the queue.
 - **The chest's contents, readable by other plugins** — what the chest held when it was last opened on this machine, over IPC (`Charon.Chest.GetContentsJson`), with HQ counted as its own stack and every answer carrying the time it was captured. `Charon.Containers.GetItemJson` answers **"where is this item"** across the chest *and* every retainer at once, which is the question a crafter actually asks. A chest nobody has opened is reported as *unknown*, never as empty — a caller that reads those the same way gives up on materials you are holding.
+- **Withdraw and deposit for other plugins** — with the chest open, another plugin can ask Charon to take an exact amount out (`Charon.Chest.RequestFetch`) or put an exact amount of one item back (`Charon.Chest.RequestDeposit`), through the same verified move queue as the buttons above. Off until switched on (FC Chest → *Let other plugins take from and put into the FC chest*).
 - **Text Size** slider (100–250%) for the item list — scales the whole panel proportionally, persisted per install.
 
 ## Gear Equipper
@@ -232,6 +233,10 @@ Game-wide conveniences under their own TWEAKS section, most adapted from [Pandor
 ## Leveling Support (IPC)
 
 Groundwork for SealBreaker's leveling mode: `Charon.Leveling.*` gates expose every combat job's level and unlock state (one entry per exp *track* — a class and its job share one), each carrying its own blocker ("below 15 — run class hunts", "run the class quest", "needs Endwalker — not available on this account") so a round-robin leveler always knows *why* a job was skipped. Plus job switching via gearsets with a verified completion event, and the gil commands above. The account's level cap is derived live from its expansion ceiling, so a free trial reads 80 today and follows automatically if the trial ever grows.
+
+## Stop After This Run (IPC)
+
+The same two gates every plugin in the family answers, so one plugin can clear the way before it moves your character (Argus does, before it sends your submarines back out): `Charon.IsBusy` says whether any Charon run is in progress — a chest move, a retainer pass, ventures, entrusting, a gear pass, a fleet follow — and `Charon.RequestStopAfterRun` asks it to finish the step in hand (the item being moved, the retainer in front of you) and then stop, without starting the next one. Features that simply react when something happens, like auto-accepting invites or Heal Watch, stay as you set them.
 
 ## Deep Dungeon
 

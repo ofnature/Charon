@@ -124,6 +124,13 @@ public sealed unsafe class RetainerSelector
 
     public string Status { get; private set; } = "off";
 
+    /// <summary>
+    /// True while it drives a bell session it started, including closing the last bags and quitting
+    /// after the pass ends; false once stood down. Can outlive a bell the player walked away from, so
+    /// a caller asking "is Charon at work" also checks that the bell is still occupied.
+    /// </summary>
+    public bool Driving => _driving && _failures < MaxFailures;
+
     /// <summary>Newest first. What the selector saw and did, step by step.</summary>
     public StepTrace Trace => _trace;
 

@@ -111,6 +111,7 @@ public sealed unsafe class SaddlebagEntruster
 
         _moves = 0;
         _refusedItems.Clear();
+        _stopAfterCurrent = false;
         EnterPhase(Phase.Round);
         Status = "entrusting duplicates";
         return true;
@@ -120,6 +121,16 @@ public sealed unsafe class SaddlebagEntruster
     {
         if (Busy)
             Finish("cancelled");
+    }
+
+    /// <summary>Set by <see cref="StopAfterCurrentStack"/>; cleared by Start and Finish.</summary>
+    private bool _stopAfterCurrent;
+
+    /// <summary>The suite's "stop after this run": the stack being entrusted lands, no next one starts.</summary>
+    public void StopAfterCurrentStack()
+    {
+        if (Busy)
+            _stopAfterCurrent = true;
     }
 
     public void Update(DateTime now)
@@ -157,6 +168,13 @@ public sealed unsafe class SaddlebagEntruster
 
     private void RunRound(DateTime now)
     {
+        // Round is the gap between stacks: the one before has landed (or was given up on).
+        if (_stopAfterCurrent)
+        {
+            Finish($"stopped on request — {_moves} stack(s) entrusted");
+            return;
+        }
+
         if (now - _lastActionUtc < ActionPacing)
             return;
 
@@ -263,6 +281,7 @@ public sealed unsafe class SaddlebagEntruster
     private void Finish(string detail)
     {
         _phase = Phase.Idle;
+        _stopAfterCurrent = false;
         Status = detail;
     }
 

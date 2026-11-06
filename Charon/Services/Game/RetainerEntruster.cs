@@ -79,6 +79,20 @@ public sealed unsafe class RetainerEntruster
 
     public bool Armed { get; private set; }
 
+    /// <summary>Set by <see cref="StopAfterCurrentRetainer"/>; cleared by Start and Stop.</summary>
+    private bool _stopAfterCurrent;
+
+    /// <summary>
+    /// The suite's "stop after this run": the retainer being entrusted to is finished, then the round
+    /// stops instead of wanting the next one (the bell selector then closes up as it does after any
+    /// round). With nobody in hand it stops on the next beat. Does nothing while disarmed.
+    /// </summary>
+    public void StopAfterCurrentRetainer()
+    {
+        if (Armed)
+            _stopAfterCurrent = true;
+    }
+
     public string Status { get; private set; } = "idle";
 
     public StepTrace Trace => _trace;
@@ -92,7 +106,8 @@ public sealed unsafe class RetainerEntruster
     {
         get
         {
-            if (!Armed)
+            // Stopping after this run: keep wanting only the retainer in hand, so her bags stay open.
+            if (!Armed || (_stopAfterCurrent && _working == null))
                 return null;
 
             var names = _retainers.Read(DateTime.UtcNow).Select(r => r.Name).ToList();
@@ -117,6 +132,7 @@ public sealed unsafe class RetainerEntruster
         }
 
         Armed = true;
+        _stopAfterCurrent = false;
         _visited.Clear();
         _lastWanted = null;
         _working = null;
@@ -135,6 +151,7 @@ public sealed unsafe class RetainerEntruster
 
         Armed = false;
         _working = null;
+        _stopAfterCurrent = false;
         _trace.Record(DateTime.Now, $"Stop — {reason}");
         Status = reason;
     }
@@ -150,6 +167,13 @@ public sealed unsafe class RetainerEntruster
         else if (nowUtc - _bellLastSeenUtc > BellGoneGrace)
         {
             Stop(_entrusted > 0 ? $"left the bell — entrusted to {_entrusted}" : "left the bell");
+            return;
+        }
+
+        // Asked to stop after this run, and nobody is in hand (the last one finished, or none started).
+        if (_stopAfterCurrent && _working == null)
+        {
+            Stop($"stopped on request — entrusted to {_entrusted}");
             return;
         }
 

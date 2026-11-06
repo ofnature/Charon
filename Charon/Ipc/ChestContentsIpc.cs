@@ -18,15 +18,20 @@ namespace Charon.Ipc;
 /// | Charon.Chest.GetContentsJson     | Func&lt;string&gt;       | every captured chest page: stacks (HQ its own flag), units, capturedUtc, and whether anything is known at all |
 /// | Charon.Chest.Status              | Func&lt;string&gt;       | one line: pages, stacks, units and how old the snapshot is                                                       |
 /// | Charon.Containers.GetItemJson    | Func&lt;uint, string&gt; | ONE answer across both stores: per retainer NQ/HQ with its age, per chest page NQ/HQ, and the total             |
+/// | Charon.Chest.RequestFetch        | Func&lt;uint, int, bool, bool&gt; | itemId, quantity, hq → withdraw into the bags (HQ-only refused); false = refused                   |
+/// | Charon.Chest.RequestDeposit      | Func&lt;uint, int, bool, bool&gt; | itemId, quantity, hq → deposit up to quantity of that quality from the bags; false = refused        |
+/// | Charon.Chest.FetchBusy           | Func&lt;bool&gt;         | true while ANY chest move runs (a fetch, a deposit, or the player's own buttons)                               |
+/// | Charon.Chest.FetchStatus         | Func&lt;string&gt;       | the last finished chest operation, or why the last one was refused ("Deposited 2 of 2 moves")                  |
 ///
+/// The two operations sit behind <c>ChestIpcExecuteEnabled</c> (FLEET → FC Chest, default OFF) and need the chest
+/// window open. FetchBusy/FetchStatus are the chest's one move queue, so they serve the deposit too.
 /// TWO THINGS CALLERS MUST DESIGN AROUND. First, every answer is a SNAPSHOT: the client fills retainer bags only
 /// after that retainer's window has been opened at a bell, and the chest pages only after the chest has been
 /// opened, so each payload carries its timestamp and an absent container is UNKNOWN, never empty. Second, the two
 /// stores are keyed differently on purpose — retainers by name, the chest by page — because that is how the game
 /// presents them, and a caller that wants a flat total reads <c>total</c>.
 ///
-/// Read-only: there are no operations here, because both stores fill from windows the player opens. Nothing in
-/// this class moves an item or spends anything.
+/// The reads move nothing: both stores fill from windows the player opens.
 ///
 /// Contract rule: EXTEND-ONLY, the same rule as the retainer gate and Hephaestus's own IPC. Callers fail open —
 /// with these gates absent, a caller simply has no chest or retainer materials, exactly as before.
@@ -39,6 +44,7 @@ public sealed class ChestContentsIpc : IDisposable
 
     private readonly Func<ChestSnapshot?> _chest;
     private readonly ICallGateProvider<uint, int, bool, bool> _requestFetch;
+    private readonly ICallGateProvider<uint, int, bool, bool> _requestDeposit;
     private readonly ICallGateProvider<bool> _fetchBusy;
     private readonly ICallGateProvider<string> _fetchStatus;
     private readonly FcChestManager _fcChest;
@@ -70,10 +76,12 @@ public sealed class ChestContentsIpc : IDisposable
         _fleetResult.RegisterFunc(FleetResult);
 
         _requestFetch = pluginInterface.GetIpcProvider<uint, int, bool, bool>("Charon.Chest.RequestFetch");
+        _requestDeposit = pluginInterface.GetIpcProvider<uint, int, bool, bool>("Charon.Chest.RequestDeposit");
         _fetchBusy = pluginInterface.GetIpcProvider<bool>("Charon.Chest.FetchBusy");
         _fetchStatus = pluginInterface.GetIpcProvider<string>("Charon.Chest.FetchStatus");
 
         _requestFetch.RegisterFunc(RequestFetch);
+        _requestDeposit.RegisterFunc(RequestDeposit);
         _fetchBusy.RegisterFunc(() => _executeEnabled() && _fcChest.Busy);
         _fetchStatus.RegisterFunc(() => _fcChest.LastOperation);
         _retainers = retainers;
@@ -212,6 +220,40 @@ public sealed class ChestContentsIpc : IDisposable
     }
 
     /// <summary>
+    /// Put items back into the FC chest for another plugin (Argus returns the repair kits it did
+    /// not use). Exact quality: <paramref name="highQuality"/> false deposits NQ only, true HQ only —
+    /// unlike the withdraw, the bags say which stack is which. Progress and the outcome are on
+    /// FetchBusy/FetchStatus, the chest's one move queue.
+    /// </summary>
+    private bool RequestDeposit(uint itemId, int quantity, bool highQuality)
+    {
+        if (!_executeEnabled())
+        {
+            Status = "RequestDeposit → refused (execution disabled)";
+            return false;
+        }
+
+        if (itemId == 0 || quantity <= 0)
+        {
+            Status = "RequestDeposit → refused (nothing asked for)";
+            return false;
+        }
+
+        if (_fcChest.Busy)
+        {
+            Status = "RequestDeposit → refused (busy)";
+            return false;
+        }
+
+        var queued = _fcChest.StartDepositAmount(itemId, quantity, highQuality);
+        Status = queued > 0
+            ? $"RequestDeposit → {itemId} x{quantity}{(highQuality ? " HQ" : string.Empty)}: {queued} move(s)"
+            : $"RequestDeposit → refused ({_fcChest.LastOperation})";
+        _log.Debug("[Chest] IPC deposit {0} x{1} hq={2} → {3} move(s)", itemId, quantity, highQuality, queued);
+        return queued > 0;
+    }
+
+    /// <summary>
     /// Asks every box on the LAN who holds an item. ASYNCHRONOUS on purpose: the answers come
     /// back over a few seconds, so this returns whether the question went out, and the caller
     /// polls GetFleetJson. Reading is free — no execute switch — because asking moves nothing.
@@ -239,6 +281,7 @@ public sealed class ChestContentsIpc : IDisposable
         _status.UnregisterFunc();
         _getItem.UnregisterFunc();
         _requestFetch.UnregisterFunc();
+        _requestDeposit.UnregisterFunc();
         _fetchBusy.UnregisterFunc();
         _fetchStatus.UnregisterFunc();
         _askFleet.UnregisterFunc();

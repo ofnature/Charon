@@ -10,6 +10,7 @@ using Dalamud.Interface.Windowing;
 using Dalamud.Plugin;
 using Dalamud.Plugin.Services;
 using Charon.Features.AutoAccept;
+using Charon.Features.Automation;
 using Charon.Features.Containers;
 using Charon.Features.Dailies;
 using Charon.Features.AutoPillion;
@@ -252,6 +253,7 @@ public sealed class CharonPlugin : IDalamudPlugin
     private readonly GcRequestsIpc _gcRequestsIpc;
     private readonly ChestContentsReader _chestContents;
     private readonly ChestContentsIpc _chestIpc;
+    private readonly AutomationIpc _automationIpc;
     private readonly HephaestusClient _hephaestus;
 
     private readonly RetainersWindow _retainersWindow;
@@ -575,6 +577,30 @@ public sealed class CharonPlugin : IDalamudPlugin
             log);
         _chat = chatGui;
 
+        // The suite's "stop after this run" (Argus asks before it moves the character). One entry per run that
+        // drives the character or its windows; standing switches that react to events are not runs (see AutomationIpc).
+        // Built before the main window, whose Debug line reads it.
+        _automationIpc = new AutomationIpc(pluginInterface, new AutomationRuns(
+        [
+            new("FC chest", () => _fcChest.Busy, _fcChest.StopAfterCurrentMove),
+            new("retainer fetch", () => _retainerContents.Busy, _retainerContents.StopAfterCurrentMove),
+            new("ventures", () => _ventureRunner.Armed, _ventureRunner.StopAfterCurrentRetainer),
+            new("entrust", () => _entruster.Armed, _entruster.StopAfterCurrentRetainer),
+            // After a pass it drove, the selector closes the last bags and quits; the bell flag bounds it.
+            new("bell tidy-up", () => _retainerSelector.Driving && _condition[ConditionFlag.OccupiedSummoningBell],
+                AutomationRun.LetItFinish),
+            new("retainer gear", () => _retainerGear.Busy, AutomationRun.LetItFinish),
+            new("saddlebag", () => _saddlebag.Busy, _saddlebag.StopAfterCurrentStack),
+            new("gear pass", () => _gear.Busy, AutomationRun.LetItFinish),
+            new("job switch", () => _jobSwitcher.Busy, AutomationRun.LetItFinish),
+            new("gil cap sale", () => _gilSeller.Busy, AutomationRun.LetItFinish),
+            new("Doman", () => _doman.Busy, AutomationRun.LetItFinish),
+            new("party invites", () => _groupInvites.PendingCount > 0, AutomationRun.LetItFinish),
+            new("duty exit", () => _pendingDutyLeaveUtc != null, AutomationRun.LetItFinish),
+            new("follow teleport", () => _pendingTeleportAtUtc != null, () => _pendingTeleportAtUtc = null),
+            new("fleet follow", () => _followManager.Following, StopLocalFollow),
+        ]), log);
+
         _mainWindow = new MainWindow(_config, SaveConfig, _whitelist, _daedalusIpc, _pillionManager, _inviteManager,
             _healWatch, _groupInvites, _fcChest, _gear, _followManager, ReadRawSeatOccupancy, () => _boardingStatus,
             () => $"{_followStatus} · offer: {_teleportOffer.Status} · boss AI: {_bossAi.Status}",
@@ -633,7 +659,8 @@ public sealed class CharonPlugin : IDalamudPlugin
             () => _frameWatch.Status,
             _botRender,
             EurekaStatus,
-            EurekaNow);
+            EurekaNow,
+            () => _automationIpc.Status);
         _mainWindow.IsOpen = _config.MainWindowVisible && !_config.MainWindowMinimized;
         _windowSystem.AddWindow(_mainWindow);
 
@@ -824,6 +851,7 @@ public sealed class CharonPlugin : IDalamudPlugin
         _retainerContentsIpc.Dispose();
         _gcRequestsIpc.Dispose();
         _chestIpc.Dispose();
+        _automationIpc.Dispose();
         _hephaestus.Dispose();
         _dutyPop.Dispose();
         _revivalPrompt.Dispose();

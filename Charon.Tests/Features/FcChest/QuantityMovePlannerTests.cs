@@ -174,4 +174,97 @@ public sealed class QuantityMovePlannerTests
         Assert.Equal(6, moves[2].Quantity);  // remainder to the empty slot
         Assert.Equal(20, moves.Sum(m => m.Quantity));
     }
+
+    // --- PlanDeposit (an exact amount, for another plugin) ---
+
+    [Fact]
+    public void DepositAmount_NeverMovesMoreThanAsked()
+    {
+        var moves = QuantityMovePlanner.PlanDeposit(
+            bagStacks: [BagStack(0, 20)],
+            chestPartials: [ChestStack(5, 10)],
+            emptyChestSlots: [(Chest, 9)],
+            amount: 7,
+            allowPartial: true);
+
+        var move = Assert.Single(moves);
+        Assert.Equal(7, move.Quantity);
+        Assert.Equal(5, move.DstSlot); // onto the stack already in the chest
+        Assert.False(move.WholeStack);
+    }
+
+    [Fact]
+    public void DepositAmount_TakesSmallestBagStacksFirst()
+    {
+        var moves = QuantityMovePlanner.PlanDeposit(
+            bagStacks: [BagStack(0, 99), BagStack(1, 3)],
+            chestPartials: [],
+            emptyChestSlots: [(Chest, 0), (Chest, 1)],
+            amount: 3,
+            allowPartial: true);
+
+        var move = Assert.Single(moves);
+        Assert.Equal(1, move.SrcSlot);
+        Assert.True(move.WholeStack); // the 3-stack leaves the bags entirely
+    }
+
+    [Fact]
+    public void DepositAmount_RemainderAfterAPartialEmptiesTheSlot_IsWholeStack()
+    {
+        var moves = QuantityMovePlanner.PlanDeposit(
+            bagStacks: [BagStack(0, 10)],
+            chestPartials: [ChestStack(5, 995)], // 4 of space
+            emptyChestSlots: [(Chest, 9)],
+            amount: 10,
+            allowPartial: true);
+
+        Assert.Equal(2, moves.Count);
+        Assert.Equal(4, moves[0].Quantity);
+        Assert.Equal(6, moves[1].Quantity);
+        Assert.True(moves[1].WholeStack); // the last 6 are everything left in that bag slot
+    }
+
+    [Fact]
+    public void DepositAmount_ChestFull_PlansWhatFits()
+    {
+        var moves = QuantityMovePlanner.PlanDeposit(
+            bagStacks: [BagStack(0, 10)],
+            chestPartials: [ChestStack(5, 996)], // 3 of space, and no empty slot
+            emptyChestSlots: [],
+            amount: 10,
+            allowPartial: true);
+
+        var move = Assert.Single(moves);
+        Assert.Equal(3, move.Quantity);
+    }
+
+    [Fact]
+    public void DepositAmount_NoRoomAtAll_PlansNothing()
+    {
+        var moves = QuantityMovePlanner.PlanDeposit(
+            bagStacks: [BagStack(0, 10)],
+            chestPartials: [],
+            emptyChestSlots: [],
+            amount: 10,
+            allowPartial: true);
+
+        Assert.Empty(moves);
+    }
+
+    [Fact]
+    public void DepositAmount_WithoutQuantityMoves_OnlyWholeStacksThatFitTheAmount()
+    {
+        var moves = QuantityMovePlanner.PlanDeposit(
+            bagStacks: [BagStack(0, 5), BagStack(1, 30)],
+            chestPartials: [ChestStack(5, 10)],
+            emptyChestSlots: [(Chest, 9)],
+            amount: 20,
+            allowPartial: false);
+
+        var move = Assert.Single(moves); // the 30-stack would need a split, so it stays
+        Assert.Equal(0, move.SrcSlot);
+        Assert.Equal(9, move.DstSlot);   // never merged: that needs the quantity move
+        Assert.Equal(5, move.Quantity);
+        Assert.True(move.WholeStack);
+    }
 }

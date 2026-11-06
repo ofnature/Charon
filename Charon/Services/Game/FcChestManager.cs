@@ -167,6 +167,20 @@ public sealed unsafe class FcChestManager
     public bool Busy => _pending.Count > 0 || _inFlight != null || _seedReturn != null
                         || _qtyQueue.Count > 0 || _qtyInFlight != null || _walkTarget > 0;
 
+    /// <summary>Set by <see cref="StopAfterCurrentMove"/>; cleared when the stop lands or a new operation starts.</summary>
+    private bool _stopRequested;
+
+    /// <summary>
+    /// The suite's "stop after this run": the move in flight is verified, nothing after it is
+    /// submitted. A seed return already under way (the withdraw-all-but-1 hand-back) is finished
+    /// first, so the chest keeps its seed. Does nothing while idle.
+    /// </summary>
+    public void StopAfterCurrentMove()
+    {
+        if (Busy)
+            _stopRequested = true;
+    }
+
     /// <summary>The native quantity move resolved — exact-amount withdrawals are possible.</summary>
     public bool QuantityMovesAvailable => _mover.Available;
 
@@ -206,6 +220,7 @@ public sealed unsafe class FcChestManager
         }
 
         _operationLog.Clear();
+        _stopRequested = false;
         _succeeded = 0;
         _movesVerified = 0;
         _inFlight = null;
@@ -351,6 +366,51 @@ public sealed unsafe class FcChestManager
     }
 
     /// <summary>
+    /// Deposit up to <paramref name="amount"/> units of one item (NQ, or HQ when <paramref name="hq"/>)
+    /// from the bags, for another plugin's exact request: onto the chest's stacks of it first, then
+    /// into empty slots, pages already holding the item before the others. Only LOADED pages are
+    /// planned (a tab loads once viewed), so a full or unviewed chest moves what fits or refuses.
+    /// Unlike Deposit All this is not duplicates-only: the caller names the item.
+    /// </summary>
+    public int StartDepositAmount(uint itemId, int amount, bool hq)
+    {
+        string? refusal = Busy ? "another operation is still running"
+            : !IsChestOpen() ? "the FC chest isn't open"
+            : itemId <= 19 || IsUntradable(itemId) ? $"{ItemName(itemId)} cannot go in the chest's item tabs"
+            : amount <= 0 ? "nothing asked for"
+            : null;
+
+        var bagStacks = refusal == null
+            ? PlayerBags.SelectMany(ReadInvStacks).Where(s => s.ItemId == itemId && s.Hq == hq).ToList()
+            : [];
+        if (refusal == null && bagStacks.Count == 0)
+            refusal = $"no {(hq ? "HQ" : "NQ")} {ItemName(itemId)} in the bags";
+
+        if (refusal == null)
+        {
+            var pages = Enumerable.Range(1, 5).Where(IsPageLoaded).ToList();
+            var chestStacks = pages.ToDictionary(p => p, p => ReadInvStacks(PageType(p)));
+            var partials = chestStacks.Values.SelectMany(s => s)
+                .Where(s => s.ItemId == itemId && s.Hq == hq && s.Quantity < s.MaxStack).ToList();
+            var empties = pages.OrderByDescending(p => chestStacks[p].Any(s => s.ItemId == itemId))
+                .SelectMany(p => FreeSlots([PageType(p)])).ToList();
+
+            var moves = QuantityMovePlanner.PlanDeposit(bagStacks, partials, empties, amount, _mover.Available);
+            if (moves.Count > 0)
+            {
+                BeginQuantityOperation(moves, "Deposited");
+                return moves.Count;
+            }
+
+            refusal = pages.Count == 0 ? "no chest tab has loaded yet" : "no room on the chest's loaded tabs";
+        }
+
+        LastOperation = $"Deposit: {refusal}";
+        OperationJustFinished = true;
+        return 0;
+    }
+
+    /// <summary>
     /// Deposit every tradeable bag stack into the chest (crystals and gil excluded — they have
     /// their own containers). Unviewed tabs are loaded first by simulating their tab click; the
     /// deposit plan runs once every page can answer. Partial-stack top-ups need the quantity
@@ -372,6 +432,7 @@ public sealed unsafe class FcChestManager
             _walkFired = false;
             _walkDeadlineUtc = DateTime.UtcNow + TimeSpan.FromSeconds(4);
             _depositAfterWalk = true;
+            _stopRequested = false;
             Status = $"loading chest tab {unloaded}…";
             return true;
         }
@@ -485,6 +546,7 @@ public sealed unsafe class FcChestManager
     private void BeginQuantityOperation(IReadOnlyList<PlannedMove> moves, string verb)
     {
         _operationLog.Clear();
+        _stopRequested = false;
         _qtyQueue.Clear();
         // Grouped by chest page: the game's own UI can only ever touch the DISPLAYED tab, so
         // the executor switches the real tab to each group's page — grouping minimizes switches.
@@ -817,7 +879,10 @@ public sealed unsafe class FcChestManager
     {
         if (_pending.Count == 0 && _inFlight == null && _seedReturn == null
             && _qtyQueue.Count == 0 && _qtyInFlight == null && _walkTarget <= 0)
+        {
+            _stopRequested = false; // nothing left to stop
             return;
+        }
 
         if (nowUtc - _lastMoveUtc < MovePacing)
             return;
@@ -835,6 +900,14 @@ public sealed unsafe class FcChestManager
             _depositAfterWalk = false;
             Status = "aborted — chest closed";
             OperationJustFinished = true;
+            return;
+        }
+
+        // A stop request lands between moves: never with one in flight, never mid seed-return.
+        if (_stopRequested && _qtyInFlight == null && _inFlight == null
+            && (_seedReturn == null || _pending.Count > 0))
+        {
+            StopBetweenMoves();
             return;
         }
 
@@ -978,6 +1051,31 @@ public sealed unsafe class FcChestManager
     /// <summary>Any bag stack of the item with 2+ units we can split the seed off of.</summary>
     private ItemStack? FindBagDonorStack(uint itemId) =>
         ReadBags().FirstOrDefault(s => s.ItemId == itemId && s.Quantity >= 2);
+
+    /// <summary>
+    /// Ends the operation at a move boundary after <see cref="StopAfterCurrentMove"/>. Dropping the
+    /// rest of a withdraw-all-but-1 also drops its seed return: the chest still holds those stacks.
+    /// </summary>
+    private void StopBetweenMoves()
+    {
+        var dropped = _qtyQueue.Count + _pending.Count;
+        LastOperation = _walkTarget > 0
+            ? "Deposit all: stopped on request while loading tabs"
+            : (_qtyTotal > 0
+                  ? $"{_qtyVerb} {_qtySucceeded} of {_qtyTotal}"
+                  : $"{(_withdrawing ? "Withdrew" : "Entrusted")} {_succeeded}/{_movesVerified} stacks")
+              + $" — stopped on request, {dropped} move(s) not started";
+        _qtyQueue.Clear();
+        _pending.Clear();
+        _seedReturn = null;
+        _walkTarget = -1;
+        _depositAfterWalk = false;
+        _qtyTotal = 0;
+        _stopRequested = false;
+        Status = "stopped";
+        OperationJustFinished = true;
+        _contentsCache = null;
+    }
 
     private void AbortSeedReturn(string status)
     {
@@ -1155,6 +1253,7 @@ public sealed unsafe class FcChestManager
     private void BeginOperation(List<ChestMove> moves, InventoryType page, bool withdrawing, int pageNumber)
     {
         _operationLog.Clear();
+        _stopRequested = false;
         _succeeded = 0;
         _movesVerified = 0;
         _inFlight = null;

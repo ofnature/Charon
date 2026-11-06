@@ -83,6 +83,9 @@ public sealed unsafe class RetainerContentsReader
     private FetchDecision? _pendingMove;
     private int _failedMoves;
 
+    /// <summary>Set by <see cref="StopAfterCurrentMove"/> while a move settles; cleared when the stop lands.</summary>
+    private bool _stopAfterMove;
+
     public RetainerContentsReader(
         IGameGui gameGui,
         IObjectTable objectTable,
@@ -394,7 +397,24 @@ public sealed unsafe class RetainerContentsReader
         _fetchArmed = false;
         _refreshArmed = false;
         _pendingMove = null;
+        _stopAfterMove = false;
         Status = reason;
+    }
+
+    /// <summary>
+    /// The suite's "stop after this run": a stack already moving is confirmed first, then the pass
+    /// (and the rest of a list) stops as <see cref="Stop"/> does. With nothing moving that is now.
+    /// </summary>
+    public void StopAfterCurrentMove()
+    {
+        if (_pendingMove == null)
+        {
+            if (Busy)
+                Stop("stopped on request");
+            return;
+        }
+
+        _stopAfterMove = true;
     }
 
     private void UpdateFetch(DateTime nowUtc)
@@ -432,6 +452,12 @@ public sealed unsafe class RetainerContentsReader
                     return;
                 }
             }
+        }
+
+        if (_stopAfterMove)
+        {
+            Stop($"stopped on request — fetched {_movedNq} normal and {_movedHq} high-quality");
+            return;
         }
 
         var remaining = _hqOnly ? _wanted - _movedHq : _wanted - (_movedNq + _movedHq);
@@ -516,6 +542,14 @@ public sealed unsafe class RetainerContentsReader
         // Delivered anything = done; nothing = refused. The caller needs that distinction, and
         // "moved fewer than asked" is still done — the numbers say how many.
         _fetchState = _movedNq + _movedHq > 0 ? FetchState.Done : FetchState.Refused;
+
+        // Asked to stop after this run: the list's next item is not started.
+        if (_stopAfterMove)
+        {
+            _pending.Clear();
+            _stopAfterMove = false;
+            return;
+        }
 
         StartNextFromList();
     }

@@ -136,6 +136,7 @@ public sealed class MainWindow : Window
     private readonly BotRenderProfile _botRender;
     private readonly Func<string> _eurekaStatus;
     private readonly Func<(uint Territory, IReadOnlySet<ushort>? Live)> _eurekaNow;
+    private readonly Func<string> _suiteStatus;
     private int _eurekaZonePick; // 0 = the zone you are in, else 1-4 = Anemos..Hydatos
     private readonly Func<string> _lootStatus;
     private readonly Func<string> _levelingStatus;
@@ -248,7 +249,8 @@ public sealed class MainWindow : Window
         Func<string> frameStatus,
         BotRenderProfile botRender,
         Func<string> eurekaStatus,
-        Func<(uint Territory, IReadOnlySet<ushort>? Live)> eurekaNow)
+        Func<(uint Territory, IReadOnlySet<ushort>? Live)> eurekaNow,
+        Func<string> suiteStatus)
         : base("Charon##CharonMain")
     {
         BgAlpha = CharonTheme.PanelAlpha;
@@ -305,6 +307,7 @@ public sealed class MainWindow : Window
         _botRender = botRender;
         _eurekaStatus = eurekaStatus;
         _eurekaNow = eurekaNow;
+        _suiteStatus = suiteStatus;
         _isFreeTrial = isFreeTrial;
         _lootWatcher = lootWatcher;
         _collection = collection;
@@ -1771,15 +1774,16 @@ public sealed class MainWindow : Window
                                + "so the entrust/withdraw tools are right there.");
 
         var chestIpc = _config.ChestIpcExecuteEnabled;
-        if (ImGui.Checkbox("Let other plugins withdraw from the FC chest", ref chestIpc))
+        if (ImGui.Checkbox("Let other plugins take from and put into the FC chest", ref chestIpc))
         {
             _config.ChestIpcExecuteEnabled = chestIpc;
             _save();
         }
-        CharonTheme.HelpMarker("Lets another plugin (Hephaestus) ask Charon to withdraw items from the\n"
-                               + "free company chest while you have it open. Reading what the chest holds\n"
-                               + "is always allowed; this is only the moving. Separate from the retainer\n"
-                               + "switch on purpose: the chest belongs to the whole free company. Off by default.");
+        CharonTheme.HelpMarker("Lets another plugin ask Charon to withdraw items from the free company\n"
+                               + "chest, or deposit them back, while the chest is open (Hephaestus takes\n"
+                               + "materials; Argus takes repair kits and returns the unused ones). Reading what\n"
+                               + "the chest holds is always allowed; this is only the moving. Separate from the\n"
+                               + "retainer switch on purpose: the chest belongs to the whole free company. Off by default.");
 
         ImGui.Spacing();
         FcChestView.DrawBody(_config, _save, _fcChest);
@@ -4088,6 +4092,7 @@ public sealed class MainWindow : Window
         DrawStatusLine($"Doman: {_doman.Status}"
                        + (_doman.StackReady ? " · stack ready to stage" : string.Empty));
         DrawStatusLine($"Fleet duty exit: {ScrambleIn(_dutyExitStatus())}");
+        DrawStatusLine($"Stop after run (IPC): {_suiteStatus()}");
         if (_inviteManager.AcceptPending)
             DrawStatusLine("Invite accept pending (delay running)", CharonTheme.StatusYellow);
 
