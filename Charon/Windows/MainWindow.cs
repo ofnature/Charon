@@ -134,6 +134,9 @@ public sealed class MainWindow : Window
     private readonly Func<string> _qolStatus;
     private readonly Func<string> _frameStatus;
     private readonly BotRenderProfile _botRender;
+    private readonly PerfRecorder _perf;
+    private readonly WindowDockService _windowDock;
+    private readonly AutoLoginService _autoLogin;
     private readonly Func<string> _eurekaStatus;
     private readonly Func<(uint Territory, IReadOnlySet<ushort>? Live)> _eurekaNow;
     private readonly Func<string> _suiteStatus;
@@ -248,6 +251,9 @@ public sealed class MainWindow : Window
         Action<bool> setMinimized,
         Func<string> frameStatus,
         BotRenderProfile botRender,
+        PerfRecorder perf,
+        WindowDockService windowDock,
+        AutoLoginService autoLogin,
         Func<string> eurekaStatus,
         Func<(uint Territory, IReadOnlySet<ushort>? Live)> eurekaNow,
         Func<string> suiteStatus)
@@ -305,6 +311,9 @@ public sealed class MainWindow : Window
         _setMinimized = setMinimized;
         _frameStatus = frameStatus;
         _botRender = botRender;
+        _perf = perf;
+        _windowDock = windowDock;
+        _autoLogin = autoLogin;
         _eurekaStatus = eurekaStatus;
         _eurekaNow = eurekaNow;
         _suiteStatus = suiteStatus;
@@ -1054,6 +1063,77 @@ public sealed class MainWindow : Window
         CharonTheme.HelpMarker("When a trusted party member teleports to another zone, follow them\n"
                                + "(accepts the native teleport offer; falls back to teleporting to an\n"
                                + "unlocked aetheryte in their new zone). Same group only.");
+
+        ImGui.Spacing();
+
+        ImGui.TextColored(CharonTheme.TextSecondary, "Auto Login");
+        var autoLogin = _config.AutoLoginEnabled;
+        if (ImGui.Checkbox("Log back in after a disconnect##autologin", ref autoLogin))
+        {
+            _config.AutoLoginEnabled = autoLogin;
+            _save();
+        }
+        CharonTheme.HelpMarker("When this client loses its connection, dismiss the error, press Start,\n"
+                               + "pick the same character from the list and confirm. A logout you asked\n"
+                               + "for never triggers it.\n\n"
+                               + "It never looks a data centre up: Start reconnects to the one this client\n"
+                               + "was on, and the character is matched by its unique id. If the character\n"
+                               + "is not on the list it stops and says so, rather than logging in somewhere\n"
+                               + "else. Keeps trying through an outage for up to 6 hours, waiting longer\n"
+                               + "between attempts each time.\n\n"
+                               + "Turn VIWI's AutoLogin off if you use this one; while both are on, Charon\n"
+                               + "stands down.");
+
+        if (autoLogin)
+        {
+            ImGui.Indent();
+            var keepOpen = _config.AutoLoginKeepClientOpen;
+            if (ImGui.Checkbox("Keep the client open on lobby errors##autologin", ref keepOpen))
+            {
+                _config.AutoLoginKeepClientOpen = keepOpen;
+                _save();
+            }
+            CharonTheme.HelpMarker("The game normally closes itself on a lobby error (2002 and friends),\n"
+                                   + "which ends any attempt to get back in while servers are struggling.\n"
+                                   + "This makes it show the error and return to the title screen instead.");
+            ImGui.Unindent();
+        }
+
+        var loginWindow = _config.AutoLoginWindowEnabled;
+        if (ImGui.Checkbox("Login window on the title screen##autologin", ref loginWindow))
+        {
+            _config.AutoLoginWindowEnabled = loginWindow;
+            _save();
+        }
+        CharonTheme.HelpMarker("On the title screen, a small window with a button for every character that\n"
+                               + "has logged in on this PC. A click presses Start, finds that character in\n"
+                               + "the list by its unique id and logs it in. While a login is running it\n"
+                               + "shows the step and a Stop button.\n\n"
+                               + "Works with the switch above off. Start connects to the data centre the\n"
+                               + "client was last on; a character that is not on that list stops the login\n"
+                               + "with the reason.");
+
+        var known = _autoLogin.Characters.Read(DateTime.UtcNow);
+        if (known.Count > 0 && ImGui.TreeNode($"Characters on the login window ({known.Count})##autologin"))
+        {
+            foreach (var character in known)
+            {
+                if (ImGui.SmallButton($"Forget##autologin{character.ContentId}"))
+                    _autoLogin.Characters.Forget(character.ContentId);
+                ImGui.SameLine();
+                ImGui.TextUnformatted(Charon.Features.AutoLogin.KnownCharacters.Label(Display(character.Name), character.World));
+            }
+
+            ImGui.TreePop();
+        }
+
+        if (_autoLogin.Running)
+        {
+            if (ImGui.SmallButton("Stop logging in##autologin"))
+                _autoLogin.Stop();
+        }
+
+        DrawStatusLine(ScrambleIn(_autoLogin.Status), CharonTheme.TextDim);
 
         ImGui.Spacing();
 
@@ -3133,6 +3213,18 @@ public sealed class MainWindow : Window
     {
         DrawPageHeader("Tweaks");
 
+        var pluginsTab = _config.PluginsTabEnabled;
+        if (ImGui.Checkbox("Plugins tab on the screen edge##dock", ref pluginsTab))
+        {
+            _config.PluginsTabEnabled = pluginsTab;
+            _save();
+        }
+        CharonTheme.HelpMarker("A tab that is always there, the title screen included. Click it to open\n"
+                               + "the plugin installer (the same as typing /xlplugins). Point at it for\n"
+                               + "buttons that go straight to your installed plugins, the ones with\n"
+                               + "updates, or Dalamud's settings. Drag it to any edge.\n\n"
+                               + "It works on its own: the context tabs below do not have to be on.");
+
         var dock = _config.EdgeDockEnabled;
         if (ImGui.Checkbox("Edge tabs##dock", ref dock))
         {
@@ -3987,6 +4079,17 @@ public sealed class MainWindow : Window
         {
             ImGui.Indent();
 
+            var normal = setting.NormalInCombat;
+            if (ImGui.Checkbox("Normal rendering in combat##botrender", ref normal))
+            {
+                setting.NormalInCombat = normal;
+                _save();
+            }
+
+            CharonTheme.HelpMarker("While this toon is in combat nothing is turned down: full frame rate,\n"
+                                   + "your own resolution and character limit. It is turned down again\n"
+                                   + "10 seconds after the fight, so a gap between pulls changes nothing.");
+
             var cap = setting.CapFrameRate;
             if (ImGui.Checkbox("Cap the frame rate##botrender", ref cap))
             {
@@ -3998,21 +4101,6 @@ public sealed class MainWindow : Window
                                    + "Every plugin, the rotation and the boss AI included, decides once per\n"
                                    + "frame, so this also slows how fast the bot reacts. The Frames line on the\n"
                                    + "Debug page shows the rate it actually gives.");
-
-            if (cap)
-            {
-                ImGui.Indent();
-                var lift = setting.LiftCapInCombat;
-                if (ImGui.Checkbox("Lift the cap in combat##botrender", ref lift))
-                {
-                    setting.LiftCapInCombat = lift;
-                    _save();
-                }
-
-                CharonTheme.HelpMarker("Full frame rate while this toon is in combat, so the rotation and\n"
-                                       + "dodging get every frame they can.");
-                ImGui.Unindent();
-            }
 
             var fewer = setting.FewerCharacters;
             if (ImGui.Checkbox("Fewest characters on screen##botrender", ref fewer))
@@ -4053,6 +4141,195 @@ public sealed class MainWindow : Window
         }
 
         DrawStatusLine(_botRender.Status, CharonTheme.TextDim);
+        DrawWindowDock(contentId, setting);
+        DrawPerfCapture();
+    }
+
+    private static readonly string[] WindowModeLabels =
+        ["Off", "Always docked (stays small)", "Swap (small until clicked)"];
+
+    /// <summary>This character's place in the window dock, and how many slots the dock has.</summary>
+    private void DrawWindowDock(ulong contentId, CharonConfig.RenderProfileSetting setting)
+    {
+        ImGui.Spacing();
+        Styling.Text("Window dock (this character)", CharonTheme.TextMuted);
+        CharonTheme.HelpMarker("For running several clients on one PC: one main region and a set of small\n"
+                               + "dock slots. With the dock on another screen the main region is its whole\n"
+                               + "screen and the slots tile the other; on the same screen the dock is a\n"
+                               + "strip down the right-hand side.\n\n"
+                               + "Always docked: this toon's window stays in a small slot. For a bot.\n"
+                               + "Swap: small until you click it, then it takes the main region and the\n"
+                               + "window that was there drops into the free slot.\n\n"
+                               + "A small window really is rendered small, which is what frees video memory\n"
+                               + "(about 215 MB less at 960x540 than at 1920x1009, measured). The price is a\n"
+                               + "short hitch when two windows swap. Turning it off, logging out or unloading\n"
+                               + "the plugin puts the window back as it was.");
+
+        var mode = Math.Clamp(setting.WindowMode, 0, WindowModeLabels.Length - 1);
+        using (ImRaii.Disabled(contentId == 0))
+        {
+            ImGui.SetNextItemWidth(260f);
+            if (ImGui.Combo("##windowdockmode", ref mode, WindowModeLabels, WindowModeLabels.Length))
+            {
+                setting.WindowMode = mode;
+                _save();
+            }
+        }
+
+        var slots = WindowDock.ClampSlots(_config.WindowDockSlots);
+        ImGui.SetNextItemWidth(260f);
+        if (ImGui.SliderInt("Dock slots (this PC)##windowdock", ref slots, WindowDock.MinSlots, WindowDock.MaxSlots))
+        {
+            _config.WindowDockSlots = slots;
+            _save();
+        }
+
+        CharonTheme.HelpMarker("How many small windows the dock holds. Three slots plus the main region\n"
+                               + "is the four-client layout. A window already placed keeps its size until\n"
+                               + "its next move.");
+
+        // The screens are re-read every couple of seconds: one may be unplugged while this is open.
+        if (DateTime.UtcNow >= _dockScreensUtc)
+        {
+            _dockScreensUtc = DateTime.UtcNow + TimeSpan.FromSeconds(2);
+            var screens = GameWindow.Screens();
+            _dockScreenLabels = new[] { "Automatic" }
+                .Concat(Enumerable.Range(0, screens.Count).Select(i => WindowDock.ScreenLabel(screens, i)))
+                .ToArray();
+        }
+
+        _config.WindowDockMainScreen = ScreenCombo("Main region on (this PC)##windowdock", _config.WindowDockMainScreen);
+        _config.WindowDockDockScreen = ScreenCombo("Dock on (this PC)##windowdock", _config.WindowDockDockScreen);
+        CharonTheme.HelpMarker("Screens are numbered left to right. Automatic puts the main region on the\n"
+                               + "primary screen and the dock on the screen to its right. Choose the same\n"
+                               + "screen for both to get the strip layout.");
+
+        DrawStatusLine(_windowDock.Status, CharonTheme.TextDim);
+    }
+
+    private DateTime _dockScreensUtc;
+    private string[] _dockScreenLabels = ["Automatic"];
+
+    /// <summary>A screen choice: index 0 is Automatic (stored as -1), then the screens left to right.
+    /// A stored screen that is no longer plugged in shows as Automatic, which is how it behaves.</summary>
+    private int ScreenCombo(string label, int stored)
+    {
+        var index = stored >= 0 && stored + 1 < _dockScreenLabels.Length ? stored + 1 : 0;
+        ImGui.SetNextItemWidth(260f);
+        if (!ImGui.Combo(label, ref index, _dockScreenLabels, _dockScreenLabels.Length))
+            return stored;
+        _save();
+        return index - 1;
+    }
+
+    /// <summary>Record / sweep buttons and the per-step summary of the performance capture.</summary>
+    private void DrawPerfCapture()
+    {
+        ImGui.Spacing();
+        Styling.Text("Performance capture (this client)", CharonTheme.TextMuted);
+        CharonTheme.HelpMarker("Writes one row a second to a file: frame rate, worst frame, this client's CPU,\n"
+                               + "memory, GPU load and video memory, and what was turned down at the time.\n\n"
+                               + "Record just logs what happens. Sweep steps this client through the render\n"
+                               + "settings one at a time and a few fixed frame rates, about 20 seconds each,\n"
+                               + "to show what each one saves against your own settings. Start it, then click\n"
+                               + "away from this window: it only counts seconds spent in the background and\n"
+                               + "out of combat, and waits otherwise.\n\n"
+                               + "Memory probe is for fitting more clients on one video card. It tries the\n"
+                               + "settings that could lower this client's video memory, one value at a time\n"
+                               + "(texture detail, UI assets, shadow maps, map resolution, level of detail),\n"
+                               + "then shrinks the window to 1280x720 and 960x540. Each change is made in this\n"
+                               + "client only and put back when its step ends. Stay in one zone for it.");
+
+        if (_perf.Recording)
+        {
+            if (ImGui.SmallButton("Stop##perf"))
+                _perf.Stop();
+        }
+        else
+        {
+            if (ImGui.SmallButton("Record##perf"))
+                _perf.StartRecording();
+            ImGui.SameLine();
+            if (ImGui.SmallButton($"Run sweep (about {Features.Perf.PerfSweepPlan.Length.TotalMinutes:0} min)##perf"))
+                _perf.StartSweep();
+            ImGui.SameLine();
+            if (ImGui.SmallButton("Run memory probe (about 6 min)##perf"))
+                _perf.StartMemoryProbe();
+        }
+
+        ImGui.SameLine();
+        if (ImGui.SmallButton("Open folder##perf"))
+        {
+            try
+            {
+                System.IO.Directory.CreateDirectory(_perf.Folder);
+                System.Diagnostics.Process.Start(
+                    new System.Diagnostics.ProcessStartInfo(_perf.Folder) { UseShellExecute = true });
+            }
+            catch
+            {
+                // Nothing to open; the status line below still names the file.
+            }
+        }
+
+        var rows = _perf.Summary;
+        if (rows.Count > 0)
+        {
+            ImGui.SameLine();
+            if (ImGui.SmallButton("Copy summary##perf"))
+                ImGui.SetClipboardText(Features.Perf.PerfSummary.Table(rows));
+        }
+
+        DrawStatusLine(_perf.Status, CharonTheme.TextDim);
+
+        if (rows.Count == 0 || !ImGui.BeginTable("perfSummary", 7,
+                ImGuiTableFlags.BordersInnerV | ImGuiTableFlags.RowBg | ImGuiTableFlags.SizingFixedFit))
+            return;
+
+        ImGui.TableSetupColumn("Step", ImGuiTableColumnFlags.WidthStretch);
+        ImGui.TableSetupColumn("Secs", ImGuiTableColumnFlags.WidthFixed, 40f);
+        ImGui.TableSetupColumn("FPS", ImGuiTableColumnFlags.WidthFixed, 50f);
+        ImGui.TableSetupColumn("Worst ms", ImGuiTableColumnFlags.WidthFixed, 65f);
+        ImGui.TableSetupColumn("CPU cores", ImGuiTableColumnFlags.WidthFixed, 105f);
+        ImGui.TableSetupColumn("GPU %", ImGuiTableColumnFlags.WidthFixed, 95f);
+        ImGui.TableSetupColumn("Video MB", ImGuiTableColumnFlags.WidthFixed, 105f);
+        ImGui.TableHeadersRow();
+
+        var first = rows[0];
+        for (var i = 0; i < rows.Count; i++)
+        {
+            var row = rows[i];
+            var baseline = i == 0;
+            ImGui.TableNextRow();
+            ImGui.TableNextColumn();
+            ImGui.TextUnformatted(row.Step);
+            ImGui.TableNextColumn();
+            ImGui.TextUnformatted(row.Seconds.ToString());
+            ImGui.TableNextColumn();
+            ImGui.TextUnformatted($"{row.Fps:0.0}");
+            ImGui.TableNextColumn();
+            ImGui.TextUnformatted($"{row.WorstMs:0}");
+            ImGui.TableNextColumn();
+            PerfCell($"{row.CpuCores:0.00}", Features.Perf.PerfSummary.Change(row.CpuCores, first.CpuCores, baseline));
+            ImGui.TableNextColumn();
+            PerfCell(row.Gpu3dPercent is { } gpu ? $"{gpu:0.0}" : "?",
+                Features.Perf.PerfSummary.Change(row.Gpu3dPercent, first.Gpu3dPercent, baseline));
+            ImGui.TableNextColumn();
+            PerfCell(row.VideoMemoryMb is { } video ? $"{video:0}" : "?",
+                Features.Perf.PerfSummary.Change(row.VideoMemoryMb, first.VideoMemoryMb, baseline));
+        }
+
+        ImGui.EndTable();
+    }
+
+    /// <summary>A value with its change against the first row: green for a saving, amber for a cost.</summary>
+    private static void PerfCell(string value, string change)
+    {
+        ImGui.TextUnformatted(value);
+        if (change.Length == 0)
+            return;
+        ImGui.SameLine();
+        ImGui.TextColored(change.StartsWith('-') ? CharonTheme.StatusGreen : CharonTheme.StatusYellow, change);
     }
 
     private void DrawDebugSection()
@@ -4078,6 +4355,9 @@ public sealed class MainWindow : Window
         DrawStatusLine($"QoL: {_qolStatus()}");
         DrawStatusLine($"Frames: {_frameStatus()}");
         DrawStatusLine($"Bot render: {_botRender.Status}");
+        DrawStatusLine($"Perf capture: {_perf.Status}");
+        DrawStatusLine($"Window dock: {_windowDock.Status}");
+        DrawStatusLine($"Auto login: {ScrambleIn(_autoLogin.Status)}");
         DrawStatusLine($"Loot: {_lootStatus()}");
         DrawStatusLine($"Leveling: {_levelingStatus()}");
         // Reading the line IS the refresh — the reader is lazy and nothing else polls it here.

@@ -6,8 +6,18 @@ public sealed class SprintPolicyTests
 {
     private static SprintDecision Evaluate(
         bool enabled = true, bool inCombat = false, bool mounted = false,
-        bool moving = true, bool actionReady = true) =>
-        SprintPolicy.Evaluate(enabled, inCombat, mounted, moving, actionReady);
+        bool moving = true, bool actionReady = true, bool alreadyOn = false) =>
+        SprintPolicy.Evaluate(enabled, inCombat, mounted, moving, actionReady, alreadyOn);
+
+    [Fact]
+    public void StellarSprintAlreadyOn_IsNeverPressedAgain()
+    {
+        // Cosmic Exploration: Stellar Sprint lasts until cancelled and the game still reports Sprint
+        // as usable, so pressing it again would only turn it off.
+        var d = Evaluate(alreadyOn: true);
+        Assert.False(d.Sprint);
+        Assert.Contains("Stellar Sprint", d.Reason);
+    }
 
     [Fact]
     public void MovingOutOfCombat_Sprints()

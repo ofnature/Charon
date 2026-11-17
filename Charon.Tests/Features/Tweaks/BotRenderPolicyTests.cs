@@ -38,19 +38,28 @@ public sealed class BotRenderPolicyTests
     }
 
     [Fact]
-    public void InCombat_TheFrameCapLifts_TheRestStays()
+    public void InCombat_TheWholeProfileComesOff()
     {
-        var wanted = BotRenderPolicy.Wanted(All, LongAway, true, 50);
-        Assert.False(wanted.ContainsKey(RenderOption.FrameCap));
-        Assert.True(wanted.ContainsKey(RenderOption.DisplayLimit));
-        Assert.True(wanted.ContainsKey(RenderOption.Resolution));
+        // User, 2026-11-15: in a fight the frame limiter AND the 3D drawing were still turned down.
+        Assert.Empty(BotRenderPolicy.Wanted(All, LongAway, true, 50));
     }
 
     [Fact]
-    public void InCombat_TheCapStays_WhenNotAskedToLift()
+    public void CombatLingers_SoAGapBetweenPullsChangesNothing()
     {
-        var wanted = BotRenderPolicy.Wanted(All with { LiftCapInCombat = false }, LongAway, true, 50);
+        Assert.True(BotRenderPolicy.CountsAsCombat(true, null));
+        Assert.True(BotRenderPolicy.CountsAsCombat(false, TimeSpan.FromSeconds(3)));
+        Assert.False(BotRenderPolicy.CountsAsCombat(false, BotRenderPolicy.CombatLinger));
+        Assert.False(BotRenderPolicy.CountsAsCombat(false, null));
+    }
+
+    [Fact]
+    public void InCombat_EverythingStaysDown_WhenNotAskedToLift()
+    {
+        var wanted = BotRenderPolicy.Wanted(All with { NormalInCombat = false }, LongAway, true, 50);
         Assert.True(wanted.ContainsKey(RenderOption.FrameCap));
+        Assert.True(wanted.ContainsKey(RenderOption.DisplayLimit));
+        Assert.True(wanted.ContainsKey(RenderOption.Resolution));
     }
 
     [Fact]

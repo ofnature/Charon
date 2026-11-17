@@ -20,7 +20,7 @@ public enum RenderOption
 public sealed record BotRenderChoice(
     bool Enabled,
     bool CapFrameRate,
-    bool LiftCapInCombat,
+    bool NormalInCombat,
     bool FewerCharacters,
     bool LowResolution,
     int ResolutionPercent = BotRenderPolicy.DefaultResolutionPercent);
@@ -29,11 +29,20 @@ public sealed record BotRenderChoice(
 /// When to turn a bot client's rendering down, and to what. The profile applies only while the
 /// window has been in the background for <see cref="ApplyDelay"/> — a quick alt-tab is not worth two
 /// settings changes — and comes off the moment the window is focused, because whoever focused it
-/// wants to see the game.
+/// wants to see the game. With <see cref="BotRenderChoice.NormalInCombat"/> it also comes off for a
+/// fight: the rotation and the boss AI decide once per frame, and a fight is what gets watched.
 /// </summary>
 public static class BotRenderPolicy
 {
     public static readonly TimeSpan ApplyDelay = TimeSpan.FromSeconds(3);
+
+    /// <summary>How long after a fight the toon still counts as in combat. Combat drops for a few
+    /// seconds between pulls, and each change rewrites settings and can swap the upscaler.</summary>
+    public static readonly TimeSpan CombatLinger = TimeSpan.FromSeconds(10);
+
+    /// <summary>In combat now, or out of it for less than <see cref="CombatLinger"/>.</summary>
+    public static bool CountsAsCombat(bool inCombat, TimeSpan? sinceCombat) =>
+        inCombat || sinceCombat is { } gone && gone < CombatLinger;
 
     /// <summary>The 3D resolution a new profile turns down to (the game's own floor).</summary>
     public const int DefaultResolutionPercent = 50;
@@ -61,8 +70,10 @@ public static class BotRenderPolicy
         if (!choice.Enabled || backgroundFor is not { } away || away < ApplyDelay)
             return wanted;
 
-        // The rotation and the boss AI decide once per frame, so a fight gets every frame it can.
-        if (choice.CapFrameRate && !(inCombat && choice.LiftCapInCombat))
+        if (inCombat && choice.NormalInCombat)
+            return wanted;
+
+        if (choice.CapFrameRate)
             wanted[RenderOption.FrameCap] = FrameCapOn;
 
         if (choice.FewerCharacters)

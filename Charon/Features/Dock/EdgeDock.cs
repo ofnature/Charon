@@ -15,6 +15,10 @@ public enum DockTab
 
     /// <summary>The main window, minimised to the edge (Odysseus's minimise-to-tab).</summary>
     Main,
+
+    /// <summary>A shortcut to Dalamud's plugin installer. Not a context tab: it is there whenever
+    /// its own setting is on.</summary>
+    Plugins,
 }
 
 /// <summary>
@@ -69,6 +73,7 @@ public static class DockTabs
         DockTab.Riders => "Riders",
         DockTab.Route => "Route",
         DockTab.Main => "Charon",
+        DockTab.Plugins => "Plugins",
         _ => tab.ToString(),
     };
 }

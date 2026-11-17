@@ -29,7 +29,7 @@ namespace Charon;
 
 public sealed class CharonPlugin : IDalamudPlugin
 {
-    public const string PluginVersion = "0.1.60";
+    public const string PluginVersion = "0.1.61";
     private const string CommandName = "/charon";
 
     /// <summary>
@@ -90,6 +90,7 @@ public sealed class CharonPlugin : IDalamudPlugin
     private bool _spawnWindowShown;
     private readonly SpawnTrackerWindow _spawnWindow;
     private readonly DomanWindow _domanWindow;
+    private readonly LoginWindow _loginWindow;
     private bool _domanWindowShown;
     private readonly ChestSearchFilter _chestSearch;
     private readonly FcChestSearchOverlay _fcSearchOverlay;
@@ -263,6 +264,9 @@ public sealed class CharonPlugin : IDalamudPlugin
     private readonly AfkGuard _afkGuard;
     private readonly FrameWatch _frameWatch;
     private readonly BotRenderProfile _botRender;
+    private readonly PerfRecorder _perf;
+    private readonly WindowDockService _windowDock;
+    private readonly AutoLoginService _autoLogin;
 
     /// <summary>The board's last pushed visibility: a user close is a change to RECORD, not to undo.</summary>
     private bool _retainerWindowShown;
@@ -553,6 +557,12 @@ public sealed class CharonPlugin : IDalamudPlugin
         _frameWatch = new FrameWatch(gameConfig, condition, pluginInterface);
         _botRender = new BotRenderProfile(gameConfig, condition, _config, SaveConfig,
             () => _jobLevels.LocalContentId, _frameWatch, log);
+        _perf = new PerfRecorder(gameConfig, condition, clientState, _frameWatch, () => _botRender.InCombat,
+            () => _botRender.Applied, System.IO.Path.Combine(pluginInterface.ConfigDirectory.FullName, "perf"), log);
+        _botRender.Override = () => _perf.OverrideChoice;
+        _windowDock = new WindowDockService(_config, () => _jobLevels.LocalContentId, _frameWatch, log);
+        _autoLogin = new AutoLoginService(clientState, gameGui, objectTable, gameInterop, pluginInterface, _config,
+            () => _jobLevels.LocalContentId, log);
         _afkGuard = new AfkGuard(
             () => _config.AfkGuardEnabled,
             () => _config.AfkGuardThresholdSeconds,
@@ -658,6 +668,9 @@ public sealed class CharonPlugin : IDalamudPlugin
             SetMainMinimized,
             () => _frameWatch.Status,
             _botRender,
+            _perf,
+            _windowDock,
+            _autoLogin,
             EurekaStatus,
             EurekaNow,
             () => _automationIpc.Status);
@@ -705,6 +718,9 @@ public sealed class CharonPlugin : IDalamudPlugin
 
         _domanWindow = new DomanWindow(_config, SaveConfig, _doman, _gilSeller);
         _windowSystem.AddWindow(_domanWindow);
+
+        _loginWindow = new LoginWindow(_autoLogin, name => _mainWindow.Display(name));
+        _windowSystem.AddWindow(_loginWindow);
 
         _pillionRidersWindow = new PillionRidersWindow(
             ReadRawSeatOccupancy,
@@ -765,6 +781,11 @@ public sealed class CharonPlugin : IDalamudPlugin
                 () => _mainWindow.DrawDocked(),
                 new System.Numerics.Vector2(980f, 640f), // its sidebar and content are stretch children
                 () => SetMainMinimized(false)),
+            // A shortcut, not a context tab: there on every screen, the title screen included.
+            new EdgeDockWindow.Tab(Charon.Features.Dock.DockTab.Plugins,
+                () => _config.PluginsTabEnabled,
+                DrawPluginsTabPanel,
+                OnClick: OpenPluginInstaller),
             new EdgeDockWindow.Tab(Charon.Features.Dock.DockTab.Retainers,
                 () => _config.EdgeDockEnabled && _config.RetainerOverlayEnabled && _condition[ConditionFlag.OccupiedSummoningBell],
                 () => _retainerBell.Draw()),
@@ -837,6 +858,9 @@ public sealed class CharonPlugin : IDalamudPlugin
 
         _relay.OnMessage -= OnRelayMessage;
         _commend.Dispose();
+        _autoLogin.Dispose();
+        _windowDock.Dispose(); // puts the window back where it was
+        _perf.Dispose(); // closes a capture; before the profile, which then puts the game's settings back
         _botRender.Dispose(); // puts the game's own settings back
         _palaceSpots.Dispose();
         _retainerGear.Dispose();
@@ -1382,6 +1406,28 @@ public sealed class CharonPlugin : IDalamudPlugin
 
     private void SaveConfig() => _pluginInterface.SavePluginConfig(_config);
 
+    /// <summary>Opens the plugin installer the way /xlplugins does (on the page Dalamud is set to
+    /// open it on); if the command is not taken, through the plugin interface instead.</summary>
+    private void OpenPluginInstaller()
+    {
+        if (!_commandManager.ProcessCommand("/xlplugins"))
+            _pluginInterface.OpenPluginInstallerTo(Dalamud.Interface.PluginInstallerOpenKind.AllPlugins);
+    }
+
+    /// <summary>The Plugins tab's pop-out: the installer's other pages and Dalamud's settings, one
+    /// click each. The tab itself opens the installer the way /xlplugins does.</summary>
+    private void DrawPluginsTabPanel()
+    {
+        if (Dalamud.Bindings.ImGui.ImGui.Button("Plugin installer"))
+            OpenPluginInstaller();
+        if (Dalamud.Bindings.ImGui.ImGui.Button("Installed plugins"))
+            _pluginInterface.OpenPluginInstallerTo(Dalamud.Interface.PluginInstallerOpenKind.InstalledPlugins);
+        if (Dalamud.Bindings.ImGui.ImGui.Button("Plugins with updates"))
+            _pluginInterface.OpenPluginInstallerTo(Dalamud.Interface.PluginInstallerOpenKind.UpdateablePlugins);
+        if (Dalamud.Bindings.ImGui.ImGui.Button("Dalamud settings"))
+            _commandManager.ProcessCommand("/xlsettings");
+    }
+
     private void OnFrameworkUpdate(IFramework framework)
     {
         var now = DateTime.UtcNow;
@@ -1423,6 +1469,9 @@ public sealed class CharonPlugin : IDalamudPlugin
         _afkGuard.Update(now);
         _frameWatch.Update(framework, now);
         _botRender.Update(now); // after the frame watch: it reads the focus state from there
+        _perf.Update(framework, now);
+        _windowDock.Update(now);
+        _autoLogin.Update(now);
         _retainerContents.Update(now);
         _retainerSelector.Update(now);
         _retainerGear.Update(now);
@@ -1487,7 +1536,8 @@ public sealed class CharonPlugin : IDalamudPlugin
         _pillionRidersWindow.IsOpen = _config.PillionRidersWindowEnabled && ReadRawSeatOccupancy().Count > 0 && !docked;
         if (docked)
             _fcChestWindow.IsOpen = false;
-        _edgeDock.IsOpen = (docked || _config.MainWindowMinimized) && _edgeDock.AnyTab();
+        _edgeDock.IsOpen = (docked || _config.MainWindowMinimized || _config.PluginsTabEnabled) && _edgeDock.AnyTab();
+        _loginWindow.IsOpen = _config.AutoLoginWindowEnabled && _autoLogin.WindowWanted(now);
         UpdateDomanWindow();
 
         // The overlay lives exactly as long as the bell's list is up - it is a decision aid for the window
@@ -3185,7 +3235,8 @@ public sealed class CharonPlugin : IDalamudPlugin
             _condition[ConditionFlag.InCombat],
             _condition[ConditionFlag.Mounted],
             moving,
-            SprintHelper.IsReady());
+            SprintHelper.IsReady(),
+            local.StatusList.Any(s => s.StatusId == SprintHelper.StellarSprintStatus));
 
         _sprintStatus = decision.Reason;
         if (decision.Sprint)

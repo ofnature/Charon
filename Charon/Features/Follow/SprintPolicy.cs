@@ -19,10 +19,15 @@ public sealed record SprintDecision(bool Sprint, string Reason);
 /// covers cooldown, zone rules, and the fact that instanced duties have their own sprint behaviour.
 /// Five different statuses are named "Sprint" (50 overworld plus instance variants), so checking for
 /// the buff by id would have been guesswork.
+///
+/// The one exception is Cosmic Exploration: there Sprint becomes Stellar Sprint, which lasts
+/// until cancelled. The game still reports Sprint as usable while it is up, so the buff itself
+/// is checked (<paramref name="alreadyOn"/>), and Sprint is never pressed over it.
 /// </summary>
 public static class SprintPolicy
 {
-    public static SprintDecision Evaluate(bool enabled, bool inCombat, bool mounted, bool moving, bool actionReady)
+    public static SprintDecision Evaluate(bool enabled, bool inCombat, bool mounted, bool moving, bool actionReady,
+        bool alreadyOn = false)
     {
         if (!enabled)
             return new SprintDecision(false, "disabled");
@@ -32,6 +37,9 @@ public static class SprintPolicy
 
         if (mounted)
             return new SprintDecision(false, "mounted");
+
+        if (alreadyOn)
+            return new SprintDecision(false, "Stellar Sprint already on");
 
         if (!moving)
             return new SprintDecision(false, "standing still");

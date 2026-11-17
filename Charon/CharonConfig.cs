@@ -97,6 +97,10 @@ public sealed class CharonConfig : IPluginConfiguration
     public Dictionary<string, Charon.Features.Dock.DockPlacement> EdgeDockTabs { get; set; } = new();
 
     /// <summary>Where a tab sits: where it was dragged, or the middle of the default edge.</summary>
+    /// <summary>An always-there edge tab that opens Dalamud's plugin installer. Independent of
+    /// <see cref="EdgeDockEnabled"/>.</summary>
+    public bool PluginsTabEnabled { get; set; }
+
     public Charon.Features.Dock.DockPlacement DockPlacementFor(Charon.Features.Dock.DockTab tab)
         => EdgeDockTabs.TryGetValue(tab.ToString(), out var placed)
             ? placed
@@ -413,13 +417,42 @@ public sealed class CharonConfig : IPluginConfiguration
     {
         public bool Enabled { get; set; }
         public bool CapFrameRate { get; set; } = true;
-        public bool LiftCapInCombat { get; set; } = true;
+        /// <summary>The whole profile comes off while this toon is in combat. Replaced the cap-only
+        /// "LiftCapInCombat" (2026-11-15); the old key in a saved file is ignored.</summary>
+        public bool NormalInCombat { get; set; } = true;
         public bool FewerCharacters { get; set; } = true;
         public bool LowResolution { get; set; } = true;
 
         /// <summary>3D resolution to turn down to, in percent; below 50 goes past the game's own floor.</summary>
         public int ResolutionPercent { get; set; } = Features.Tweaks.BotRenderPolicy.DefaultResolutionPercent;
+
+        /// <summary>This character's part in the window dock (<see cref="Features.Tweaks.DockMode"/>:
+        /// 0 off, 1 always docked, 2 swaps into the main region when clicked). Independent of
+        /// <see cref="Enabled"/>.</summary>
+        public int WindowMode { get; set; }
     }
+
+    /// <summary>How many small slots the window dock has down the right of the screen. One layout per
+    /// PC, since every client on it shares the one screen.</summary>
+    public int WindowDockSlots { get; set; } = 3;
+
+    /// <summary>Log the character back in after a disconnect. Off by default: it presses buttons on
+    /// the title and character screens unprompted.</summary>
+    public bool AutoLoginEnabled { get; set; }
+
+    /// <summary>While auto login is on, stop a lobby error from closing the client.</summary>
+    public bool AutoLoginKeepClientOpen { get; set; } = true;
+
+    /// <summary>The login window on the title screen: a button per character seen on this PC.
+    /// Independent of <see cref="AutoLoginEnabled"/> — a click is the player asking.</summary>
+    public bool AutoLoginWindowEnabled { get; set; } = true;
+
+    /// <summary>Which screen holds the main region and which the dock, counted left to right from 0;
+    /// -1 picks (main on the primary, dock on the screen to its right). The same screen for both makes
+    /// the dock a strip down that screen's right-hand side.</summary>
+    public int WindowDockMainScreen { get; set; } = Features.Tweaks.WindowDock.Auto;
+
+    public int WindowDockDockScreen { get; set; } = Features.Tweaks.WindowDock.Auto;
 
     /// <summary>
     /// Bot render profile, PER CHARACTER (keyed by content id) for the Quick Kill reason: this file is

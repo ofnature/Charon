@@ -76,6 +76,26 @@ public static unsafe class AtkClickHelper
         addon->ReceiveEvent(AtkEventType.MouseUp, 0, &evt, &data);
     }
 
+    /// <summary>
+    /// Logs in the character at a position in the character list — ECommons
+    /// AddonMaster._CharaSelectListMenu.Character.Login (MIT): a MouseClick whose event index is
+    /// 5 + the position, on a fresh AtkEvent (listener = the list, target = AtkStage's event target,
+    /// state flags = that index) with zeroed AtkEventData (byte 6 set would make it a right click).
+    /// </summary>
+    public static void LobbyCharacterLogin(AtkUnitBase* list, int position)
+    {
+        if (list == null || position < 0)
+            return;
+
+        var eventIndex = (byte)(5 + position);
+        var evt = default(AtkEvent);
+        evt.Listener = (AtkEventListener*)list;
+        evt.Target = &AtkStage.Instance()->AtkEventTarget;
+        evt.State.StateFlags = (AtkEventStateFlags)eventIndex;
+        var data = default(AtkEventData);
+        list->ReceiveEvent(AtkEventType.MouseClick, eventIndex, &evt, &data);
+    }
+
     private static bool Click(AtkUnitBase* addon, AtkComponentNode* node)
     {
         if (node == null)

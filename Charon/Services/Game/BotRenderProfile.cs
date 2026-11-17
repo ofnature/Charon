@@ -42,6 +42,7 @@ public sealed unsafe class BotRenderProfile : IDisposable
     /// <summary>The character whose overrides this client holds (0 = none yet).</summary>
     private ulong _owner;
     private DateTime? _backgroundSinceUtc;
+    private DateTime? _lastCombatUtc;
     private DateTime _nextUpdateUtc;
     private string _leftoverNote = string.Empty;
     /// <summary>The live upscaler (DLSS) swapped out for AMD FSR while the resolution is held.</summary>
@@ -69,6 +70,16 @@ public sealed unsafe class BotRenderProfile : IDisposable
         _frames = frames;
         _log = log;
     }
+
+    /// <summary>Set by the performance sweep: a choice that replaces this character's own while the
+    /// sweep runs (it measures one setting at a time). Null result = the character's own profile.</summary>
+    public Func<BotRenderChoice?>? Override { get; set; }
+
+    /// <summary>What the profile wants turned down as of the last update; empty when nothing.</summary>
+    public string Applied { get; private set; } = string.Empty;
+
+    /// <summary>In combat, or within the linger after it, as of the last update.</summary>
+    public bool InCombat { get; private set; }
 
     public void Update(DateTime nowUtc)
     {
@@ -110,14 +121,22 @@ public sealed unsafe class BotRenderProfile : IDisposable
             _backgroundSinceUtc ??= nowUtc;
 
         var setting = _config.RenderProfileFor(contentId);
-        var choice = new BotRenderChoice(setting.Enabled, setting.CapFrameRate, setting.LiftCapInCombat,
+        var sweeping = Override?.Invoke();
+        var choice = sweeping ?? new BotRenderChoice(setting.Enabled, setting.CapFrameRate, setting.NormalInCombat,
             setting.FewerCharacters, setting.LowResolution, setting.ResolutionPercent);
-        var inCombat = _condition[ConditionFlag.InCombat];
+        if (_condition[ConditionFlag.InCombat])
+            _lastCombatUtc = nowUtc;
+        var inCombat = BotRenderPolicy.CountsAsCombat(_condition[ConditionFlag.InCombat],
+            _lastCombatUtc is { } fought ? nowUtc - fought : null);
         uint? floor = _gameConfig.TryGet(SystemConfigOption.GraphicsRezoScale, out UIntConfigProperties? props)
             ? props?.Minimum
             : null;
         var away = _backgroundSinceUtc is { } since ? nowUtc - since : (TimeSpan?)null;
         var wanted = BotRenderPolicy.Wanted(choice, away, inCombat, floor);
+        InCombat = inCombat;
+        Applied = string.Join("; ", wanted.Select(pair => pair.Key == RenderOption.Resolution
+            ? $"3D resolution {BotRenderPolicy.LiveResolution(choice) * 100:0}%"
+            : BotRenderPolicy.Describe(pair.Key, pair.Value)));
 
         // Created lazily: an empty record is never stored.
         var record = _config.RenderProfileRestore.TryGetValue(contentId, out var stored)
@@ -171,7 +190,8 @@ public sealed unsafe class BotRenderProfile : IDisposable
         var upscalerNote = _savedUpscaler is { } saved
             ? $" · upscaling switched from DLSS (type {saved}) to AMD FSR while turned down, put back after"
             : string.Empty;
-        Status = Describe(choice, away, inCombat, record, alreadyLow) + upscalerNote + _leftoverNote;
+        Status = (sweeping != null ? "performance sweep in control · " : string.Empty)
+                 + Describe(choice, away, inCombat, record, alreadyLow) + upscalerNote + _leftoverNote;
     }
 
     public void Dispose()
@@ -197,6 +217,9 @@ public sealed unsafe class BotRenderProfile : IDisposable
         if (time < BotRenderPolicy.ApplyDelay)
             return $"on — in the background, turning down in {(BotRenderPolicy.ApplyDelay - time).TotalSeconds:0}s";
 
+        if (inCombat && choice.NormalInCombat)
+            return "on — in combat, your settings are in use until 10s after the fight";
+
         var parts = record
             .Select(pair => Enum.TryParse<RenderOption>(pair.Key, out var option)
                 ? $"{BotRenderPolicy.Describe(option, pair.Value.Applied)} (was {BotRenderPolicy.Value(option, pair.Value.Original)}"
@@ -215,9 +238,7 @@ public sealed unsafe class BotRenderProfile : IDisposable
             : "on — in the background, nothing to turn down";
         if (alreadyLow > 0)
             text += $" · {alreadyLow} already as low as the profile asks";
-        if (inCombat && choice.CapFrameRate && choice.LiftCapInCombat)
-            text += " · frame cap lifted for combat";
-        else if (choice.CapFrameRate && _frames.ChillFramesLoaded)
+        if (choice.CapFrameRate && _frames.ChillFramesLoaded)
             text += " · Chill Frames is loaded and replaces the game's frame cap, so the cap does nothing here";
         return text;
     }

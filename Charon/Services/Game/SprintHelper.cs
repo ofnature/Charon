@@ -21,6 +21,15 @@ public static unsafe class SprintHelper
     /// <summary>GeneralAction row 4. VERIFIED against the sheet.</summary>
     private const uint SprintGeneralAction = 4;
 
+    /// <summary>
+    /// Status 4398 "Stellar Sprint" — Cosmic Exploration's sprint on all four moons (Sinus Ardorum
+    /// 1237, Phaenna 1291, Oizys 1310, Auxesia 1319 — every TerritoryType with intended use 60).
+    /// Marked permanent in the Status sheet: it lasts until cancelled. VERIFIED with Lumina against
+    /// the game files and by the in-game tooltip. The check reads the buff, not the zone, so a new
+    /// moon needs no change here.
+    /// </summary>
+    public const uint StellarSprintStatus = 4398;
+
     /// <summary>True when the game says Sprint can be used right now (status 0 = usable).</summary>
     public static bool IsReady()
     {
