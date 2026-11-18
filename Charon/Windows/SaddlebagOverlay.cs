@@ -16,7 +16,6 @@ namespace Charon.Windows;
 /// </summary>
 public sealed unsafe class SaddlebagOverlay : Window
 {
-    private const string SaddlebagAddon = "InventoryBuddy";
     private const uint AnchorNodeId = 83;
 
     private readonly IGameGui _gameGui;
@@ -38,20 +37,33 @@ public sealed unsafe class SaddlebagOverlay : Window
 
     public override void PreDraw()
     {
-        var addon = _gameGui.GetAddonByName(SaddlebagAddon);
+        // Whichever of the two saddlebag windows is up (the second one is the saddlebag beside a
+        // retainer's inventory).
+        if (_saddlebag.OpenAddonName() is not { } name)
+            return;
+        var addon = _gameGui.GetAddonByName(name);
         if (addon.IsNull)
             return;
 
         var unit = (AtkUnitBase*)addon.Address;
-        var node = unit->GetNodeById(AnchorNodeId);
-        if (node == null)
-            return;
-
-        // Bottom bar of the saddlebag, just under its right edge — where Pandora puts theirs.
         var scale = unit->Scale;
+        var node = unit->GetNodeById(AnchorNodeId);
+        if (node != null)
+        {
+            // Bottom bar of the saddlebag, just under its right edge — where Pandora puts theirs.
+            Position = new Vector2(
+                node->ScreenX + (node->Width * scale) - 170f,
+                node->ScreenY + (node->Height * scale) + 2f);
+            return;
+        }
+
+        // A saddlebag window without that bar: under the window's own bottom-right corner.
+        var root = unit->RootNode;
+        if (root == null)
+            return;
         Position = new Vector2(
-            node->ScreenX + (node->Width * scale) - 170f,
-            node->ScreenY + (node->Height * scale) + 2f);
+            unit->X + (root->Width * scale) - 170f,
+            unit->Y + (root->Height * scale) + 2f);
     }
 
     public override void Draw()

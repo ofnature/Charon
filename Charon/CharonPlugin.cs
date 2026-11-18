@@ -29,7 +29,7 @@ namespace Charon;
 
 public sealed class CharonPlugin : IDalamudPlugin
 {
-    public const string PluginVersion = "0.1.61";
+    public const string PluginVersion = "0.1.62";
     private const string CommandName = "/charon";
 
     /// <summary>
@@ -381,7 +381,9 @@ public sealed class CharonPlugin : IDalamudPlugin
         _groupInvites = new InviteManager(
             toon =>
             {
-                var ok = PartyInviteHelper.TryInvite(toon.CharacterName, toon.ContentId, toon.WorldId, out var detail);
+                var inInstance = PartyInviteHelper.InInstanceArea() || _condition[ConditionFlag.BoundByDuty];
+                var ok = PartyInviteHelper.TryInvite(toon.CharacterName, toon.ContentId, toon.WorldId, inInstance,
+                    out var detail);
                 return (ok, detail);
             },
             log: message => _log.Debug("[GroupMgmt] {0}", message));

@@ -25,6 +25,7 @@ public sealed class WindowDockService : IDisposable
     private readonly Func<ulong> _contentId;
     private readonly FrameWatch _frames;
     private readonly IPluginLog _log;
+    private readonly WindowMinimumLift _minimum;
     private readonly Process _process = Process.GetCurrentProcess();
 
     private DateTime _nextUtc;
@@ -35,17 +36,26 @@ public sealed class WindowDockService : IDisposable
     private DockPlace _place = DockPlace.None;
     private int _slot;
 
-    public WindowDockService(CharonConfig config, Func<ulong> contentId, FrameWatch frames, IPluginLog log)
+    /// <summary>The last placement came out a different size than asked, in words; else empty.</summary>
+    private string _shortfall = string.Empty;
+
+    public WindowDockService(CharonConfig config, Func<ulong> contentId, FrameWatch frames,
+        IPluginLog log)
     {
         _config = config;
         _contentId = contentId;
         _frames = frames;
         _log = log;
+        _minimum = new WindowMinimumLift(log);
     }
 
     public string Status { get; private set; } = "not run yet";
 
-    public void Dispose() => Release("the plugin unloaded");
+    public void Dispose()
+    {
+        Release("the plugin unloaded");
+        _minimum.Dispose();
+    }
 
     public void Update(DateTime nowUtc)
     {
@@ -88,6 +98,10 @@ public sealed class WindowDockService : IDisposable
             Status = "waiting — the window is minimised";
             return;
         }
+
+        // The game refuses a picture under 1024x720, which is larger than a dock slot.
+        _minimum.Ensure(window);
+        _minimum.Lift = true;
 
         var others = Others(nowUtc);
         var focused = _frames.WindowKnown && _frames.IsFocused;
@@ -132,7 +146,15 @@ public sealed class WindowDockService : IDisposable
             DockPlace.Main => $"{Describe(mode)} — in the main region, picture {width}x{height}",
             DockPlace.Dock => $"{Describe(mode)} — docked in slot {_slot + 1} of {slots}, picture {width}x{height}",
             _ => $"{Describe(mode)} — the window would not move",
-        };
+        } + _shortfall + MinimumText();
+    }
+
+    private string MinimumText()
+    {
+        if (!_minimum.Available)
+            return $"; the game's minimum window size stays ({_minimum.Reason})";
+        var (width, height) = _minimum.GameMinimum;
+        return width > 0 ? $"; the game's own minimum of {width}x{height} is lifted" : string.Empty;
     }
 
     private static string Describe(DockMode mode) => mode == DockMode.Docked ? "always docked" : "swaps when clicked";
@@ -141,7 +163,16 @@ public sealed class WindowDockService : IDisposable
     {
         // Saved once per session: what the window was before Charon first moved it.
         _saved ??= GameWindow.Save(window);
-        return _saved != null && GameWindow.SetBounds(window, box);
+        if (_saved == null || !GameWindow.SetBounds(window, box))
+            return false;
+
+        // The move is done by the time SetBounds returns, so what the window is now is the answer.
+        _shortfall = GameWindow.Bounds(window) is { } now && (now.Width != box.Width || now.Height != box.Height)
+            ? $"; THE GAME KEPT THE WINDOW AT {now.Width}x{now.Height}, asked for {box.Width}x{box.Height}"
+            : string.Empty;
+        if (_shortfall.Length > 0)
+            _log.Warning($"Window dock: placed{_shortfall} — {_minimum.Evidence}");
+        return true;
     }
 
     private void Release(string why)
@@ -154,6 +185,8 @@ public sealed class WindowDockService : IDisposable
 
         _saved = null;
         _place = DockPlace.None;
+        _shortfall = string.Empty;
+        _minimum.Lift = false;
     }
 
     /// <summary>Where the other game clients' windows are, refreshed twice a second: finding another

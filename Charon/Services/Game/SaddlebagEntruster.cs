@@ -19,7 +19,15 @@ namespace Charon.Services.Game;
 /// </summary>
 public sealed unsafe class SaddlebagEntruster
 {
-    private const string SaddlebagAddon = "InventoryBuddy";
+    /// <summary>
+    /// The saddlebag has TWO windows. `InventoryBuddy` is the one opened by itself; with a retainer's
+    /// inventory open the game shows the saddlebag in `InventoryBuddy2` instead (both names are in
+    /// the game executable; user screenshots 2026-11-17: the button showed on the first and was
+    /// missing beside a retainer, because only the first name was watched).
+    /// </summary>
+    private static readonly string[] SaddlebagAddons = ["InventoryBuddy", "InventoryBuddy2"];
+
+    private string _lastOpenAddon = string.Empty;
     /// <summary>
     /// Addon row 881 "Add All to Saddlebag" — NOT row 886 "Add to Saddlebag". User-verified:
     /// the singular entry needs a follow-up interaction (fired-but-nothing-moved, three live
@@ -75,10 +83,27 @@ public sealed unsafe class SaddlebagEntruster
 
     public string Status { get; private set; } = "idle";
 
-    public bool IsSaddlebagOpen()
+    public bool IsSaddlebagOpen() => OpenAddonName() != null;
+
+    /// <summary>The saddlebag window on screen right now, or null when neither is.</summary>
+    public string? OpenAddonName()
     {
-        var addon = _gameGui.GetAddonByName(SaddlebagAddon);
-        return !addon.IsNull && addon.IsVisible;
+        foreach (var name in SaddlebagAddons)
+        {
+            var addon = _gameGui.GetAddonByName(name);
+            if (addon.IsNull || !addon.IsVisible)
+                continue;
+
+            if (name != _lastOpenAddon)
+            {
+                _lastOpenAddon = name;
+                _log.Debug("Saddlebag: the open saddlebag window is {0}", name);
+            }
+
+            return name;
+        }
+
+        return null;
     }
 
     /// <summary>How many bag stacks would be entrusted right now, for the button label.</summary>
