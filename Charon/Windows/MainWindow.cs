@@ -23,6 +23,7 @@ using Charon.Features.Tweaks;
 using Charon.Features.Weeklies;
 using Charon.Services;
 using Charon.Services.Game;
+using Charon.Services.Game.CharacterPanel;
 using Charon.Windows.Components;
 
 namespace Charon.Windows;
@@ -137,6 +138,7 @@ public sealed class MainWindow : Window
     private readonly PerfRecorder _perf;
     private readonly WindowDockService _windowDock;
     private readonly AutoLoginService _autoLogin;
+    private readonly CharacterPanelService _characterPanel;
     private readonly Func<string> _eurekaStatus;
     private readonly Func<(uint Territory, IReadOnlySet<ushort>? Live)> _eurekaNow;
     private readonly Func<string> _suiteStatus;
@@ -254,6 +256,7 @@ public sealed class MainWindow : Window
         PerfRecorder perf,
         WindowDockService windowDock,
         AutoLoginService autoLogin,
+        CharacterPanelService characterPanel,
         Func<string> eurekaStatus,
         Func<(uint Territory, IReadOnlySet<ushort>? Live)> eurekaNow,
         Func<string> suiteStatus)
@@ -314,6 +317,7 @@ public sealed class MainWindow : Window
         _perf = perf;
         _windowDock = windowDock;
         _autoLogin = autoLogin;
+        _characterPanel = characterPanel;
         _eurekaStatus = eurekaStatus;
         _eurekaNow = eurekaNow;
         _suiteStatus = suiteStatus;
@@ -3213,6 +3217,35 @@ public sealed class MainWindow : Window
     {
         DrawPageHeader("Tweaks");
 
+        if (TweakGroup("Interface")) DrawTweaksInterface();
+        if (TweakGroup("In duties")) DrawTweaksDuties();
+        if (TweakGroup("Dialogue and hand-ins")) DrawTweaksDialogue();
+        if (TweakGroup("Mouse cursor")) DrawTweaksCursor();
+        if (TweakGroup("Background clients")) DrawTweaksBackground();
+    }
+
+    /// <summary>A collapsible group on the Tweaks page. Which groups are open is remembered.</summary>
+    private bool TweakGroup(string label)
+    {
+        var wasOpen = _config.TweaksOpenGroups.Contains(label);
+        ImGui.SetNextItemOpen(wasOpen);
+        var open = ImGui.CollapsingHeader($"{label}##tweakgroup");
+        if (open != wasOpen)
+        {
+            if (open)
+                _config.TweaksOpenGroups.Add(label);
+            else
+                _config.TweaksOpenGroups.Remove(label);
+            _save();
+        }
+
+        if (open)
+            ImGui.Spacing();
+        return open;
+    }
+
+    private void DrawTweaksInterface()
+    {
         var pluginsTab = _config.PluginsTabEnabled;
         if (ImGui.Checkbox("Plugins tab on the screen edge##dock", ref pluginsTab))
         {
@@ -3224,6 +3257,17 @@ public sealed class MainWindow : Window
                                + "buttons that go straight to your installed plugins, the ones with\n"
                                + "updates, or Dalamud's settings. Drag it to any edge.\n\n"
                                + "It works on its own: the context tabs below do not have to be on.");
+
+        var fpsDtr = _config.FpsDtrEnabled;
+        if (ImGui.Checkbox("Frame rate in the server info bar##fpsdtr", ref fpsDtr))
+        {
+            _config.FpsDtrEnabled = fpsDtr;
+            _save();
+        }
+        CharonTheme.HelpMarker("Shows this client's frame rate beside the game's clock, refreshed once a\n"
+                               + "second. It counts every frame, so a client in the background shows the\n"
+                               + "rate it is really running at.\n\n"
+                               + "Dalamud's own settings (Server Info Bar) can also hide or reorder it.");
 
         var dock = _config.EdgeDockEnabled;
         if (ImGui.Checkbox("Edge tabs##dock", ref dock))
@@ -3260,8 +3304,11 @@ public sealed class MainWindow : Window
             ImGui.Unindent();
         }
 
-        ImGui.Spacing();
+        DrawCharacterPanelBlock();
+    }
 
+    private void DrawTweaksDuties()
+    {
         var openChests = _config.AutoOpenChestsEnabled;
         if (ImGui.Checkbox("Auto-open treasure chests##qol", ref openChests))
         {
@@ -3332,7 +3379,10 @@ public sealed class MainWindow : Window
             }
             ImGui.Unindent();
         }
+    }
 
+    private void DrawTweaksDialogue()
+    {
         var autoTurnIn = _config.AutoTurnInEnabled;
         if (ImGui.Checkbox("Auto-select turn-ins##qol", ref autoTurnIn))
         {
@@ -3378,7 +3428,10 @@ public sealed class MainWindow : Window
                                + "is pressed, so it works whatever your Esc is bound to. Never over\n"
                                + "another choice. Off by default: on a box someone is playing, it skips\n"
                                + "their story. Odysseus can switch it either way while it runs.");
+    }
 
+    private void DrawTweaksCursor()
+    {
         var cursorFinder = _config.CursorFinderEnabled;
         if (ImGui.Checkbox("Shake the mouse to find it##qol", ref cursorFinder))
         {
@@ -3438,8 +3491,10 @@ public sealed class MainWindow : Window
 
             ImGui.Unindent();
         }
+    }
 
-        ImGui.Spacing();
+    private void DrawTweaksBackground()
+    {
         DrawAfkGuardBlock();
 
         ImGui.Spacing();
@@ -4010,6 +4065,55 @@ public sealed class MainWindow : Window
         DrawStatusLine(_gcDailies.Status, CharonTheme.TextDisabled);
     }
 
+    private void DrawCharacterPanelBlock()
+    {
+        var on = _config.CharacterPanelEnabled;
+        if (ImGui.Checkbox("Refined Character window##cpr", ref on))
+        {
+            _config.CharacterPanelEnabled = on;
+            _save();
+        }
+
+        CharonTheme.HelpMarker("Rebuilds the game's Character window to show what your stats do: crit and\n"
+                               + "direct hit chance, determination and tenacity as percentages, recast times,\n"
+                               + "mitigation, and average damage and healing per 100 potency. Hovering a stat\n"
+                               + "shows how many points the next tier needs and how many are wasted.\n\n"
+                               + "Hold Ctrl to see recast times without your job's speed buff, and an item's\n"
+                               + "stats without the item level sync.\n\n"
+                               + "This is Character Panel Refined by Kouzukii (MIT), built into Charon. While\n"
+                               + "that plugin is loaded, Charon leaves the window to it.");
+
+        if (!on)
+            return;
+
+        void Option(string label, bool value, Action<bool> set)
+        {
+            if (!ImGui.Checkbox(label, ref value))
+                return;
+
+            set(value);
+            _save();
+        }
+
+        ImGui.Indent();
+        Option("Detailed stat tooltips##cpr", _config.CharacterPanelTooltips, v => _config.CharacterPanelTooltips = v);
+        Option("Average damage##cpr", _config.CharacterPanelAvgDamage, v => _config.CharacterPanelAvgDamage = v);
+        Option("Average healing##cpr", _config.CharacterPanelAvgHealing, v => _config.CharacterPanelAvgHealing = v);
+        Option("Crit damage increase##cpr", _config.CharacterPanelCritDamageIncrease,
+            v => _config.CharacterPanelCritDamageIncrease = v);
+        Option("Direct hit damage increase##cpr", _config.CharacterPanelDhDamageIncrease,
+            v => _config.CharacterPanelDhDamageIncrease = v);
+        Option("Crafter and gatherer stats without food##cpr", _config.CharacterPanelFoodlessStats,
+            v => _config.CharacterPanelFoodlessStats = v);
+        Option("Item level and item level sync##cpr", _config.CharacterPanelGearProperties,
+            v => _config.CharacterPanelGearProperties = v);
+        Option("Synced stats in item tooltips##cpr", _config.CharacterPanelSyncedTooltips,
+            v => _config.CharacterPanelSyncedTooltips = v);
+        ImGui.TextColored(CharonTheme.TextMuted, "Reopen the Character window to apply a change.");
+        DrawStatusLine(_characterPanel.Status, CharonTheme.TextDisabled);
+        ImGui.Unindent();
+    }
+
     private void DrawAfkGuardBlock()
     {
         var guard = _config.AfkGuardEnabled;
@@ -4355,6 +4459,7 @@ public sealed class MainWindow : Window
         DrawStatusLine($"QoL: {_qolStatus()}");
         DrawStatusLine($"Frames: {_frameStatus()}");
         DrawStatusLine($"Bot render: {_botRender.Status}");
+        DrawStatusLine($"Character panel: {_characterPanel.Status}");
         DrawStatusLine($"Perf capture: {_perf.Status}");
         DrawStatusLine($"Window dock: {_windowDock.Status}");
         DrawStatusLine($"Auto login: {ScrambleIn(_autoLogin.Status)}");

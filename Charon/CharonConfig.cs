@@ -101,6 +101,26 @@ public sealed class CharonConfig : IPluginConfiguration
     /// <see cref="EdgeDockEnabled"/>.</summary>
     public bool PluginsTabEnabled { get; set; }
 
+    /// <summary>The frame rate in the server info bar (beside the game's clock).</summary>
+    public bool FpsDtrEnabled { get; set; } = true;
+
+    /// <summary>The Tweaks page's groups that are expanded (by label); the rest are collapsed.</summary>
+    public List<string> TweaksOpenGroups { get; set; } = new();
+
+    /// <summary>
+    /// The refined Character window (Character Panel Refined, built in). Off until asked for: it
+    /// rebuilds one of the game's own windows. The rest are its options, with the original's defaults.
+    /// </summary>
+    public bool CharacterPanelEnabled { get; set; }
+    public bool CharacterPanelTooltips { get; set; } = true;
+    public bool CharacterPanelAvgDamage { get; set; } = true;
+    public bool CharacterPanelAvgHealing { get; set; } = true;
+    public bool CharacterPanelGearProperties { get; set; } = true;
+    public bool CharacterPanelSyncedTooltips { get; set; } = true;
+    public bool CharacterPanelCritDamageIncrease { get; set; }
+    public bool CharacterPanelDhDamageIncrease { get; set; }
+    public bool CharacterPanelFoodlessStats { get; set; } = true;
+
     public Charon.Features.Dock.DockPlacement DockPlacementFor(Charon.Features.Dock.DockTab tab)
         => EdgeDockTabs.TryGetValue(tab.ToString(), out var placed)
             ? placed

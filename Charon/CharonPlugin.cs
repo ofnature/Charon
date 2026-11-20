@@ -23,6 +23,7 @@ using Charon.Features.Loot;
 using Charon.Ipc;
 using Charon.Services;
 using Charon.Services.Game;
+using Charon.Services.Game.CharacterPanel;
 using Charon.Windows;
 
 namespace Charon;
@@ -263,6 +264,8 @@ public sealed class CharonPlugin : IDalamudPlugin
     /// <summary>Keeps an unattended client logged in — see the class for why a busy box is still idle.</summary>
     private readonly AfkGuard _afkGuard;
     private readonly FrameWatch _frameWatch;
+    private readonly FpsDtr _fpsDtr;
+    private readonly CharacterPanelService _characterPanel;
     private readonly BotRenderProfile _botRender;
     private readonly PerfRecorder _perf;
     private readonly WindowDockService _windowDock;
@@ -351,7 +354,9 @@ public sealed class CharonPlugin : IDalamudPlugin
         IChatGui chatGui,
         INotificationManager notifications,
         IPluginLog log,
-        IFateTable fateTable)
+        IFateTable fateTable,
+        IDtrBar dtrBar,
+        IKeyState keyState)
     {
         _pluginInterface = pluginInterface;
         _commandManager = commandManager;
@@ -557,6 +562,9 @@ public sealed class CharonPlugin : IDalamudPlugin
         _retainerGear = new RetainerGearService(gameGui, dataManager, log, _gear, _retainers, _retainerContents,
             _retainerPlanner, _config, SaveConfig, () => _jobLevels.LocalContentId, () => _ventureRunner.Armed, chatGui);
         _frameWatch = new FrameWatch(gameConfig, condition, pluginInterface);
+        _fpsDtr = new FpsDtr(dtrBar, () => _config.FpsDtrEnabled, log);
+        _characterPanel = new CharacterPanelService(addonLifecycle, keyState, pluginInterface, sigScanner,
+            dataManager, gameGui, objectTable, _config, log);
         _botRender = new BotRenderProfile(gameConfig, condition, _config, SaveConfig,
             () => _jobLevels.LocalContentId, _frameWatch, log);
         _perf = new PerfRecorder(gameConfig, condition, clientState, _frameWatch, () => _botRender.InCombat,
@@ -668,11 +676,12 @@ public sealed class CharonPlugin : IDalamudPlugin
             _variant,
             () => _variantGuide!.IsOpen = true,
             SetMainMinimized,
-            () => _frameWatch.Status,
+            () => $"{_frameWatch.Status} · server bar: {_fpsDtr.Status}",
             _botRender,
             _perf,
             _windowDock,
             _autoLogin,
+            _characterPanel,
             EurekaStatus,
             EurekaNow,
             () => _automationIpc.Status);
@@ -862,6 +871,8 @@ public sealed class CharonPlugin : IDalamudPlugin
         _commend.Dispose();
         _autoLogin.Dispose();
         _windowDock.Dispose(); // puts the window back where it was
+        _fpsDtr.Dispose(); // takes the entry off the server info bar
+        _characterPanel.Dispose();
         _perf.Dispose(); // closes a capture; before the profile, which then puts the game's settings back
         _botRender.Dispose(); // puts the game's own settings back
         _palaceSpots.Dispose();
@@ -1470,6 +1481,8 @@ public sealed class CharonPlugin : IDalamudPlugin
         _qte.Update(now);
         _afkGuard.Update(now);
         _frameWatch.Update(framework, now);
+        _fpsDtr.Update(framework);
+        _characterPanel.Update(now);
         _botRender.Update(now); // after the frame watch: it reads the focus state from there
         _perf.Update(framework, now);
         _windowDock.Update(now);
