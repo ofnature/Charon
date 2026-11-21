@@ -139,6 +139,7 @@ public sealed class MainWindow : Window
     private readonly WindowDockService _windowDock;
     private readonly AutoLoginService _autoLogin;
     private readonly CharacterPanelService _characterPanel;
+    private readonly PlayerDrawLimiter _playerRange;
     private readonly Func<string> _eurekaStatus;
     private readonly Func<(uint Territory, IReadOnlySet<ushort>? Live)> _eurekaNow;
     private readonly Func<string> _suiteStatus;
@@ -257,6 +258,7 @@ public sealed class MainWindow : Window
         WindowDockService windowDock,
         AutoLoginService autoLogin,
         CharacterPanelService characterPanel,
+        PlayerDrawLimiter playerRange,
         Func<string> eurekaStatus,
         Func<(uint Territory, IReadOnlySet<ushort>? Live)> eurekaNow,
         Func<string> suiteStatus)
@@ -318,6 +320,7 @@ public sealed class MainWindow : Window
         _windowDock = windowDock;
         _autoLogin = autoLogin;
         _characterPanel = characterPanel;
+        _playerRange = playerRange;
         _eurekaStatus = eurekaStatus;
         _eurekaNow = eurekaNow;
         _suiteStatus = suiteStatus;
@@ -3498,6 +3501,9 @@ public sealed class MainWindow : Window
         DrawAfkGuardBlock();
 
         ImGui.Spacing();
+        DrawPlayerRangeBlock();
+
+        ImGui.Spacing();
         DrawBotRenderBlock();
     }
 
@@ -4065,6 +4071,53 @@ public sealed class MainWindow : Window
         DrawStatusLine(_gcDailies.Status, CharonTheme.TextDisabled);
     }
 
+    private void DrawPlayerRangeBlock()
+    {
+        var contentId = _localContentId();
+        var setting = _config.PlayerRangeFor(contentId);
+
+        using (ImRaii.Disabled(contentId == 0))
+        {
+            var on = setting.Enabled;
+            if (ImGui.Checkbox("Hide other players beyond a distance (this character)##playerrange", ref on))
+            {
+                setting.Enabled = on;
+                _save();
+            }
+        }
+
+        CharonTheme.HelpMarker("The game can limit how many characters it shows, but not how far away.\n"
+                               + "This stops it drawing other players beyond the distance you set, for\n"
+                               + "this character only. They are still there as far as the game and\n"
+                               + "Charon are concerned, so follow and Heal Watch work as before.\n\n"
+                               + "Always shown: your party and alliance, friends, the fleet, and whoever\n"
+                               + "you have targeted. Off in PvP, and paused in cutscenes and group pose.\n\n"
+                               + "Their minions and pets are not hidden.");
+
+        if (!setting.Enabled)
+            return;
+
+        ImGui.Indent();
+        var range = Charon.Features.Tweaks.PlayerDrawRange.Clamp(setting.Range);
+        ImGui.SetNextItemWidth(200f);
+        if (ImGui.SliderFloat("Distance (yalms)##playerrange", ref range,
+                Charon.Features.Tweaks.PlayerDrawRange.MinRange, Charon.Features.Tweaks.PlayerDrawRange.MaxRange, "%.0f"))
+        {
+            setting.Range = range;
+            _save();
+        }
+
+        var plates = setting.HideNameplates;
+        if (ImGui.Checkbox("Hide their nameplates too##playerrange", ref plates))
+        {
+            setting.HideNameplates = plates;
+            _save();
+        }
+
+        DrawStatusLine(_playerRange.Status, CharonTheme.TextDisabled);
+        ImGui.Unindent();
+    }
+
     private void DrawCharacterPanelBlock()
     {
         var on = _config.CharacterPanelEnabled;
@@ -4460,6 +4513,7 @@ public sealed class MainWindow : Window
         DrawStatusLine($"Frames: {_frameStatus()}");
         DrawStatusLine($"Bot render: {_botRender.Status}");
         DrawStatusLine($"Character panel: {_characterPanel.Status}");
+        DrawStatusLine($"Player range: {_playerRange.Status}");
         DrawStatusLine($"Perf capture: {_perf.Status}");
         DrawStatusLine($"Window dock: {_windowDock.Status}");
         DrawStatusLine($"Auto login: {ScrambleIn(_autoLogin.Status)}");

@@ -12,6 +12,10 @@ public enum LoginScreen
     /// <summary>A lobby or disconnect error box with an OK button.</summary>
     Error,
 
+    /// <summary>The lobby has a box up that this does not know how to answer (an error of another
+    /// kind, a queue, a notice). Nothing is pressed while it is there.</summary>
+    Blocked,
+
     /// <summary>The title menu, ready for a press.</summary>
     Title,
     CharacterSelect,
@@ -33,6 +37,10 @@ public enum LoginAction
 
     /// <summary>The run stopped without logging in; the reason says why.</summary>
     GaveUp,
+
+    /// <summary>The same press went unanswered several times in a row. Nothing is pressed for a
+    /// while; the caller should record what is on screen.</summary>
+    Stalled,
 }
 
 public readonly record struct LoginStep(LoginAction Action, string Reason);
@@ -67,6 +75,14 @@ public sealed class AutoLoginPolicy
     /// </summary>
     public static readonly TimeSpan LoginWait = TimeSpan.FromMinutes(2);
 
+    /// <summary>
+    /// How many times in a row Start or the character may be pressed with nothing changing before the
+    /// run stops pressing and waits. Seen on another PC on 2026-11-20: a lobby error box (5006) this
+    /// did not recognise sat over the character list, and the character was clicked every three
+    /// seconds underneath it.
+    /// </summary>
+    public const int MaxUnansweredPresses = 4;
+
     private static readonly TimeSpan ErrorPace = TimeSpan.FromSeconds(1);
     private static readonly TimeSpan StartPace = TimeSpan.FromSeconds(5);
     private static readonly TimeSpan CharacterPace = TimeSpan.FromSeconds(3);
@@ -78,6 +94,11 @@ public sealed class AutoLoginPolicy
     private DateTime? _listSinceUtc;
     private DateTime? _confirmedUtc;
     private bool _inErrorEpisode;
+    private int _startPresses;
+    private int _characterPresses;
+
+    /// <summary>Times this run a press went unanswered <see cref="MaxUnansweredPresses"/> times in a row.</summary>
+    public int Stalls { get; private set; }
 
     public bool Armed { get; private set; }
 
@@ -104,6 +125,8 @@ public sealed class AutoLoginPolicy
         _listSinceUtc = null;
         _confirmedUtc = null;
         _inErrorEpisode = false;
+        _startPresses = _characterPresses = 0;
+        Stalls = 0;
     }
 
     public void Disarm() => Armed = false;
@@ -127,7 +150,13 @@ public sealed class AutoLoginPolicy
         }
 
         if (screen != LoginScreen.CharacterSelect)
+        {
             _listSinceUtc = null;
+            _characterPresses = 0; // the list went away: the last press was answered
+        }
+
+        if (screen != LoginScreen.Title)
+            _startPresses = 0;
 
         switch (screen)
         {
@@ -146,16 +175,31 @@ public sealed class AutoLoginPolicy
                 _inErrorEpisode = false;
                 _confirmedUtc = null;
                 if (nowUtc < _retryNotBeforeUtc)
-                    return new LoginStep(LoginAction.None,
-                        $"waiting {(_retryNotBeforeUtc - nowUtc).TotalSeconds:0}s before trying again (error #{Errors})");
-                return Paced(LoginAction.PressStart, StartPace, nowUtc, "pressing Start");
+                    return Waiting(nowUtc);
+                if (_startPresses >= MaxUnansweredPresses)
+                    return Stall("Start", nowUtc);
+
+                var start = Paced(LoginAction.PressStart, StartPace, nowUtc, "pressing Start");
+                if (start.Action == LoginAction.PressStart)
+                    _startPresses++;
+                return start;
 
             case LoginScreen.CharacterSelect:
                 _inErrorEpisode = false;
                 if (_confirmedUtc is { } confirmed && nowUtc - confirmed < LoginWait)
                     return new LoginStep(LoginAction.None, "confirmed — waiting for the game to log in");
                 if (characterListed)
-                    return Paced(LoginAction.SelectCharacter, CharacterPace, nowUtc, "choosing the character");
+                {
+                    if (nowUtc < _retryNotBeforeUtc)
+                        return Waiting(nowUtc);
+                    if (_characterPresses >= MaxUnansweredPresses)
+                        return Stall("the character list", nowUtc);
+
+                    var choose = Paced(LoginAction.SelectCharacter, CharacterPace, nowUtc, "choosing the character");
+                    if (choose.Action == LoginAction.SelectCharacter)
+                        _characterPresses++;
+                    return choose;
+                }
 
                 _listSinceUtc ??= nowUtc;
                 if (nowUtc - _listSinceUtc.Value < CharacterListWait)
@@ -171,9 +215,30 @@ public sealed class AutoLoginPolicy
                     _confirmedUtc = nowUtc;
                 return confirm;
 
+            case LoginScreen.Blocked:
+                return new LoginStep(LoginAction.None, "the game has a box up that Charon does not know — not pressing anything");
+
             default:
                 return new LoginStep(LoginAction.None, "waiting for the game");
         }
+    }
+
+    private LoginStep Waiting(DateTime nowUtc)
+    {
+        var why = Errors > 0 ? $"error #{Errors}" : "no answer from the game";
+        return new LoginStep(LoginAction.None,
+            $"waiting {(_retryNotBeforeUtc - nowUtc).TotalSeconds:0}s before trying again ({why})");
+    }
+
+    /// <summary>The same press went unanswered too often: stop pressing, wait longer each time.</summary>
+    private LoginStep Stall(string what, DateTime nowUtc)
+    {
+        Stalls++;
+        var wait = Backoff(Stalls + 1);
+        _retryNotBeforeUtc = nowUtc + wait;
+        _startPresses = _characterPresses = 0;
+        return new LoginStep(LoginAction.Stalled,
+            $"{what} did not answer {MaxUnansweredPresses} presses — something is in the way; trying again in {wait.TotalSeconds:0}s");
     }
 
     private LoginStep Paced(LoginAction action, TimeSpan pace, DateTime nowUtc, string reason)

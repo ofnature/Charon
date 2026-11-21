@@ -7,6 +7,7 @@ using Charon.Features.AutoLogin;
 using Dalamud.Hooking;
 using Dalamud.Plugin;
 using Dalamud.Plugin.Services;
+using Dalamud.Utility;
 using FFXIVClientStructs.FFXIV.Client.Game.UI;
 using FFXIVClientStructs.FFXIV.Client.UI;
 using FFXIVClientStructs.FFXIV.Client.UI.Agent;
@@ -73,6 +74,8 @@ public sealed unsafe class AutoLoginService : IDisposable
     private int _recovered;
     private string _lastResult = string.Empty;
     private string _step = "idle";
+    private string _blocker = string.Empty;
+    private string _blockerLogged = string.Empty;
     private bool _manual;
     private bool _titleShown;
     private bool _titleReady;
@@ -243,7 +246,9 @@ public sealed unsafe class AutoLoginService : IDisposable
 
         var screen = Screen(nowUtc);
         var step = _policy.Next(screen, CharacterIndex() >= 0, nowUtc);
-        _step = step.Reason;
+        _step = screen == LoginScreen.Blocked ? $"{step.Reason} ({_blocker})" : step.Reason;
+        if (screen != LoginScreen.Blocked)
+            _blockerLogged = string.Empty;
         switch (step.Action)
         {
             case LoginAction.DismissError:
@@ -258,6 +263,10 @@ public sealed unsafe class AutoLoginService : IDisposable
                 break;
             case LoginAction.Confirm:
                 Act("confirmed the login", Confirm());
+                break;
+            case LoginAction.Stalled:
+                // What is on screen is the evidence: an error box of a kind not handled yet names itself here.
+                _log.Warning($"Auto login: {step.Reason}. Windows on screen: {VisibleWindows()}");
                 break;
             case LoginAction.Finished:
                 if (_manual)
@@ -346,6 +355,18 @@ public sealed unsafe class AutoLoginService : IDisposable
         if (Shown("Dialogue") != null)
             return LoginScreen.Error;
 
+        if (UnknownLobbyBox() is { } box)
+        {
+            _blocker = box.Name;
+            if (_blockerLogged != box.Name)
+            {
+                _blockerLogged = box.Name;
+                _log.Warning($"Auto login: holding — the game has a box up that Charon does not know ({box.Name}): {box.Text}");
+            }
+
+            return LoginScreen.Blocked;
+        }
+
         if (Shown("_CharaSelectListMenu") != null)
         {
             if (Shown("SelectYesno") == null)
@@ -356,6 +377,82 @@ public sealed unsafe class AutoLoginService : IDisposable
         }
 
         return TitleMenuReady() ? LoginScreen.Title : LoginScreen.Other;
+    }
+
+    /// <summary>
+    /// A box the lobby itself has put up (the lobby agent keeps the ids of its own dialogs) that is
+    /// neither the error box nor the login confirmation. An error of another kind, a login queue, a
+    /// notice: whatever it is, pressing Start or the character underneath it is wrong, and pressing
+    /// ITS button unseen could cancel a queue. So it is named, logged and waited out.
+    /// </summary>
+    private (string Name, string Text)? UnknownLobbyBox()
+    {
+        var agent = AgentLobby.Instance();
+        var stage = AtkStage.Instance();
+        if (agent == null || stage == null)
+            return null;
+
+        return Box(stage, agent->DialogAddonId) ?? Box(stage, agent->DialogAddonId2);
+    }
+
+    private static (string Name, string Text)? Box(AtkStage* stage, uint id)
+    {
+        if (id == 0 || id > ushort.MaxValue)
+            return null;
+
+        var unit = stage->RaptureAtkUnitManager->GetAddonById((ushort)id);
+        if (unit == null || !unit->IsReady || !unit->IsVisible)
+            return null;
+
+        // The lobby's own screens start with an underscore; the two boxes below are handled elsewhere.
+        var name = unit->NameString;
+        if (name.Length == 0 || name[0] == '_' || name is "Dialogue" or "SelectYesno")
+            return null;
+
+        return (name, BoxText(unit));
+    }
+
+    /// <summary>The first few lines of text on a box, for the log.</summary>
+    private static string BoxText(AtkUnitBase* unit)
+    {
+        var lines = new System.Collections.Generic.List<string>();
+        var count = Math.Min((int)unit->UldManager.NodeListCount, 64);
+        for (var i = 1; i < count && lines.Count < 4; i++) // entry 0 is not a node
+        {
+            var node = unit->UldManager.NodeList[i];
+            var text = node == null ? null : node->GetAsAtkTextNode();
+            if (text == null)
+                continue;
+
+            var line = text->NodeText.ExtractText().Trim();
+            if (line.Length > 0)
+                lines.Add(line.Length > 160 ? line[..160] : line);
+        }
+
+        return lines.Count > 0 ? string.Join(" | ", lines) : "(no text read)";
+    }
+
+    /// <summary>The names of the game windows on screen, for the log when a press goes unanswered.</summary>
+    private static string VisibleWindows()
+    {
+        var stage = AtkStage.Instance();
+        if (stage == null)
+            return "(unreadable)";
+
+        var names = new System.Collections.Generic.List<string>();
+        var list = stage->RaptureAtkUnitManager->AtkUnitManager.AllLoadedUnitsList;
+        for (var i = 0; i < list.Count; i++)
+        {
+            var unit = list.Entries[i].Value;
+            if (unit == null || !unit->IsVisible)
+                continue;
+
+            var name = unit->NameString;
+            if (name.Length > 0 && !names.Contains(name))
+                names.Add(name);
+        }
+
+        return names.Count > 0 ? string.Join(", ", names) : "(none)";
     }
 
     private AtkUnitBase* Shown(string name)

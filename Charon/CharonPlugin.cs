@@ -30,7 +30,7 @@ namespace Charon;
 
 public sealed class CharonPlugin : IDalamudPlugin
 {
-    public const string PluginVersion = "0.1.63";
+    public const string PluginVersion = "0.1.64";
     private const string CommandName = "/charon";
 
     /// <summary>
@@ -266,6 +266,7 @@ public sealed class CharonPlugin : IDalamudPlugin
     private readonly FrameWatch _frameWatch;
     private readonly FpsDtr _fpsDtr;
     private readonly CharacterPanelService _characterPanel;
+    private readonly PlayerDrawLimiter _playerRange;
     private readonly BotRenderProfile _botRender;
     private readonly PerfRecorder _perf;
     private readonly WindowDockService _windowDock;
@@ -565,6 +566,9 @@ public sealed class CharonPlugin : IDalamudPlugin
         _fpsDtr = new FpsDtr(dtrBar, () => _config.FpsDtrEnabled, log);
         _characterPanel = new CharacterPanelService(addonLifecycle, keyState, pluginInterface, sigScanner,
             dataManager, gameGui, objectTable, _config, log);
+        _playerRange = new PlayerDrawLimiter(objectTable, targetManager, clientState, condition,
+            () => _config.PlayerRangeFor(_jobLevels.LocalContentId),
+            () => _daedalusIpc.GetLanPartyMembers().Select(t => t.EntityId).ToList(), log);
         _botRender = new BotRenderProfile(gameConfig, condition, _config, SaveConfig,
             () => _jobLevels.LocalContentId, _frameWatch, log);
         _perf = new PerfRecorder(gameConfig, condition, clientState, _frameWatch, () => _botRender.InCombat,
@@ -682,6 +686,7 @@ public sealed class CharonPlugin : IDalamudPlugin
             _windowDock,
             _autoLogin,
             _characterPanel,
+            _playerRange,
             EurekaStatus,
             EurekaNow,
             () => _automationIpc.Status);
@@ -873,6 +878,7 @@ public sealed class CharonPlugin : IDalamudPlugin
         _windowDock.Dispose(); // puts the window back where it was
         _fpsDtr.Dispose(); // takes the entry off the server info bar
         _characterPanel.Dispose();
+        _playerRange.Dispose(); // shows every player it hid
         _perf.Dispose(); // closes a capture; before the profile, which then puts the game's settings back
         _botRender.Dispose(); // puts the game's own settings back
         _palaceSpots.Dispose();
@@ -1483,6 +1489,7 @@ public sealed class CharonPlugin : IDalamudPlugin
         _frameWatch.Update(framework, now);
         _fpsDtr.Update(framework);
         _characterPanel.Update(now);
+        _playerRange.Update(now);
         _botRender.Update(now); // after the frame watch: it reads the focus state from there
         _perf.Update(framework, now);
         _windowDock.Update(now);

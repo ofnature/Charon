@@ -170,4 +170,125 @@ public sealed class AutoLoginPolicyTests
 
         Assert.Equal(LoginAction.SelectCharacter, policy.Next(LoginScreen.CharacterSelect, true, T0.AddSeconds(20)).Action);
     }
+
+    // The other PC, 2026-11-20: a lobby error box (5006) of a kind not recognised sat over the
+    // character list on four clients, and the character was clicked underneath it every three seconds.
+
+    [Fact]
+    public void ACharacterListThatDoesNotAnswer_IsPressedFourTimes_ThenLeftAlone()
+    {
+        var policy = Armed();
+        var t = T0;
+        for (var press = 0; press < AutoLoginPolicy.MaxUnansweredPresses; press++)
+        {
+            Assert.Equal(LoginAction.SelectCharacter, policy.Next(LoginScreen.CharacterSelect, true, t).Action);
+            t = t.AddSeconds(3.1);
+        }
+
+        var stalled = policy.Next(LoginScreen.CharacterSelect, true, t);
+        Assert.Equal(LoginAction.Stalled, stalled.Action);
+        Assert.Contains("in the way", stalled.Reason);
+        Assert.Equal(1, policy.Stalls);
+        Assert.True(policy.Armed);
+
+        // Nothing is pressed for the 15 seconds that follow, then it tries again.
+        Assert.Equal(LoginAction.None, policy.Next(LoginScreen.CharacterSelect, true, t.AddSeconds(5)).Action);
+        Assert.Equal(LoginAction.None, policy.Next(LoginScreen.CharacterSelect, true, t.AddSeconds(14)).Action);
+        Assert.Equal(LoginAction.SelectCharacter, policy.Next(LoginScreen.CharacterSelect, true, t.AddSeconds(16)).Action);
+    }
+
+    [Fact]
+    public void EachStall_WaitsLongerThanTheLast()
+    {
+        var policy = Armed();
+        var t = T0;
+
+        TimeSpan WaitAfterStall()
+        {
+            while (true)
+            {
+                var step = policy.Next(LoginScreen.CharacterSelect, true, t);
+                if (step.Action == LoginAction.Stalled)
+                    break;
+                t = t.AddSeconds(1);
+            }
+
+            var stalledAt = t;
+            while (policy.Next(LoginScreen.CharacterSelect, true, t).Action != LoginAction.SelectCharacter)
+                t = t.AddSeconds(1);
+            return t - stalledAt;
+        }
+
+        var first = WaitAfterStall();
+        var second = WaitAfterStall();
+        var third = WaitAfterStall();
+
+        Assert.True(second > first, $"{first} then {second}");
+        Assert.True(third > second, $"{second} then {third}");
+    }
+
+    [Fact]
+    public void APressThatWasAnswered_DoesNotCountTowardsAStall()
+    {
+        var policy = Armed();
+        var t = T0;
+        for (var round = 0; round < 3; round++)
+        {
+            // Three presses, then the list goes away (the game answered), then it is back.
+            for (var press = 0; press < 3; press++)
+            {
+                Assert.Equal(LoginAction.SelectCharacter, policy.Next(LoginScreen.CharacterSelect, true, t).Action);
+                t = t.AddSeconds(3.1);
+            }
+
+            Assert.Equal(LoginAction.None, policy.Next(LoginScreen.Other, false, t).Action);
+            t = t.AddSeconds(1);
+        }
+
+        Assert.Equal(0, policy.Stalls);
+    }
+
+    [Fact]
+    public void AStartThatDoesNotAnswer_IsPressedFourTimes_ThenLeftAlone()
+    {
+        var policy = Armed();
+        var t = T0;
+        for (var press = 0; press < AutoLoginPolicy.MaxUnansweredPresses; press++)
+        {
+            Assert.Equal(LoginAction.PressStart, policy.Next(LoginScreen.Title, false, t).Action);
+            t = t.AddSeconds(5.1);
+        }
+
+        Assert.Equal(LoginAction.Stalled, policy.Next(LoginScreen.Title, false, t).Action);
+        Assert.Equal(LoginAction.None, policy.Next(LoginScreen.Title, false, t.AddSeconds(10)).Action);
+        Assert.Equal(LoginAction.PressStart, policy.Next(LoginScreen.Title, false, t.AddSeconds(16)).Action);
+    }
+
+    [Fact]
+    public void WithABoxUpThatIsNotKnown_NothingIsPressed_AndTheRunGoesOn()
+    {
+        var policy = Armed();
+
+        for (var second = 0; second < 600; second += 5)
+        {
+            var step = policy.Next(LoginScreen.Blocked, true, T0.AddSeconds(second));
+            Assert.Equal(LoginAction.None, step.Action);
+            Assert.Contains("not pressing anything", step.Reason);
+        }
+
+        Assert.True(policy.Armed);
+        Assert.Equal(0, policy.Stalls);
+
+        // The box goes away by itself (a queue, say) and the character is in.
+        Assert.Equal(LoginAction.Finished, policy.Next(LoginScreen.LoggedIn, false, T0.AddSeconds(601)).Action);
+    }
+
+    [Fact]
+    public void AfterABoxThatIsNotKnown_TheCharacterIsChosenAsUsual()
+    {
+        var policy = Armed();
+        policy.Next(LoginScreen.Blocked, true, T0);
+
+        Assert.Equal(LoginAction.SelectCharacter, policy.Next(LoginScreen.CharacterSelect, true, T0.AddSeconds(30)).Action);
+    }
 }

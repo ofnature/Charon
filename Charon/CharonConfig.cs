@@ -481,6 +481,33 @@ public sealed class CharonConfig : IPluginConfiguration
     /// </summary>
     public Dictionary<ulong, RenderProfileSetting> RenderProfileByCharacter { get; set; } = new();
 
+    /// <summary>Hide other players beyond a distance: one character's choice.</summary>
+    public sealed class PlayerRangeSetting
+    {
+        public bool Enabled { get; set; }
+        public float Range { get; set; } = Charon.Features.Tweaks.PlayerDrawRange.DefaultRange;
+        public bool HideNameplates { get; set; } = true;
+    }
+
+    /// <summary>Per character (keyed by content id), like the render profile. No entry is OFF.</summary>
+    public Dictionary<ulong, PlayerRangeSetting> PlayerRangeByCharacter { get; set; } = new();
+
+    /// <summary>This character's entry, created on first use. Content id 0 gets a throwaway OFF
+    /// entry that is never stored.</summary>
+    public PlayerRangeSetting PlayerRangeFor(ulong contentId)
+    {
+        if (contentId == 0)
+            return new PlayerRangeSetting();
+
+        if (!PlayerRangeByCharacter.TryGetValue(contentId, out var setting))
+        {
+            setting = new PlayerRangeSetting();
+            PlayerRangeByCharacter[contentId] = setting;
+        }
+
+        return setting;
+    }
+
     /// <summary>This character's render profile entry, created on first use. Content id 0 gets a
     /// throwaway OFF entry that is never stored.</summary>
     public RenderProfileSetting RenderProfileFor(ulong contentId)
