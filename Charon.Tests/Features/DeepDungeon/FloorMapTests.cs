@@ -8,6 +8,24 @@ public sealed class FloorMapTests
     private static ushort[] Empty() => new ushort[FloorMap.RoomCount];
 
     [Fact]
+    public void TheMapTakesOnlyTheSpaceItsRoomsUse()
+    {
+        // Rooms at (1,1), (3,1) and (2,3) of the 5x5 grid.
+        var rooms = Empty();
+        rooms[1 * FloorMap.GridSize + 1] = 0x80;
+        rooms[1 * FloorMap.GridSize + 3] = 0x80;
+        rooms[3 * FloorMap.GridSize + 2] = 0x80;
+
+        Assert.Equal((1, 1, 3, 3), FloorMap.Bounds(FloorMap.Build(rooms)));
+    }
+
+    [Fact]
+    public void AFloorWithNoRooms_HasNoBounds()
+    {
+        Assert.Null(FloorMap.Bounds(FloorMap.Build(Empty())));
+    }
+
+    [Fact]
     public void EmptyFloor_HasNoExistingRooms()
     {
         var cells = FloorMap.Build(Empty());

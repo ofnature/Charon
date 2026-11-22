@@ -124,6 +124,83 @@ public sealed class AutoPomanderPolicyTests
         Assert.Null(AutoPomanderPolicy.PickAny([Tank with { Alive = false }]));
     }
 
+    [Fact]
+    public void ATurnNotTaken_PassesToTheNextToon()
+    {
+        // Damage first, then healer, then tank — each a turn after the one before.
+        var queue = AutoPomanderPolicy.QueueAny([Tank, Healer, Dps]);
+        Assert.Equal(["Grakur", "Saar", "Korha"], queue.Select(c => c.Name));
+
+        Assert.True(AutoPomanderPolicy.IsTurn(0, TimeSpan.Zero));
+        Assert.False(AutoPomanderPolicy.IsTurn(1, TimeSpan.FromSeconds(9)));
+        Assert.True(AutoPomanderPolicy.IsTurn(1, AutoPomanderPolicy.TurnLength));
+        Assert.False(AutoPomanderPolicy.IsTurn(2, TimeSpan.FromSeconds(19)));
+        Assert.True(AutoPomanderPolicy.IsTurn(2, TimeSpan.FromSeconds(20)));
+    }
+
+    [Theory]
+    [InlineData(7224u)] // landmine
+    [InlineData(7225u)] // luring
+    [InlineData(7226u)] // enfeebling
+    [InlineData(7227u)] // impeding
+    [InlineData(7228u)] // toading
+    [InlineData(9210u)] // odder
+    [InlineData(10278u)] // owlet
+    [InlineData(11247u)] // fae
+    public void ATrapGoingOff_IsRecognisedByItsLogMessage(uint row)
+    {
+        Assert.True(TrapTrigger.IsTriggered(row));
+    }
+
+    [Theory]
+    [InlineData(7222u)] // a pomander returned to its coffer
+    [InlineData(7223u)] // the coffer bares its fangs
+    [InlineData(7229u)]
+    [InlineData(9103u)] // "You discover a concealed trap." — found, not set off
+    [InlineData(6999u)] // another duty's "A trap is triggered!"
+    public void OtherMessages_AreNotATrapGoingOff(uint row)
+    {
+        Assert.False(TrapTrigger.IsTriggered(row));
+    }
+
+    [Theory]
+    [InlineData(7228u)] // toading
+    [InlineData(9210u)] // odder
+    [InlineData(10278u)] // owlet
+    [InlineData(11247u)] // fae
+    public void ATransformingTrap_ShouldTransformTheOneWhoGotItsMessage(uint row)
+    {
+        Assert.True(TrapTrigger.WeSteppedOnIt(row, transformBefore: 0, transformNow: 7));
+        // Still ourselves: somebody else stepped on it.
+        Assert.False(TrapTrigger.WeSteppedOnIt(row, transformBefore: 0, transformNow: 0));
+        // Already transformed when it went off (a pomander of rage, say): no evidence either way.
+        Assert.False(TrapTrigger.WeSteppedOnIt(row, transformBefore: 4, transformNow: 4));
+    }
+
+    [Theory]
+    [InlineData(7224u)] // landmine
+    [InlineData(7225u)] // luring
+    [InlineData(7226u)] // enfeebling
+    [InlineData(7227u)] // impeding
+    public void AnAreaTrap_NeverNamesItsStepper(uint row)
+    {
+        Assert.False(TrapTrigger.HitsOnlyTheStepper(row));
+        Assert.False(TrapTrigger.WeSteppedOnIt(row, transformBefore: 0, transformNow: 7));
+    }
+
+    [Fact]
+    public void AToonNotInTheQueue_NeverGetsATurn()
+    {
+        Assert.False(AutoPomanderPolicy.IsTurn(-1, TimeSpan.FromHours(1)));
+    }
+
+    [Fact]
+    public void TheSteelQueue_LeavesOutCoveredToons_AndKeepsTheRoleOrder()
+    {
+        var tankCovered = Tank with { BuffSecondsLeft = 478f };
+        Assert.Equal(["Saar", "Grakur"], AutoPomanderPolicy.Queue(SelfBuffPomander.Steel, [Dps, Healer, tankCovered]).Select(c => c.Name));
+    }
+
     [Theory]
     [InlineData(10u)] // witching: "all targets within range"
     [InlineData(32u)] // protomander of witching

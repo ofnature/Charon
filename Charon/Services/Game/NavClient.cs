@@ -53,6 +53,7 @@ public sealed class NavClient
     private ICallGateSubscriber<int>? _ariadneZoneStatus;
     private ICallGateSubscriber<Vector3, float, float, Task<Vector3?>>? _ariadneNearestReachable;
     private ICallGateSubscriber<Vector3, Vector3, bool, Vector3, float, Task<List<Vector3>>>? _ariadnePathfindAvoid;
+    private ICallGateSubscriber<string, float[], int, bool>? _ariadneAvoidCircles;
 
     // The in-flight/last async reachability answer (Ariadne mode). Keyed loosely by destination:
     // a new destination retires the old query.
@@ -144,6 +145,27 @@ public sealed class NavClient
         try
         {
             return _ariadnePathfindAvoid!.InvokeFunc(from, to, false, avoid, radius);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Asks Ariadne to keep every walking route it plans off these circles (flat x, y, z, radius) for the
+    /// next <paramref name="seconds"/> where there is another way — <c>Ariadne.Avoid.Circles</c>, a lease
+    /// per owner like its hunt-mark one; an empty list or 0 seconds lets it go. True/false is Ariadne's
+    /// answer; NULL means it could not be asked (vnavmesh, or an Ariadne without the gate).
+    /// </summary>
+    public bool? AvoidCircles(string owner, float[] circles, int seconds)
+    {
+        EnsureSubscribers();
+        if (_builtFor != ProviderAriadne)
+            return null;
+        try
+        {
+            return _ariadneAvoidCircles!.InvokeFunc(owner, circles, seconds);
         }
         catch
         {
@@ -260,6 +282,7 @@ public sealed class NavClient
             _ariadneZoneStatus = _pluginInterface.GetIpcSubscriber<int>("Ariadne.ZoneStatus");
             _ariadneNearestReachable = _pluginInterface.GetIpcSubscriber<Vector3, float, float, Task<Vector3?>>("Ariadne.Query.Mesh.NearestPointReachable");
             _ariadnePathfindAvoid = _pluginInterface.GetIpcSubscriber<Vector3, Vector3, bool, Vector3, float, Task<List<Vector3>>>("Ariadne.Nav.PathfindAvoid");
+            _ariadneAvoidCircles = _pluginInterface.GetIpcSubscriber<string, float[], int, bool>("Ariadne.Avoid.Circles");
         }
         else
         {

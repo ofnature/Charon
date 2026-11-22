@@ -60,12 +60,35 @@ public sealed class DeepDungeonMapWindow : Window
         ImGui.TextColored(CharonTheme.Accent, $"Floor {snapshot.Floor}");
         ImGui.SameLine();
         ImGui.TextColored(CharonTheme.TextSecondary, $"· {known} rooms · {revealed} revealed");
-        DrawFloorPanel(snapshot);
+        // The legend, on demand: as a line under the map it was the widest thing in the window.
+        CharonTheme.HelpMarker("P passage · R return (bright = open) · V candelabra\n"
+                               + "outline: the game's flag room · arrow: you\n"
+                               + "dots: chests (bottom of a room) / party (top)");
+        DrawFloorLines(snapshot);
+
+        // Left: the floor times with the map under them. Right: Charon's own column. Side by side, so the
+        // window is as tall as the taller of the two rather than the sum.
+        ImGui.BeginGroup();
+        DrawFloorTable(snapshot);
         ImGui.Spacing();
+        DrawMap(snapshot, cells);
+        ImGui.EndGroup();
+
+        ImGui.SameLine(0f, 28f);
+        ImGui.BeginGroup();
+        DrawSide(snapshot);
+        ImGui.EndGroup();
+    }
+
+    /// <summary>The floor's rooms, in only as much space as the rooms this floor has take up.</summary>
+    private void DrawMap(DeepDungeonReader.Snapshot snapshot, System.Collections.Generic.List<FloorMap.Cell> cells)
+    {
+        if (FloorMap.Bounds(cells) is not { } bounds)
+            return;
 
         var drawList = ImGui.GetWindowDrawList();
-        var origin = ImGui.GetCursorScreenPos() + new Vector2(4f, 4f);
         var pitch = CellSize + CellGap;
+        var origin = ImGui.GetCursorScreenPos() + new Vector2(4f, 4f) - new Vector2(bounds.MinX * pitch, bounds.MinY * pitch);
 
         // Which room we are in, and which way we face — the game's own floor widget draws the
         // same arrow. The room comes from the party table (we are one of its entries); the
@@ -179,11 +202,9 @@ public sealed class DeepDungeonMapWindow : Window
                     ImGui.GetColorU32(CharonTheme.AccentSoft), "V");
         }
 
-        ImGui.Dummy(new Vector2(FloorMap.GridSize * pitch, FloorMap.GridSize * pitch));
-        ImGui.PushStyleColor(ImGuiCol.Text, CharonTheme.TextDisabled);
-        ImGui.TextWrapped(
-            "P passage · R return (bright = open) · V candelabra · outline: the game's flag room · arrow: you · dots: chests (bottom) / party (top)");
-        ImGui.PopStyleColor();
+        ImGui.Dummy(new Vector2(
+            (bounds.MaxX - bounds.MinX + 1) * pitch - CellGap + 8f,
+            (bounds.MaxY - bounds.MinY + 1) * pitch - CellGap + 8f));
     }
 
     /// <summary>
@@ -237,10 +258,23 @@ public sealed class DeepDungeonMapWindow : Window
             return;
 
         var (name, line) = Votive(id);
+        var effect = VotiveEffects.For(id);
+
+        // What it does goes under the name; the long form and the game's own line are the hover. A harmful
+        // one is drawn in rose whichever floor it is for.
+        var tooltip = effect == null ? line : line.Length > 0 ? $"{effect.Detail}\n\n\"{line}\"" : effect.Detail;
+
         ImGui.TextColored(CharonTheme.TextSecondary, heading);
-        ImGui.TextColored(color, $"  {name}");
-        if (line.Length > 0 && ImGui.IsItemHovered())
-            ImGui.SetTooltip(line);
+        ImGui.TextColored(effect is { Harmful: true } ? CharonTheme.StatusRed : color, $"  {name}");
+        if (tooltip.Length > 0 && ImGui.IsItemHovered())
+            ImGui.SetTooltip(tooltip);
+
+        if (effect == null)
+            return;
+
+        ImGui.TextColored(effect.Harmful ? CharonTheme.StatusRed : CharonTheme.TextDim, $"  {effect.Short}");
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip(tooltip);
     }
 
     /// <summary>The floor effect's name and the game's own line about it (DeepDungeon4GimmickEffectTransient).</summary>
@@ -272,9 +306,9 @@ public sealed class DeepDungeonMapWindow : Window
     /// <summary>
     /// NecroLens's floor panel (MIT, adapted — see <see cref="FloorClock"/>): respawn countdown, trap and
     /// cairn status, the time spent on each floor of the set, and the floor effects with "(+)" marking one
-    /// already queued for the next floor. Charon's own column sits to its right (<see cref="DrawSide"/>).
+    /// already queued for the next floor. These are its two lines above the table.
     /// </summary>
-    private void DrawFloorPanel(DeepDungeonReader.Snapshot snapshot)
+    private void DrawFloorLines(DeepDungeonReader.Snapshot snapshot)
     {
         var now = DateTime.UtcNow;
         var clock = _pomanders.Clock;
@@ -308,9 +342,15 @@ public sealed class DeepDungeonMapWindow : Window
         ImGui.TextColored(passageOpen ? CharonTheme.StatusGreen : CharonTheme.StatusRed, FloorMap.CairnText(snapshot.PassageProgress));
         ImGui.SameLine();
         ImGui.TextColored(CharonTheme.TextSecondary, $"· Return {FloorMap.CairnText(snapshot.ReturnProgress)}");
+    }
 
+    /// <summary>The time on each floor of the set, and the six floor effects.</summary>
+    private void DrawFloorTable(DeepDungeonReader.Snapshot snapshot)
+    {
+        var now = DateTime.UtcNow;
+        var clock = _pomanders.Clock;
+        var active = _pomanders.Uses.ActiveOn(snapshot.Floor);
         var pending = _pomanders.Uses.Pending(snapshot.Floor);
-        ImGui.BeginGroup();
         if (ImGui.BeginTable("##ddPanel", 3, ImGuiTableFlags.SizingFixedFit))
         {
             ImGui.TableSetupColumn("a");
@@ -341,12 +381,6 @@ public sealed class DeepDungeonMapWindow : Window
 
             ImGui.EndTable();
         }
-
-        ImGui.EndGroup();
-        ImGui.SameLine(0f, 28f);
-        ImGui.BeginGroup();
-        DrawSide(snapshot);
-        ImGui.EndGroup();
     }
 
     private static void DrawFloorTime(int floor, TimeSpan? time, bool current)

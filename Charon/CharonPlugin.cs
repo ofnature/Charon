@@ -30,7 +30,7 @@ namespace Charon;
 
 public sealed class CharonPlugin : IDalamudPlugin
 {
-    public const string PluginVersion = "0.1.65";
+    public const string PluginVersion = "0.1.66";
     private const string CommandName = "/charon";
 
     /// <summary>
@@ -66,6 +66,7 @@ public sealed class CharonPlugin : IDalamudPlugin
     private readonly MountStateReader _mountReader;
     private readonly NavClient _nav;
     private TrapAwareFollow? _trapFollow;
+    private LikelyTrapAvoidance? _trapAvoid;
     private readonly HealWatchManager _healWatch;
     private readonly HealExecutor _healExecutor;
     private readonly InviteManager _groupInvites;
@@ -462,6 +463,8 @@ public sealed class CharonPlugin : IDalamudPlugin
             () => _objectTable.LocalPlayer?.Name.TextValue ?? string.Empty, log);
         _palaceSpots = new PalaceSpotService(pluginInterface, _objectTable, _clientState, chatGui, dataManager,
             log, _ddReader, _config, SaveConfig, _relay, () => _objectTable.LocalPlayer?.Name.TextValue ?? string.Empty);
+        _trapAvoid = new LikelyTrapAvoidance(_nav, _palaceSpots, _objectTable,
+            () => _config.AvoidLikelyTrapSpots, () => _ddReader.GetSnapshot().Active, log);
         _variant = new VariantService(_clientState, dataManager, log, _relay,
             () => _objectTable.LocalPlayer?.Name.TextValue ?? string.Empty, PartyMemberNames);
         _weeklies = new WeekliesReader(log);
@@ -644,7 +647,7 @@ public sealed class CharonPlugin : IDalamudPlugin
             () => _sprintStatus,
             () => $"{_nav.ProviderName}: {(_nav.IsAvailable ? "ready" : "not ready/installed")}"
                   + $" · path {(_nav.IsPathRunning ? "running" : "idle")}",
-            () => $"chests: {_chests.Status} · ATM: {_qte.Status} · saddlebag: {_saddlebag.Status} · commend: {_commend.Status} · turn-in: {_turnIn.Status} · talk: {_textAdvance.Status} · cutscene: {_cutsceneSkipper!.Status} · cursor: {(_config.CursorFinderEnabled || _config.CursorDotEnabled ? _cursorFinder!.Status : "off")} · spawns: {_spawnScanner.Status} · quick kill: {_quickKill.Status} · chest search: {_chestSearch!.Status} · DD: {_ddReader.Status} · ESP: {(_ddEsp!.IsOpen ? _ddEsp.Status : "closed")} · spots: {_palaceSpots.Status} · pomanders: {_pomanders.Status} · aetherpool: {_aetherpool.Status} · auto pomander: {_autoPomander!.Status} · retainer gear: {_retainerGear.Status} · entrust: {_entruster.Status} · dock: {(_config.EdgeDockEnabled || _config.MainWindowMinimized ? _edgeDock!.Status : "off")}",
+            () => $"chests: {_chests.Status} · ATM: {_qte.Status} · saddlebag: {_saddlebag.Status} · commend: {_commend.Status} · turn-in: {_turnIn.Status} · talk: {_textAdvance.Status} · cutscene: {_cutsceneSkipper!.Status} · cursor: {(_config.CursorFinderEnabled || _config.CursorDotEnabled ? _cursorFinder!.Status : "off")} · spawns: {_spawnScanner.Status} · quick kill: {_quickKill.Status} · chest search: {_chestSearch!.Status} · DD: {_ddReader.Status} · ESP: {(_ddEsp!.IsOpen ? _ddEsp.Status : "closed")} · spots: {_palaceSpots.Status} · trap avoid: {_trapAvoid!.Status} · pomanders: {_pomanders.Status} · aetherpool: {_aetherpool.Status} · auto pomander: {_autoPomander!.Status} · retainer gear: {_retainerGear.Status} · entrust: {_entruster.Status} · dock: {(_config.EdgeDockEnabled || _config.MainWindowMinimized ? _edgeDock!.Status : "off")}",
             () => _lootWatcher.Status,
             // Reading the line IS the refresh: the reader is lazy (nothing local polls it — it
             // exists for IPC), so without this nudge Debug would say "not read yet" forever.
@@ -893,6 +896,7 @@ public sealed class CharonPlugin : IDalamudPlugin
         _playerRange.Dispose(); // shows every player it hid
         _perf.Dispose(); // closes a capture; before the profile, which then puts the game's settings back
         _botRender.Dispose(); // puts the game's own settings back
+        _trapAvoid?.Dispose();
         _palaceSpots.Dispose();
         _retainerGear.Dispose();
         _pomanders.Dispose();
@@ -1584,6 +1588,7 @@ public sealed class CharonPlugin : IDalamudPlugin
         _aetherpool.Update(now);
         _autoPomander.Update(now);
         _palaceSpots.Update(now);
+        _trapAvoid?.Update(now);
         _pomanders.Update();
         // The riders window follows the mount: open while driving a multi-seat mount, gone on
         // dismount (the occupancy read is the tick-cached snapshot — no rescan).

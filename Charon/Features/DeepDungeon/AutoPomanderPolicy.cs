@@ -87,13 +87,36 @@ public static class AutoPomanderPolicy
         ? [PomanderRole.Tank, PomanderRole.Healer, PomanderRole.Dps]
         : [PomanderRole.Dps, PomanderRole.Healer, PomanderRole.Tank];
 
-    /// <summary>The toon that should use a steel or strength, or null when nobody should.</summary>
-    public static PomanderCandidate? Pick(SelfBuffPomander kind, IEnumerable<PomanderCandidate> party) =>
+    /// <summary>
+    /// How long each toon in the queue gets before the turn passes to the next. The first run (2026-11-21)
+    /// had four kinds sit full for minutes: every one was "Rosa Discord's to use", and that toon's client
+    /// was not using them (the switch is per character, and no client can see another's). So a turn that
+    /// is not taken passes on — the toon at position n waits n turns.
+    /// </summary>
+    public static readonly TimeSpan TurnLength = TimeSpan.FromSeconds(10);
+
+    /// <summary>The toons that may use a steel or strength, first choice first. Empty when nobody should.</summary>
+    public static IReadOnlyList<PomanderCandidate> Queue(SelfBuffPomander kind, IEnumerable<PomanderCandidate> party) =>
         InOrder(Order(kind), party.Where(c => c.Alive && c.BuffSecondsLeft <= RefreshBelowSeconds));
 
-    /// <summary>The toon that should use any other kind: the first living one, damage dealers first.</summary>
-    public static PomanderCandidate? PickAny(IEnumerable<PomanderCandidate> party) =>
+    /// <summary>The toons that may use any other kind: everyone alive, damage dealers first.</summary>
+    public static IReadOnlyList<PomanderCandidate> QueueAny(IEnumerable<PomanderCandidate> party) =>
         InOrder(Order(SelfBuffPomander.Strength), party.Where(c => c.Alive));
+
+    /// <summary>
+    /// Whether the toon at <paramref name="position"/> in the queue may act, the pomander having been ready
+    /// to use for <paramref name="readyFor"/>: the first at once, each later one a turn after the one before.
+    /// </summary>
+    public static bool IsTurn(int position, TimeSpan readyFor) =>
+        position >= 0 && readyFor >= TurnLength * position;
+
+    /// <summary>The toon that should use a steel or strength first, or null when nobody should.</summary>
+    public static PomanderCandidate? Pick(SelfBuffPomander kind, IEnumerable<PomanderCandidate> party) =>
+        Queue(kind, party).FirstOrDefault();
+
+    /// <summary>The toon that should use any other kind first: the first living one, damage dealers first.</summary>
+    public static PomanderCandidate? PickAny(IEnumerable<PomanderCandidate> party) =>
+        QueueAny(party).FirstOrDefault();
 
     /// <summary>ClassJob.Role: 1 tank, 4 healer, anything else deals damage.</summary>
     public static PomanderRole RoleOf(byte classJobRole) => classJobRole switch
@@ -103,12 +126,12 @@ public static class AutoPomanderPolicy
         _ => PomanderRole.Dps,
     };
 
-    private static PomanderCandidate? InOrder(IReadOnlyList<PomanderRole> order, IEnumerable<PomanderCandidate> eligible) =>
+    private static IReadOnlyList<PomanderCandidate> InOrder(IReadOnlyList<PomanderRole> order, IEnumerable<PomanderCandidate> eligible) =>
         eligible
             .OrderBy(c => IndexOf(order, c.Role))
             .ThenBy(c => c.Name, StringComparer.OrdinalIgnoreCase)
             .ThenBy(c => c.EntityId)
-            .FirstOrDefault();
+            .ToList();
 
     private static int IndexOf(IReadOnlyList<PomanderRole> order, PomanderRole role)
     {

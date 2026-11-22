@@ -18,6 +18,38 @@ public static class DeepDungeonSettingsView
     public static Func<System.Collections.Generic.IReadOnlyList<(uint Id, string Name)>>? PomanderNames { get; set; }
 
     /// <param name="contentId">This character, for the one switch that is per character (0 = not logged in).</param>
+    /// <summary>
+    /// What each votive candelabra does (Pilgrim's Traverse) — the reference list; the floor window shows
+    /// the one that is lit. Names are the English ones: this is a list to read, not a read of the game.
+    /// </summary>
+    private static void DrawVotiveList()
+    {
+        if (!ImGui.TreeNode("What the candelabra do (Pilgrim's Traverse)##ddvotives"))
+            return;
+
+        ImGui.TextColored(CharonTheme.TextDim, "Lit on one floor, it acts on the next. Through stone 30 only the helpful ones come up.");
+        if (ImGui.BeginTable("##ddvotivelist", 2, ImGuiTableFlags.SizingFixedFit | ImGuiTableFlags.RowBg))
+        {
+            ImGui.TableSetupColumn("##name", ImGuiTableColumnFlags.WidthFixed);
+            ImGui.TableSetupColumn("##does", ImGuiTableColumnFlags.WidthFixed, 420f);
+            foreach (var effect in Charon.Features.DeepDungeon.VotiveEffects.All)
+            {
+                ImGui.TableNextRow();
+                ImGui.TableNextColumn();
+                ImGui.TextColored(effect.Harmful ? CharonTheme.StatusRed : CharonTheme.TextPrimary, effect.Name);
+                ImGui.TableNextColumn();
+                ImGui.PushTextWrapPos(ImGui.GetCursorPosX() + 420f);
+                ImGui.TextColored(CharonTheme.TextSecondary, effect.Detail);
+                ImGui.PopTextWrapPos();
+            }
+
+            ImGui.EndTable();
+        }
+
+        ImGui.TextColored(CharonTheme.TextDim, "From the Console Games Wiki; red = harmful.");
+        ImGui.TreePop();
+    }
+
     public static void Draw(CharonConfig config, Action save, PalaceSpotService palaceSpots, ulong contentId)
     {
         var autoPomander = config.AutoPomanderFor(contentId);
@@ -65,6 +97,19 @@ public static class DeepDungeonSettingsView
 
             ImGui.TreePop();
         }
+
+        var avoidLikely = config.AvoidLikelyTrapSpots;
+        if (ImGui.Checkbox("Walk around likely trap spots##ddavoid", ref avoidLikely))
+        {
+            config.AvoidLikelyTrapSpots = avoidLikely;
+            save();
+        }
+
+        CharonTheme.HelpMarker(
+            "Routes already go round a trap that is revealed. With this on, routes also keep off the spots where a trap has stood before on this floor set - "
+            + "where there is another way; a corridor with a spot in it is still walked. Needs Ariadne as the movement provider.");
+
+        DrawVotiveList();
 
         var ddMap = config.DeepDungeonMapEnabled;
         if (ImGui.Checkbox("Deep dungeon floor map##qol", ref ddMap))

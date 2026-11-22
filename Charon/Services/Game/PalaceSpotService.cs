@@ -75,6 +75,11 @@ public sealed class PalaceSpotService : IDisposable
         public bool Cancelled { get; set; }
     }
 
+    /// <summary>A transforming trap whose message we got, waiting to see whether WE are the one transformed (a check, not a gate).</summary>
+    private sealed record PendingTrap(uint Row, uint Territory, int Floor, Vector3 At, int TransformBefore, DateTime SinceUtc);
+
+    private PendingTrap? _pendingTrap;
+
     private readonly FloorIntel _intel = new();
     private SpotStore? _store;
     private FloorNewsTexts? _texts;
@@ -104,6 +109,7 @@ public sealed class PalaceSpotService : IDisposable
         _geometry = new DeepDungeonGeometry(data, log);
 
         _chat.ChatMessage += OnChatMessage;
+        _chat.LogMessage += OnLogMessage;
     }
 
     public string Status { get; private set; } = "not in a deep dungeon";
@@ -144,6 +150,7 @@ public sealed class PalaceSpotService : IDisposable
         }
 
         EnsureLoaded();
+        ResolvePendingTrap(nowUtc);
 
         // A new floor (or a new floor set) knows nothing yet — the pomanders are per floor.
         var territory = _clientState.TerritoryType;
@@ -331,6 +338,7 @@ public sealed class PalaceSpotService : IDisposable
     public void Dispose()
     {
         _chat.ChatMessage -= OnChatMessage;
+        _chat.LogMessage -= OnLogMessage;
         if (_dirty)
             Save();
     }
@@ -407,6 +415,95 @@ public sealed class PalaceSpotService : IDisposable
             _newlySeen.Clear();
         }
     }
+
+    /// <summary>
+    /// A trap went off (<see cref="TrapTrigger"/>). The message comes only to the client of the player who
+    /// stepped on it, so the spot under us is recorded and told to the fleet like a sighting. Where everyone
+    /// stood is logged with it, and a transforming trap is checked against who it transformed.
+    /// </summary>
+    private void OnLogMessage(Dalamud.Game.Chat.ILogMessage message)
+    {
+        if (_lastFloor < 0 || !TrapTrigger.IsTriggered(message.LogMessageId))
+            return;
+
+        try
+        {
+            if (_objectTable.LocalPlayer is not { } me)
+                return;
+
+            var snapshot = _reader.GetSnapshot();
+            var players = snapshot.Party.Count(p => p.EntityId != 0);
+            var at = me.Position;
+            var territory = _clientState.TerritoryType;
+
+            var others = string.Join(", ", snapshot.Party
+                .Where(p => p.EntityId != 0 && p.EntityId != me.EntityId)
+                .Select(p => _objectTable.SearchByEntityId(p.EntityId) is { } o
+                    ? $"{o.Name.TextValue} {Vector3.Distance(o.Position, at):0.0}y"
+                    : "one out of sight"));
+            var revealed = _objectTable
+                .Where(o => DeepDungeonIds.Traps.ContainsKey(o.BaseId))
+                .Select(o => Vector3.Distance(o.Position, at))
+                .DefaultIfEmpty(-1f)
+                .Min();
+
+            var outcome = RecordTrapUnderUs(territory, at);
+
+            // A transforming trap hits only its stepper, so it should transform US: note whether it does.
+            if (players > 1 && TrapTrigger.HitsOnlyTheStepper(message.LogMessageId))
+                _pendingTrap = new PendingTrap(message.LogMessageId, territory, snapshot.Floor, at, TransformOf(me), DateTime.UtcNow);
+
+            _log.Info($"Palace spots: trap triggered (message {message.LogMessageId}) on floor {snapshot.Floor} — we stand at {at.X:0.0}, {at.Y:0.0}, {at.Z:0.0}; "
+                      + $"{players} in the dungeon{(others.Length > 0 ? $" ({others})" : string.Empty)}; "
+                      + $"nearest revealed trap {(revealed < 0 ? "none" : $"{revealed:0.0}y")} — {outcome}");
+        }
+        catch (Exception ex)
+        {
+            // A log hook must never throw into the game's message path.
+            _log.Warning(ex, "Palace spots: could not read a trap message");
+        }
+    }
+
+    private string RecordTrapUnderUs(uint territory, Vector3 at)
+    {
+        if (_store == null || !_store.Add(territory, SpotKind.Trap, at.X, at.Y, at.Z, seen: true))
+            return "already a known spot";
+
+        _dirty = true;
+        _seenThisSession++;
+        var name = _localName();
+        if (name.Length > 0)
+            _relay.Publish(RelayClient.SpotsChannel, SpotRelay.Seen(name, territory, [new Spot(SpotKind.Trap, at.X, at.Y, at.Z, true)]));
+        return "recorded under us and told to the fleet";
+    }
+
+    /// <summary>
+    /// Checks a transforming trap's message against what happened: we should be the one transformed. The
+    /// spot is already recorded; this only says whether the "message goes to the stepper alone" rule held.
+    /// </summary>
+    private void ResolvePendingTrap(DateTime nowUtc)
+    {
+        if (_pendingTrap is not { } pending)
+            return;
+
+        var now = _objectTable.LocalPlayer is { } me ? TransformOf(me) : 0;
+        if (TrapTrigger.WeSteppedOnIt(pending.Row, pending.TransformBefore, now))
+        {
+            _pendingTrap = null;
+            _log.Info($"Palace spots: the trap on floor {pending.Floor} (message {pending.Row}) transformed us (transformation {now}) — as expected of the one who stepped on it");
+        }
+        else if (nowUtc - pending.SinceUtc > TrapTrigger.TransformWindow)
+        {
+            _pendingTrap = null;
+            _log.Warning($"Palace spots: the trap on floor {pending.Floor} (message {pending.Row}) did NOT transform us (transformation {pending.TransformBefore} then, {now} now) — either the message is not the stepper's alone, or this is not how a transformation reads. The spot at {pending.At.X:0.0}, {pending.At.Y:0.0}, {pending.At.Z:0.0} was recorded and may be wrong");
+        }
+    }
+
+    /// <summary>The character's transformation, 0 when it is itself (ClientStructs <c>Character.TransformationId</c>).</summary>
+    private static unsafe int TransformOf(Dalamud.Game.ClientState.Objects.Types.IGameObject character) =>
+        character.Address == 0
+            ? 0
+            : ((FFXIVClientStructs.FFXIV.Client.Game.Character.Character*)character.Address)->TransformationId;
 
     private void OnChatMessage(Dalamud.Game.Chat.IHandleableChatMessage message)
     {

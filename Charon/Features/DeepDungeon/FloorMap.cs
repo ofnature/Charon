@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 
 namespace Charon.Features.DeepDungeon;
@@ -79,6 +80,27 @@ public static class FloorMap
     /// <summary>"open", or how far along it is — e.g. "7/11".</summary>
     public static string CairnText(int progress) =>
         CairnActive(progress) ? "open" : $"{System.Math.Max(0, progress)}/{CairnActiveAt}";
+
+    /// <summary>
+    /// The part of the 5×5 grid this floor actually uses: the first and last column and row holding a
+    /// room. The map is drawn in just that much space — a floor of six rooms does not need the room of
+    /// twenty-five. Null when the floor has no rooms at all.
+    /// </summary>
+    public static (int MinX, int MinY, int MaxX, int MaxY)? Bounds(IReadOnlyList<Cell> cells)
+    {
+        (int MinX, int MinY, int MaxX, int MaxY)? bounds = null;
+        foreach (var cell in cells)
+        {
+            if (!cell.Exists)
+                continue;
+
+            bounds = bounds is { } b
+                ? (Math.Min(b.MinX, cell.X), Math.Min(b.MinY, cell.Y), Math.Max(b.MaxX, cell.X), Math.Max(b.MaxY, cell.Y))
+                : (cell.X, cell.Y, cell.X, cell.Y);
+        }
+
+        return bounds;
+    }
 
     public static (int Known, int Revealed) Counts(IReadOnlyList<Cell> cells)
     {

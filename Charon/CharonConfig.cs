@@ -282,6 +282,9 @@ public sealed class CharonConfig : IPluginConfiguration
     /// from Palace Pal, plus this fleet's own sightings), until Sight or Safety settles the floor.</summary>
     public bool DeepDungeonEspLikelyTraps { get; set; } = true;
 
+    /// <summary>Ask Ariadne to keep walking routes off likely trap spots where there is another way.</summary>
+    public bool AvoidLikelyTrapSpots { get; set; } = true;
+
     /// <summary>Draw likely HOARD spots, until Intuition says where (or whether) the hoard is.</summary>
     public bool DeepDungeonEspLikelyHoards { get; set; } = true;
 
