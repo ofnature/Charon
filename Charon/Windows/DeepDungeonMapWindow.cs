@@ -22,14 +22,23 @@ public sealed class DeepDungeonMapWindow : Window
     private readonly DeepDungeonReader _reader;
     private readonly IObjectTable _objectTable;
     private readonly PomanderTracker _pomanders;
+    private readonly AetherpoolShare _aetherpool;
+    private readonly Func<string, string> _display;
+    private readonly IDataManager _data;
+    private readonly System.Collections.Generic.Dictionary<int, (string Name, string Line)> _votives = new();
 
-    public DeepDungeonMapWindow(DeepDungeonReader reader, IObjectTable objectTable, PomanderTracker pomanders)
+    /// <param name="display">How a character name is shown (the main window's scramble, for screenshots).</param>
+    public DeepDungeonMapWindow(DeepDungeonReader reader, IObjectTable objectTable, PomanderTracker pomanders,
+        AetherpoolShare aetherpool, Func<string, string> display, IDataManager data)
         : base("Charon — Deep Dungeon##CharonDeepDungeonMap")
     {
         BgAlpha = CharonTheme.PanelAlpha;
         _reader = reader;
         _objectTable = objectTable;
         _pomanders = pomanders;
+        _aetherpool = aetherpool;
+        _display = display;
+        _data = data;
 
         Flags = ImGuiWindowFlags.AlwaysAutoResize;
         RespectCloseHotkey = false;
@@ -52,15 +61,6 @@ public sealed class DeepDungeonMapWindow : Window
         ImGui.SameLine();
         ImGui.TextColored(CharonTheme.TextSecondary, $"· {known} rooms · {revealed} revealed");
         DrawFloorPanel(snapshot);
-
-        // Pomanders in force here, and the ones already queued for the next floor (Affluence, Flight,
-        // Alteration and Devotion act on the floor AFTER the one they were used on).
-        var here = PomanderLog.Describe(_pomanders.Uses.ActiveOn(snapshot.Floor));
-        var next = PomanderLog.Describe(_pomanders.Uses.Pending(snapshot.Floor));
-        if (here.Length > 0)
-            ImGui.TextColored(CharonTheme.TextSecondary, $"Used: {here}");
-        if (next.Length > 0)
-            ImGui.TextColored(CharonTheme.StatusYellow, $"Used for next floor: {next}");
         ImGui.Spacing();
 
         var drawList = ImGui.GetWindowDrawList();
@@ -187,9 +187,92 @@ public sealed class DeepDungeonMapWindow : Window
     }
 
     /// <summary>
+    /// Aetherpool arm / armor: ours from the game, the other toons' as their own clients report them over
+    /// the LAN relay. A toon that is not reporting is simply not listed.
+    /// </summary>
+    private void DrawAetherpool(DeepDungeonReader.Snapshot snapshot)
+    {
+        ImGui.TextColored(CharonTheme.TextSecondary, "Aetherpool");
+        ImGui.TextColored(CharonTheme.TextPrimary, $"  you {AetherpoolBoard.Describe(snapshot.Arm, snapshot.Armor)}");
+
+        foreach (var other in _aetherpool.Others(DateTime.UtcNow))
+        {
+            // Lower than ours on either piece is the one worth noticing: that toon wants the silver coffers.
+            var behind = other.Arm < snapshot.Arm || other.Armor < snapshot.Armor;
+            ImGui.TextColored(behind ? CharonTheme.StatusYellow : CharonTheme.TextSecondary,
+                $"  {_display(other.Name)} {AetherpoolBoard.Describe(other.Arm, other.Armor)}");
+        }
+    }
+
+    /// <summary>
+    /// The column to the right of the floor times: aetherpool, the pomanders in force here and the ones
+    /// queued for the next floor (Affluence, Flight, Alteration and Devotion act on the floor AFTER the one
+    /// they were used on), and the votive lit here and for the next floor. One short line each — a single
+    /// "Used: a, b, c, ..." line made the whole window as wide as the list was long.
+    /// </summary>
+    private void DrawSide(DeepDungeonReader.Snapshot snapshot)
+    {
+        DrawAetherpool(snapshot);
+
+        DrawStack("Used", PomanderLog.Stacked(_pomanders.Uses.ActiveOn(snapshot.Floor)), CharonTheme.TextSecondary);
+        DrawStack("Used for next floor", PomanderLog.Stacked(_pomanders.Uses.Pending(snapshot.Floor)), CharonTheme.StatusYellow);
+
+        DrawVotive("Votive here", snapshot.VotiveHere, CharonTheme.TextPrimary);
+        DrawVotive("Votive next floor", snapshot.VotiveNext, CharonTheme.StatusYellow);
+    }
+
+    private static void DrawStack(string heading, System.Collections.Generic.IReadOnlyList<string> lines, Vector4 color)
+    {
+        if (lines.Count == 0)
+            return;
+
+        ImGui.TextColored(CharonTheme.TextSecondary, heading);
+        foreach (var line in lines)
+            ImGui.TextColored(color, $"  {line}");
+    }
+
+    private void DrawVotive(string heading, int id, Vector4 color)
+    {
+        if (id <= 0)
+            return;
+
+        var (name, line) = Votive(id);
+        ImGui.TextColored(CharonTheme.TextSecondary, heading);
+        ImGui.TextColored(color, $"  {name}");
+        if (line.Length > 0 && ImGui.IsItemHovered())
+            ImGui.SetTooltip(line);
+    }
+
+    /// <summary>The floor effect's name and the game's own line about it (DeepDungeon4GimmickEffectTransient).</summary>
+    private (string Name, string Line) Votive(int id)
+    {
+        if (_votives.TryGetValue(id, out var known))
+            return known;
+
+        var result = ($"effect #{id}", string.Empty);
+        try
+        {
+            var sheet = _data.Excel.GetSheet<Lumina.Excel.RawRow>(null, "DeepDungeon4GimmickEffectTransient");
+            if (sheet.TryGetRow((uint)id, out var row))
+            {
+                var name = row.ReadStringColumn(0).ExtractText();
+                if (name.Length > 0)
+                    result = (name, row.ReadStringColumn(1).ExtractText());
+            }
+        }
+        catch (Exception)
+        {
+            // Unreadable sheet: the number is still shown.
+        }
+
+        _votives[id] = result;
+        return result;
+    }
+
+    /// <summary>
     /// NecroLens's floor panel (MIT, adapted — see <see cref="FloorClock"/>): respawn countdown, trap and
     /// cairn status, the time spent on each floor of the set, and the floor effects with "(+)" marking one
-    /// already queued for the next floor.
+    /// already queued for the next floor. Charon's own column sits to its right (<see cref="DrawSide"/>).
     /// </summary>
     private void DrawFloorPanel(DeepDungeonReader.Snapshot snapshot)
     {
@@ -227,6 +310,7 @@ public sealed class DeepDungeonMapWindow : Window
         ImGui.TextColored(CharonTheme.TextSecondary, $"· Return {FloorMap.CairnText(snapshot.ReturnProgress)}");
 
         var pending = _pomanders.Uses.Pending(snapshot.Floor);
+        ImGui.BeginGroup();
         if (ImGui.BeginTable("##ddPanel", 3, ImGuiTableFlags.SizingFixedFit))
         {
             ImGui.TableSetupColumn("a");
@@ -257,6 +341,12 @@ public sealed class DeepDungeonMapWindow : Window
 
             ImGui.EndTable();
         }
+
+        ImGui.EndGroup();
+        ImGui.SameLine(0f, 28f);
+        ImGui.BeginGroup();
+        DrawSide(snapshot);
+        ImGui.EndGroup();
     }
 
     private static void DrawFloorTime(int floor, TimeSpan? time, bool current)

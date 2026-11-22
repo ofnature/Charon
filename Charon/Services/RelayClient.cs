@@ -44,6 +44,9 @@ public sealed class RelayClient : IDisposable
     /// <summary>Variant-dungeon route records: each box's own, and asks for everyone else's (VariantMessage JSON).</summary>
     public const string VariantChannel = "charon.variant";
 
+    /// <summary>Aetherpool arm/armor levels: each box's own while it is in a deep dungeon (AetherpoolMessage JSON).</summary>
+    public const string AetherpoolChannel = "charon.aetherpool";
+
     private readonly ICallGateSubscriber<string, string, object?> _publish;
     private readonly ICallGateSubscriber<string, string, object?> _message;
     private readonly IPluginLog _log;

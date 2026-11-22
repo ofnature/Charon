@@ -21,12 +21,14 @@ public sealed unsafe class DeepDungeonReader
 
     public sealed record Snapshot(
         bool Active, int Floor, int PassageProgress, int ReturnProgress,
-        ushort[] Rooms, ChestMark[] Chests, PartyMark[] Party, uint ContentId = 0);
+        ushort[] Rooms, ChestMark[] Chests, PartyMark[] Party, uint ContentId = 0,
+        int Arm = 0, int Armor = 0, int DungeonId = 0, int VotiveHere = 0, int VotiveNext = 0);
 
     private static readonly Snapshot Inactive =
         new(false, 0, 0, 0, [], [], []);
 
     private Snapshot _cache = Inactive;
+    private (int Here, int Next) _votive;
     private DateTime _cacheUtc = DateTime.MinValue;
 
     public DeepDungeonReader(IPluginLog log) => _log = log;
@@ -63,9 +65,20 @@ public sealed unsafe class DeepDungeonReader
                 party[i] = new PartyMark(content->Party[i].EntityId, content->Party[i].RoomIndex);
 
             // ContentId is the InstanceContent row (60001 = Palace of the Dead 1-10), which keys the
-            // respawn table in FloorClock.
+            // respawn table in FloorClock. WeaponLevel / ArmorLevel are the local player's aetherpool arm
+            // and armor; DeepDungeonId is the kind of deep dungeon (each kind keeps its own levels).
             _cache = new Snapshot(true, content->Floor,
-                content->PassageProgress, content->ReturnProgress, rooms, chests, party, content->ContentId);
+                content->PassageProgress, content->ReturnProgress, rooms, chests, party, content->ContentId,
+                content->WeaponLevel, content->ArmorLevel, content->DeepDungeonId,
+                content->DeepDungeonGimmickEffectIdCurrent, content->DeepDungeonGimmickEffectIdNext);
+
+            // Logged on change: these two ids are read as DeepDungeon4GimmickEffect rows (the votive lit on
+            // this floor and the one lit for the next), which the game's own chat line can confirm.
+            if (_votive != (_cache.VotiveHere, _cache.VotiveNext))
+            {
+                _votive = (_cache.VotiveHere, _cache.VotiveNext);
+                _log.Info($"Deep dungeon: floor {_cache.Floor} — floor effect id {_cache.VotiveHere} here, {_cache.VotiveNext} for the next floor");
+            }
 
             var cells = Charon.Features.DeepDungeon.FloorMap.Build(rooms);
             var (known, revealed) = Charon.Features.DeepDungeon.FloorMap.Counts(cells);

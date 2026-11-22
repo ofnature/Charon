@@ -247,4 +247,12 @@ public sealed class EdgeDockTests
         Assert.Equal(0.2f, place.Along);
         Assert.Equal(DockEdge.Right, config.DockPlacementFor(DockTab.Chest).Edge);
     }
+
+    [Fact]
+    public void TheDeepDungeonTab_IsRelabelled_ButKeepsTheKeyItsSavedSpotIsUnder()
+    {
+        Assert.Equal("Deep Dungeon", DockTabs.Label(DockTab.Floor));
+        // Saved positions are keyed by the tab's name in code; renaming THAT would lose a dragged spot.
+        Assert.Equal("Floor", DockTab.Floor.ToString());
+    }
 }

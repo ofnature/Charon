@@ -489,6 +489,15 @@ public sealed class CharonConfig : IPluginConfiguration
         public bool HideNameplates { get; set; } = true;
     }
 
+    /// <summary>Auto use of spare steel / strength pomanders, per character (keyed by content id). No entry is OFF.</summary>
+    public Dictionary<ulong, bool> AutoPomanderByCharacter { get; set; } = new();
+
+    public bool AutoPomanderFor(ulong contentId) =>
+        contentId != 0 && AutoPomanderByCharacter.TryGetValue(contentId, out var on) && on;
+
+    /// <summary>Pomanders (DeepDungeonItem rows) the auto use leaves alone. Empty = every kind may be used.</summary>
+    public List<uint> AutoPomanderSkipItems { get; set; } = new();
+
     /// <summary>Per character (keyed by content id), like the render profile. No entry is OFF.</summary>
     public Dictionary<ulong, PlayerRangeSetting> PlayerRangeByCharacter { get; set; } = new();
 

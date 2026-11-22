@@ -76,6 +76,8 @@ public sealed unsafe class AutoLoginService : IDisposable
     private string _step = "idle";
     private string _blocker = string.Empty;
     private string _blockerLogged = string.Empty;
+    private readonly IDataManager _data;
+    private string _noticeText = string.Empty;
     private bool _manual;
     private bool _titleShown;
     private bool _titleReady;
@@ -84,9 +86,10 @@ public sealed unsafe class AutoLoginService : IDisposable
     private DateTime _nextRememberUtc;
 
     public AutoLoginService(IClientState clientState, IGameGui gameGui, IObjectTable objectTable,
-        IGameInteropProvider interop, IDalamudPluginInterface pluginInterface, CharonConfig config,
-        Func<ulong> contentId, IPluginLog log)
+        IGameInteropProvider interop, IDalamudPluginInterface pluginInterface, IDataManager dataManager,
+        CharonConfig config, Func<ulong> contentId, IPluginLog log)
     {
+        _data = dataManager;
         _clientState = clientState;
         _gameGui = gameGui;
         _objectTable = objectTable;
@@ -254,6 +257,9 @@ public sealed unsafe class AutoLoginService : IDisposable
             case LoginAction.DismissError:
                 Act("dismissed the error box", DismissError());
                 break;
+            case LoginAction.DismissNotice:
+                Act("closed the game's notice that the last character used on this PC is not on this data centre", DismissNotice());
+                break;
             case LoginAction.PressStart:
                 Act("pressed Start", PressStart());
                 break;
@@ -355,12 +361,20 @@ public sealed unsafe class AutoLoginService : IDisposable
         if (Shown("Dialogue") != null)
             return LoginScreen.Error;
 
-        if (UnknownLobbyBox() is { } box)
+        if (LobbyBox() is { } box)
         {
-            _blocker = box.Name;
-            if (_blockerLogged != box.Name)
+            if (IsKnownNotice(box.Name, box.Unit))
+                return LoginScreen.Notice;
+
+            _blocker = $"{box.Name}: {box.Text}";
+
+            // Once per box AND text: one window (SelectOk) carries the queue, then a notice, and a
+            // log that only named the window recorded the first and hid the second (2026-11-21).
+            // Digits are left out of the comparison so a queue counting down is one line, not fifty.
+            var seen = box.Name + ":" + new string(box.Text.Where(c => !char.IsDigit(c)).ToArray());
+            if (_blockerLogged != seen)
             {
-                _blockerLogged = box.Name;
+                _blockerLogged = seen;
                 _log.Warning($"Auto login: holding — the game has a box up that Charon does not know ({box.Name}): {box.Text}");
             }
 
@@ -383,9 +397,10 @@ public sealed unsafe class AutoLoginService : IDisposable
     /// A box the lobby itself has put up (the lobby agent keeps the ids of its own dialogs) that is
     /// neither the error box nor the login confirmation. An error of another kind, a login queue, a
     /// notice: whatever it is, pressing Start or the character underneath it is wrong, and pressing
-    /// ITS button unseen could cancel a queue. So it is named, logged and waited out.
+    /// ITS button unseen could cancel a queue. So it is named, logged and waited out — unless its
+    /// text is one of the notices known to be safe to close (<see cref="IsKnownNotice"/>).
     /// </summary>
-    private (string Name, string Text)? UnknownLobbyBox()
+    private (string Name, string Text, nint Unit)? LobbyBox()
     {
         var agent = AgentLobby.Instance();
         var stage = AtkStage.Instance();
@@ -395,7 +410,50 @@ public sealed unsafe class AutoLoginService : IDisposable
         return Box(stage, agent->DialogAddonId) ?? Box(stage, agent->DialogAddonId2);
     }
 
-    private static (string Name, string Text)? Box(AtkStage* stage, uint id)
+    /// <summary>
+    /// The box is the game's "the character you last logged out with ... could not be found on the
+    /// current data center" notice: a <c>SelectOk</c> whose text is that Lobby sheet row, in the
+    /// client's language. First seen 2026-11-21 over a character list that DID hold the character.
+    /// </summary>
+    private bool IsKnownNotice(string name, nint unit)
+    {
+        if (name != "SelectOk" || unit == 0)
+            return false;
+
+        var prompt = ((AddonSelectOk*)unit)->PromptText;
+        return prompt != null && LobbyNotice.Same(prompt->NodeText.ExtractText(), NoticeText());
+    }
+
+    /// <summary>The notice's text from the game's Lobby sheet; empty (which matches nothing) if unreadable.</summary>
+    private string NoticeText()
+    {
+        if (_noticeText.Length > 0)
+            return _noticeText;
+
+        try
+        {
+            var sheet = _data.Excel.GetSheet<Lumina.Excel.RawRow>(null, "Lobby");
+            if (sheet.TryGetRow(LobbyNotice.LastCharacterNotHereRow, out var row))
+                _noticeText = row.ReadStringColumn(0).ExtractText();
+        }
+        catch (Exception ex)
+        {
+            _log.Warning(ex, "Auto login: the lobby notice text is unreadable");
+        }
+
+        return _noticeText;
+    }
+
+    private bool DismissNotice()
+    {
+        if (LobbyBox() is not { } box || !IsKnownNotice(box.Name, box.Unit))
+            return false;
+
+        var unit = (AtkUnitBase*)box.Unit;
+        return AtkClickHelper.ClickButton(unit, ((AddonSelectOk*)unit)->OkButton);
+    }
+
+    private static (string Name, string Text, nint Unit)? Box(AtkStage* stage, uint id)
     {
         if (id == 0 || id > ushort.MaxValue)
             return null;
@@ -409,7 +467,7 @@ public sealed unsafe class AutoLoginService : IDisposable
         if (name.Length == 0 || name[0] == '_' || name is "Dialogue" or "SelectYesno")
             return null;
 
-        return (name, BoxText(unit));
+        return (name, BoxText(unit), (nint)unit);
     }
 
     /// <summary>The first few lines of text on a box, for the log.</summary>
@@ -424,7 +482,9 @@ public sealed unsafe class AutoLoginService : IDisposable
             if (text == null)
                 continue;
 
-            var line = text->NodeText.ExtractText().Trim();
+            // One line per text: a line break inside it would split the log entry (seen 2026-11-21).
+            var line = string.Join(" ", text->NodeText.ExtractText()
+                .Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
             if (line.Length > 0)
                 lines.Add(line.Length > 160 ? line[..160] : line);
         }

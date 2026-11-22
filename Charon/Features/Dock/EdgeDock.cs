@@ -68,7 +68,8 @@ public static class DockTabs
     public static string Label(DockTab tab) => tab switch
     {
         DockTab.Retainers => "Retainers",
-        DockTab.Floor => "Floor",
+        // Still "Floor" in code and in saved tab positions; only the label changed (2026-11-21).
+        DockTab.Floor => "Deep Dungeon",
         DockTab.Chest => "Chest",
         DockTab.Riders => "Riders",
         DockTab.Route => "Route",

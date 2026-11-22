@@ -16,6 +16,10 @@ public enum LoginScreen
     /// kind, a queue, a notice). Nothing is pressed while it is there.</summary>
     Blocked,
 
+    /// <summary>A lobby box that only informs and is known by its text (see <see cref="LobbyNotice"/>).
+    /// Its OK is pressed.</summary>
+    Notice,
+
     /// <summary>The title menu, ready for a press.</summary>
     Title,
     CharacterSelect,
@@ -28,6 +32,9 @@ public enum LoginAction
 {
     None,
     DismissError,
+
+    /// <summary>Press OK on a lobby notice that is known to be safe to close.</summary>
+    DismissNotice,
     PressStart,
     SelectCharacter,
     Confirm,
@@ -96,6 +103,7 @@ public sealed class AutoLoginPolicy
     private bool _inErrorEpisode;
     private int _startPresses;
     private int _characterPresses;
+    private int _noticePresses;
 
     /// <summary>Times this run a press went unanswered <see cref="MaxUnansweredPresses"/> times in a row.</summary>
     public int Stalls { get; private set; }
@@ -125,7 +133,7 @@ public sealed class AutoLoginPolicy
         _listSinceUtc = null;
         _confirmedUtc = null;
         _inErrorEpisode = false;
-        _startPresses = _characterPresses = 0;
+        _startPresses = _characterPresses = _noticePresses = 0;
         Stalls = 0;
     }
 
@@ -157,6 +165,8 @@ public sealed class AutoLoginPolicy
 
         if (screen != LoginScreen.Title)
             _startPresses = 0;
+        if (screen != LoginScreen.Notice)
+            _noticePresses = 0;
 
         switch (screen)
         {
@@ -217,6 +227,17 @@ public sealed class AutoLoginPolicy
 
             case LoginScreen.Blocked:
                 return new LoginStep(LoginAction.None, "the game has a box up that Charon does not know — not pressing anything");
+
+            case LoginScreen.Notice:
+                // A notice that will not close is left alone rather than pressed for ever.
+                if (_noticePresses >= MaxUnansweredPresses)
+                    return new LoginStep(LoginAction.None,
+                        $"the game's notice did not close after {MaxUnansweredPresses} presses of OK — not pressing anything");
+
+                var close = Paced(LoginAction.DismissNotice, ErrorPace, nowUtc, "closing the game's notice");
+                if (close.Action == LoginAction.DismissNotice)
+                    _noticePresses++;
+                return close;
 
             default:
                 return new LoginStep(LoginAction.None, "waiting for the game");

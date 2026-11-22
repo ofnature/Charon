@@ -30,7 +30,7 @@ namespace Charon;
 
 public sealed class CharonPlugin : IDalamudPlugin
 {
-    public const string PluginVersion = "0.1.64";
+    public const string PluginVersion = "0.1.65";
     private const string CommandName = "/charon";
 
     /// <summary>
@@ -97,6 +97,8 @@ public sealed class CharonPlugin : IDalamudPlugin
     private readonly FcChestSearchOverlay _fcSearchOverlay;
     private readonly PillionRidersWindow _pillionRidersWindow;
     private readonly DeepDungeonMapWindow _ddMapWindow;
+    private readonly AetherpoolShare _aetherpool;
+    private readonly AutoPomander _autoPomander;
     private readonly EspOverlayWindow _ddEsp;
     private readonly EurekaEspOverlay _eurekaEsp;
     private readonly CursorFinderOverlay _cursorFinder;
@@ -456,6 +458,8 @@ public sealed class CharonPlugin : IDalamudPlugin
         _turnIn = new TurnInFiller(gameGui,
             () => _config.AutoTurnInEnabled, () => _config.AutoTurnInConfirm, log);
         _pomanders = new PomanderTracker(chatGui, dataManager, log, _ddReader);
+        _aetherpool = new AetherpoolShare(_ddReader, _relay,
+            () => _objectTable.LocalPlayer?.Name.TextValue ?? string.Empty, log);
         _palaceSpots = new PalaceSpotService(pluginInterface, _objectTable, _clientState, chatGui, dataManager,
             log, _ddReader, _config, SaveConfig, _relay, () => _objectTable.LocalPlayer?.Name.TextValue ?? string.Empty);
         _variant = new VariantService(_clientState, dataManager, log, _relay,
@@ -575,7 +579,7 @@ public sealed class CharonPlugin : IDalamudPlugin
             () => _botRender.Applied, System.IO.Path.Combine(pluginInterface.ConfigDirectory.FullName, "perf"), log);
         _botRender.Override = () => _perf.OverrideChoice;
         _windowDock = new WindowDockService(_config, () => _jobLevels.LocalContentId, _frameWatch, log);
-        _autoLogin = new AutoLoginService(clientState, gameGui, objectTable, gameInterop, pluginInterface, _config,
+        _autoLogin = new AutoLoginService(clientState, gameGui, objectTable, gameInterop, pluginInterface, dataManager, _config,
             () => _jobLevels.LocalContentId, log);
         _afkGuard = new AfkGuard(
             () => _config.AfkGuardEnabled,
@@ -640,7 +644,7 @@ public sealed class CharonPlugin : IDalamudPlugin
             () => _sprintStatus,
             () => $"{_nav.ProviderName}: {(_nav.IsAvailable ? "ready" : "not ready/installed")}"
                   + $" · path {(_nav.IsPathRunning ? "running" : "idle")}",
-            () => $"chests: {_chests.Status} · ATM: {_qte.Status} · saddlebag: {_saddlebag.Status} · commend: {_commend.Status} · turn-in: {_turnIn.Status} · talk: {_textAdvance.Status} · cutscene: {_cutsceneSkipper!.Status} · cursor: {(_config.CursorFinderEnabled || _config.CursorDotEnabled ? _cursorFinder!.Status : "off")} · spawns: {_spawnScanner.Status} · quick kill: {_quickKill.Status} · chest search: {_chestSearch!.Status} · DD: {_ddReader.Status} · ESP: {(_ddEsp!.IsOpen ? _ddEsp.Status : "closed")} · spots: {_palaceSpots.Status} · pomanders: {_pomanders.Status} · retainer gear: {_retainerGear.Status} · entrust: {_entruster.Status} · dock: {(_config.EdgeDockEnabled || _config.MainWindowMinimized ? _edgeDock!.Status : "off")}",
+            () => $"chests: {_chests.Status} · ATM: {_qte.Status} · saddlebag: {_saddlebag.Status} · commend: {_commend.Status} · turn-in: {_turnIn.Status} · talk: {_textAdvance.Status} · cutscene: {_cutsceneSkipper!.Status} · cursor: {(_config.CursorFinderEnabled || _config.CursorDotEnabled ? _cursorFinder!.Status : "off")} · spawns: {_spawnScanner.Status} · quick kill: {_quickKill.Status} · chest search: {_chestSearch!.Status} · DD: {_ddReader.Status} · ESP: {(_ddEsp!.IsOpen ? _ddEsp.Status : "closed")} · spots: {_palaceSpots.Status} · pomanders: {_pomanders.Status} · aetherpool: {_aetherpool.Status} · auto pomander: {_autoPomander!.Status} · retainer gear: {_retainerGear.Status} · entrust: {_entruster.Status} · dock: {(_config.EdgeDockEnabled || _config.MainWindowMinimized ? _edgeDock!.Status : "off")}",
             () => _lootWatcher.Status,
             // Reading the line IS the refresh: the reader is lazy (nothing local polls it — it
             // exists for IPC), so without this nudge Debug would say "not read yet" forever.
@@ -729,7 +733,13 @@ public sealed class CharonPlugin : IDalamudPlugin
         _saddlebagOverlay = new SaddlebagOverlay(gameGui, _saddlebag);
         _windowSystem.AddWindow(_saddlebagOverlay);
 
-        _ddMapWindow = new DeepDungeonMapWindow(_ddReader, _objectTable, _pomanders);
+        _autoPomander = new AutoPomander(chatGui, _objectTable, _partyList, dataManager, _ddReader,
+            () => _config.AutoPomanderFor(_jobLevels.LocalContentId),
+            itemId => _config.AutoPomanderSkipItems.Contains(itemId),
+            () => _condition[ConditionFlag.InCombat], log);
+        DeepDungeonSettingsView.PomanderNames = _autoPomander.AllNames;
+        _ddMapWindow = new DeepDungeonMapWindow(_ddReader, _objectTable, _pomanders, _aetherpool,
+            name => _mainWindow.Display(name), dataManager);
         _windowSystem.AddWindow(_ddMapWindow);
 
         _domanWindow = new DomanWindow(_config, SaveConfig, _doman, _gilSeller);
@@ -806,8 +816,10 @@ public sealed class CharonPlugin : IDalamudPlugin
                 () => _config.EdgeDockEnabled && _config.RetainerOverlayEnabled && _condition[ConditionFlag.OccupiedSummoningBell],
                 () => _retainerBell.Draw()),
             new EdgeDockWindow.Tab(Charon.Features.Dock.DockTab.Floor,
-                () => _config.EdgeDockEnabled && _config.DeepDungeonMapEnabled && _ddReader.GetSnapshot().Active,
-                () => _ddMapWindow.Draw()),
+                // Not gated on the floor map's own switch: the tab also holds the deep dungeon switches,
+                // and unticking the map inside it must not take the panel away from under the pointer.
+                () => _config.EdgeDockEnabled && _ddReader.GetSnapshot().Active,
+                DrawDeepDungeonTabPanel),
             new EdgeDockWindow.Tab(Charon.Features.Dock.DockTab.Chest,
                 () => _config.EdgeDockEnabled && _config.FcChestWindowAutoOpen && _fcChestAddonOpen,
                 () => _fcChestWindow.Draw(),
@@ -884,6 +896,7 @@ public sealed class CharonPlugin : IDalamudPlugin
         _palaceSpots.Dispose();
         _retainerGear.Dispose();
         _pomanders.Dispose();
+        _autoPomander.Dispose();
         _doman.Dispose();
         _fcChest.Dispose();
         _chestSearch.Dispose();
@@ -1447,6 +1460,23 @@ public sealed class CharonPlugin : IDalamudPlugin
             _commandManager.ProcessCommand("/xlsettings");
     }
 
+    /// <summary>The Deep Dungeon tab's pop-out: the floor window's own body, then the Deep Dungeon page's
+    /// switches (the same shared view) folded away under it. With the map switched off the switches are
+    /// the whole panel, so they are drawn open — a folded header alone would be a panel with nothing in it.</summary>
+    private void DrawDeepDungeonTabPanel()
+    {
+        if (!_config.DeepDungeonMapEnabled)
+        {
+            DeepDungeonSettingsView.Draw(_config, SaveConfig, _palaceSpots, _jobLevels.LocalContentId);
+            return;
+        }
+
+        _ddMapWindow.Draw();
+        Dalamud.Bindings.ImGui.ImGui.Spacing();
+        if (Dalamud.Bindings.ImGui.ImGui.CollapsingHeader("Settings##dddock"))
+            DeepDungeonSettingsView.Draw(_config, SaveConfig, _palaceSpots, _jobLevels.LocalContentId);
+    }
+
     private void OnFrameworkUpdate(IFramework framework)
     {
         var now = DateTime.UtcNow;
@@ -1551,6 +1581,8 @@ public sealed class CharonPlugin : IDalamudPlugin
         _cursorFinder.IsOpen = _config.CursorFinderEnabled || _config.CursorDotEnabled;
         UpdateVariantWindows(docked);
         _variant.Update(now);
+        _aetherpool.Update(now);
+        _autoPomander.Update(now);
         _palaceSpots.Update(now);
         _pomanders.Update();
         // The riders window follows the mount: open while driving a multi-seat mount, gone on
@@ -2861,6 +2893,8 @@ public sealed class CharonPlugin : IDalamudPlugin
             _palaceSpots.OnRelayMessage(json);
         else if (channel == RelayClient.VariantChannel)
             _variant.OnRelayMessage(json, DateTime.UtcNow);
+        else if (channel == RelayClient.AetherpoolChannel)
+            _aetherpool.OnRelayMessage(json, DateTime.UtcNow);
     }
 
     /// <summary>Fleet channel dispatch: leader designation, or a fleet-wide command.</summary>

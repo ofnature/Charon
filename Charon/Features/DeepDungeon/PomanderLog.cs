@@ -70,4 +70,35 @@ public sealed class PomanderLog
     /// </summary>
     public static string Describe(IEnumerable<PomanderUse> uses) =>
         string.Join(", ", uses.Select(u => u.Item));
+
+    /// <summary>
+    /// The same uses as a short stack, one line each, in the order first used: the "pomander of" /
+    /// "protomander of" in front is dropped (the heading already says what they are) and a repeat is
+    /// counted — "intuition ×2" — instead of listed twice. A name in another language is kept whole.
+    /// </summary>
+    public static IReadOnlyList<string> Stacked(IEnumerable<PomanderUse> uses)
+    {
+        var order = new List<string>();
+        var counts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        foreach (var use in uses)
+        {
+            var name = ShortName(use.Item);
+            if (!counts.TryGetValue(name, out var count))
+                order.Add(name);
+            counts[name] = count + 1;
+        }
+
+        return order.Select(n => counts[n] > 1 ? $"{n} ×{counts[n]}" : n).ToList();
+    }
+
+    private static string ShortName(string item)
+    {
+        foreach (var prefix in new[] { "pomander of ", "protomander of " })
+        {
+            if (item.StartsWith(prefix, StringComparison.OrdinalIgnoreCase) && item.Length > prefix.Length)
+                return item[prefix.Length..];
+        }
+
+        return item;
+    }
 }

@@ -284,6 +284,49 @@ public sealed class AutoLoginPolicyTests
     }
 
     [Fact]
+    public void AKnownNotice_IsClosed_AndTheCharacterIsThenChosen()
+    {
+        var policy = Armed();
+
+        Assert.Equal(LoginAction.DismissNotice, policy.Next(LoginScreen.Notice, true, T0).Action);
+        // Paced: not pressed again within the second.
+        Assert.Equal(LoginAction.None, policy.Next(LoginScreen.Notice, true, T0.AddMilliseconds(250)).Action);
+
+        Assert.Equal(LoginAction.SelectCharacter, policy.Next(LoginScreen.CharacterSelect, true, T0.AddSeconds(5)).Action);
+        Assert.Equal(0, policy.Stalls);
+    }
+
+    [Fact]
+    public void ANoticeThatWillNotClose_IsPressedFourTimes_ThenLeftAlone()
+    {
+        var policy = Armed();
+        var presses = 0;
+
+        for (var second = 0; second < 120; second += 2)
+        {
+            var step = policy.Next(LoginScreen.Notice, true, T0.AddSeconds(second));
+            if (step.Action == LoginAction.DismissNotice)
+                presses++;
+        }
+
+        Assert.Equal(AutoLoginPolicy.MaxUnansweredPresses, presses);
+        Assert.True(policy.Armed);
+        Assert.Contains("not pressing anything", policy.Next(LoginScreen.Notice, true, T0.AddSeconds(130)).Reason);
+    }
+
+    [Fact]
+    public void ANoticeThatComesBackLater_IsClosedAgain()
+    {
+        var policy = Armed();
+        for (var second = 0; second < 20; second += 2)
+            policy.Next(LoginScreen.Notice, true, T0.AddSeconds(second));
+
+        policy.Next(LoginScreen.Other, true, T0.AddSeconds(30)); // it went away
+
+        Assert.Equal(LoginAction.DismissNotice, policy.Next(LoginScreen.Notice, true, T0.AddSeconds(40)).Action);
+    }
+
+    [Fact]
     public void AfterABoxThatIsNotKnown_TheCharacterIsChosenAsUsual()
     {
         var policy = Armed();
