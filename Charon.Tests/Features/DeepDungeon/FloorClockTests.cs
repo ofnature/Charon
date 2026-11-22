@@ -1,4 +1,5 @@
 using System;
+using System.Linq;
 using Charon.Features.DeepDungeon;
 
 namespace Charon.Tests.Features.DeepDungeon;
@@ -96,6 +97,30 @@ public sealed class FloorClockTests
         var (_, alteration) = FloorClock.Effects[2];
         Assert.True(FloorClock.Has([Use(29)], alteration));
         Assert.False(FloorClock.Has([Use(5)], alteration));
+    }
+
+    [Theory]
+    [InlineData(60041u, true)]   // Pilgrim's Traverse 1-10
+    [InlineData(60050u, true)]   // Pilgrim's Traverse 91-100
+    [InlineData(60001u, false)]  // Palace of the Dead
+    [InlineData(60040u, false)]  // Eureka Orthos 91-100
+    [InlineData(0u, false)]
+    public void DevotionIsListedOnlyInPilgrimsTraverse(uint contentId, bool listed)
+    {
+        var effects = FloorClock.EffectsFor(contentId);
+        Assert.Equal(listed, effects.Any(e => e.Name == "Devotion"));
+        Assert.Equal(listed ? 7 : 6, effects.Count);
+    }
+
+    [Fact]
+    public void DevotionIsQueuedWhereUsed_AndActiveOnTheNextFloor()
+    {
+        var log = new PomanderLog();
+        log.Record(new PomanderUse(56, 38, "pomander of devotion", "x", Start));
+
+        Assert.True(FloorClock.Has(log.Pending(56), FloorClock.Devotion.Items));
+        Assert.False(FloorClock.Has(log.ActiveOn(56), FloorClock.Devotion.Items));
+        Assert.True(FloorClock.Has(log.ActiveOn(57), FloorClock.Devotion.Items));
     }
 
     [Theory]

@@ -344,7 +344,7 @@ public sealed class DeepDungeonMapWindow : Window
         ImGui.TextColored(CharonTheme.TextSecondary, $"· Return {FloorMap.CairnText(snapshot.ReturnProgress)}");
     }
 
-    /// <summary>The time on each floor of the set, and the six floor effects.</summary>
+    /// <summary>The time on each floor of the set, and the floor effects (six, plus Devotion in Pilgrim's Traverse).</summary>
     private void DrawFloorTable(DeepDungeonReader.Snapshot snapshot)
     {
         var now = DateTime.UtcNow;
@@ -358,7 +358,8 @@ public sealed class DeepDungeonMapWindow : Window
             ImGui.TableSetupColumn("effects");
 
             var floors = FloorClock.FloorSet(snapshot.Floor);
-            for (var row = 0; row < 6; row++)
+            var effects = FloorClock.EffectsFor(snapshot.ContentId);
+            for (var row = 0; row < effects.Count; row++)
             {
                 ImGui.TableNextRow();
                 for (var col = 0; col < 2; col++)
@@ -370,7 +371,7 @@ public sealed class DeepDungeonMapWindow : Window
                 }
 
                 ImGui.TableNextColumn();
-                var (name, items) = FloorClock.Effects[row];
+                var (name, items) = effects[row];
                 ImGui.TextColored(FloorClock.Has(active, items) ? CharonTheme.TextPrimary : CharonTheme.TextDisabled, name);
                 if (FloorClock.Has(pending, items))
                 {

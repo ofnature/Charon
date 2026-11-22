@@ -159,6 +159,17 @@ public sealed class FloorClock
         ("Fortune", [9, 31]),
     ];
 
+    /// <summary>
+    /// Pilgrim's Traverse's own floor effect: a Pomander of Devotion (DeepDungeonItem 38) "guarantees a
+    /// votive candelabra in the next area" (the item's tooltip). Bright on the floor that has the
+    /// guaranteed candelabra, queued on the floor it was used on.
+    /// </summary>
+    public static readonly (string Name, uint[] Items) Devotion = ("Devotion", [38]);
+
+    /// <summary>The floor effects this dungeon can have: the six everywhere, Devotion in Pilgrim's Traverse only.</summary>
+    public static IReadOnlyList<(string Name, uint[] Items)> EffectsFor(uint contentId) =>
+        contentId is >= 60041 and <= 60050 ? [.. Effects, Devotion] : Effects;
+
     public static bool Has(IEnumerable<PomanderUse> uses, uint[] items) => uses.Any(u => items.Contains(u.ItemId));
 
     /// <summary>"03:19" — minutes can run past 59 rather than wrap.</summary>
