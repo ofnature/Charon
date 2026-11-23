@@ -22,6 +22,39 @@ public sealed class AetherpoolBoardTests
     }
 
     [Fact]
+    public void AnIncrease_NamesWhatWentUp_AndFromWhat()
+    {
+        var before = new AetherpoolEntry("Saar Ishere", 4, 14, 17, T0);
+
+        Assert.Equal("Saar Ishere's aetherpool arm +15 (was +14)",
+            AetherpoolBoard.Increase(before, "Saar Ishere", 4, 15, 17));
+        Assert.Equal("Saar Ishere's aetherpool arm +15 (was +14), armor +18 (was +17)",
+            AetherpoolBoard.Increase(before, "Saar Ishere", 4, 15, 18));
+    }
+
+    [Fact]
+    public void NoIncrease_IsAnnounced_ForAFirstReport_AnotherDungeon_ARepeatOrADrop()
+    {
+        var before = new AetherpoolEntry("Saar Ishere", 4, 14, 17, T0);
+
+        Assert.Null(AetherpoolBoard.Increase(null, "Saar Ishere", 4, 15, 17));
+        Assert.Null(AetherpoolBoard.Increase(before, "Saar Ishere", 1, 30, 30));
+        Assert.Null(AetherpoolBoard.Increase(before, "Saar Ishere", 4, 14, 17));
+        Assert.Null(AetherpoolBoard.Increase(before, "Saar Ishere", 4, 13, 17));
+    }
+
+    [Fact]
+    public void Last_IsTheLatestReport_EvenAnOldOne()
+    {
+        var board = new AetherpoolBoard();
+        Assert.Null(board.Last("Saar Ishere"));
+        board.Upsert("Saar Ishere", 4, 12, 14, T0);
+        // Older than MaxAge: no longer shown, but still what an increase is measured from.
+        Assert.Equal(12, board.Last("saar ishere")!.Arm);
+        Assert.Empty(board.For(4, T0 + AetherpoolBoard.MaxAge + TimeSpan.FromSeconds(1)));
+    }
+
+    [Fact]
     public void ALaterReport_ReplacesTheEarlierOne()
     {
         var board = new AetherpoolBoard();

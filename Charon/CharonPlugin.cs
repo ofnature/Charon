@@ -30,7 +30,7 @@ namespace Charon;
 
 public sealed class CharonPlugin : IDalamudPlugin
 {
-    public const string PluginVersion = "0.1.67";
+    public const string PluginVersion = "0.1.68";
     private const string CommandName = "/charon";
 
     /// <summary>
@@ -460,7 +460,8 @@ public sealed class CharonPlugin : IDalamudPlugin
             () => _config.AutoTurnInEnabled, () => _config.AutoTurnInConfirm, log);
         _pomanders = new PomanderTracker(chatGui, dataManager, log, _ddReader);
         _aetherpool = new AetherpoolShare(_ddReader, _relay,
-            () => _objectTable.LocalPlayer?.Name.TextValue ?? string.Empty, log);
+            () => _objectTable.LocalPlayer?.Name.TextValue ?? string.Empty, chatGui,
+            () => _config.AnnounceAetherpoolIncreases, log);
         _palaceSpots = new PalaceSpotService(pluginInterface, _objectTable, _clientState, chatGui, dataManager,
             log, _ddReader, _config, SaveConfig, _relay, () => _objectTable.LocalPlayer?.Name.TextValue ?? string.Empty);
         _trapAvoid = new LikelyTrapAvoidance(_nav, _palaceSpots, _objectTable,

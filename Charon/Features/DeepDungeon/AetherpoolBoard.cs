@@ -46,6 +46,27 @@ public sealed class AetherpoolBoard
             .OrderBy(e => e.Name, StringComparer.OrdinalIgnoreCase)
             .ToList();
 
+    /// <summary>The last report from this toon, however old, or null if none was heard this session.</summary>
+    public AetherpoolEntry? Last(string name) => _entries.TryGetValue(name, out var entry) ? entry : null;
+
+    /// <summary>
+    /// What went UP between a toon's previous report and this one, as a chat line, or null when nothing did.
+    /// A first report is not an increase (there is nothing to compare with), nor is a report from another kind
+    /// of deep dungeon, nor a level going down.
+    /// </summary>
+    public static string? Increase(AetherpoolEntry? before, string name, int dungeon, int arm, int armor)
+    {
+        if (before == null || before.Dungeon != dungeon)
+            return null;
+
+        var parts = new List<string>(2);
+        if (arm > before.Arm)
+            parts.Add($"arm +{arm} (was +{before.Arm})");
+        if (armor > before.Armor)
+            parts.Add($"armor +{armor} (was +{before.Armor})");
+        return parts.Count == 0 ? null : $"{name}'s aetherpool {string.Join(", ", parts)}";
+    }
+
     public static bool Plausible(int level) => level is >= 0 and <= MaxLevel;
 
     /// <summary>"+15 / +15" — arm first, as the game lists them.</summary>

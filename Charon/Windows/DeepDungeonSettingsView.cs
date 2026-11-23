@@ -109,6 +109,17 @@ public static class DeepDungeonSettingsView
             "Routes already go round a trap that is revealed. With this on, routes also keep off the spots where a trap has stood before on this floor set - "
             + "where there is another way; a corridor with a spot in it is still walked. Needs Ariadne as the movement provider.");
 
+        var announce = config.AnnounceAetherpoolIncreases;
+        if (ImGui.Checkbox("Say in chat when another toon's aetherpool goes up##ddannounce", ref announce))
+        {
+            config.AnnounceAetherpoolIncreases = announce;
+            save();
+        }
+
+        CharonTheme.HelpMarker(
+            "The game only tells each toon about its own arm and armor. With this on, when another fleet toon's goes up "
+            + "a line appears in this client's chat (only you see it). Needs the other toon on this build with Daedalus's LAN relay.");
+
         DrawVotiveList();
 
         var ddMap = config.DeepDungeonMapEnabled;

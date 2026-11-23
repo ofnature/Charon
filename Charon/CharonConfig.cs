@@ -285,6 +285,9 @@ public sealed class CharonConfig : IPluginConfiguration
     /// <summary>Ask Ariadne to keep walking routes off likely trap spots where there is another way.</summary>
     public bool AvoidLikelyTrapSpots { get; set; } = true;
 
+    /// <summary>Put a line in this client's chat when another fleet toon's aetherpool arm or armor goes up.</summary>
+    public bool AnnounceAetherpoolIncreases { get; set; } = true;
+
     /// <summary>Draw likely HOARD spots, until Intuition says where (or whether) the hoard is.</summary>
     public bool DeepDungeonEspLikelyHoards { get; set; } = true;
 

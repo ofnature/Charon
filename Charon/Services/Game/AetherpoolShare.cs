@@ -23,6 +23,8 @@ public sealed class AetherpoolShare
     private readonly DeepDungeonReader _reader;
     private readonly RelayClient _relay;
     private readonly Func<string> _localName;
+    private readonly IChatGui _chat;
+    private readonly Func<bool> _announce;
     private readonly IPluginLog _log;
     private readonly AetherpoolBoard _board = new();
     private readonly Random _random = new();
@@ -34,15 +36,21 @@ public sealed class AetherpoolShare
     private (int Dungeon, int Arm, int Armor)? _lastSent;
     private bool _wasActive;
 
-    public AetherpoolShare(DeepDungeonReader reader, RelayClient relay, Func<string> localName, IPluginLog log)
+    public AetherpoolShare(DeepDungeonReader reader, RelayClient relay, Func<string> localName, IChatGui chat,
+        Func<bool> announce, IPluginLog log)
     {
         _reader = reader;
         _relay = relay;
         _localName = localName;
+        _chat = chat;
+        _announce = announce;
         _log = log;
     }
 
     public string Status { get; private set; } = "not in a deep dungeon";
+
+    /// <summary>The last increase put in chat, for the Debug line.</summary>
+    public string LastAnnounced { get; private set; } = "none yet";
 
     /// <summary>The other toons heard from recently in the kind of deep dungeon we are in. Empty outside one.</summary>
     public IReadOnlyList<AetherpoolEntry> Others(DateTime nowUtc)
@@ -90,7 +98,8 @@ public sealed class AetherpoolShare
 
         var heard = _board.For(snapshot.DungeonId, nowUtc).Count;
         Status = $"mine {AetherpoolBoard.Describe(snapshot.Arm, snapshot.Armor)} · heard from {heard} other toon(s)"
-                 + (heard == 0 ? " (none reporting — they need this build, Daedalus's LAN relay, and to be in a deep dungeon)" : "");
+                 + (heard == 0 ? " (none reporting — they need this build, Daedalus's LAN relay, and to be in a deep dungeon)" : "")
+                 + $" · announced: {(_announce() ? LastAnnounced : "off")}";
     }
 
     public void OnRelayMessage(string json, DateTime nowUtc)
@@ -107,8 +116,18 @@ public sealed class AetherpoolShare
             return;
         }
 
+        var previous = _board.Last(message.Name);
         if (!_board.Upsert(message.Name, message.Dungeon, message.Arm, message.Armor, nowUtc))
             return;
+
+        // The game tells each toon about its OWN increase only; this says it for the others. Only while we are
+        // in a deep dungeon ourselves, and printed to this client's chat alone - nothing is sent to anyone.
+        var increase = AetherpoolBoard.Increase(previous, message.Name, message.Dungeon, message.Arm, message.Armor);
+        if (increase != null && _wasActive && _announce())
+        {
+            _chat.Print($"[Charon] {increase}");
+            LastAnnounced = $"{increase} at {nowUtc.ToLocalTime():HH:mm:ss}";
+        }
 
         // Logged when new or changed only (levels move a few times a run), so a log shows the exchange works.
         var heard = (message.Dungeon, message.Arm, message.Armor);
