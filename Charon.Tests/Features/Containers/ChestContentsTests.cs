@@ -19,6 +19,40 @@ public class ChestContentsTests
         new(page, stacks.Select(s => new RetainerStackCount(s.ItemId, s.Qty, s.Hq)).ToList());
 
     [Fact]
+    public void APageKeptFromAnEarlierVisit_KeepsItsAge_AndTheSnapshotIsAsOldAsItsOldestPage()
+    {
+        var weekAgo = Now.AddDays(-7);
+        var stored = new[]
+        {
+            new ChestPage(1, [new RetainerStackCount(36165, 20, false)], weekAgo),
+            new ChestPage(3, [new RetainerStackCount(5825, 5, false)], weekAgo),
+        };
+        // This visit only page 1 has arrived.
+        var read = new[]
+        {
+            new ChestPage(1, [new RetainerStackCount(36165, 18, false)], Now),
+            new ChestPage(3, [], Now),
+        };
+
+        var (pages, changed) = ChestContents.Merge(stored, read);
+
+        Assert.True(changed);
+        Assert.Equal(Now, pages.Single(p => p.Page == 1).SeenUtc);
+        Assert.Equal(weekAgo, pages.Single(p => p.Page == 3).SeenUtc);
+        Assert.Equal(weekAgo, ChestContents.OldestSeen(pages, Now));
+    }
+
+    [Fact]
+    public void APageWithoutItsOwnTime_CountsAsTheChestsTime()
+    {
+        var chestTime = Now.AddHours(-2);
+        var pages = new[] { new ChestPage(1, [new RetainerStackCount(1, 1, false)]), new ChestPage(2, [], Now) };
+
+        Assert.Equal(chestTime, ChestContents.OldestSeen(pages, chestTime));
+        Assert.Equal(chestTime, ChestContents.OldestSeen([], chestTime));
+    }
+
+    [Fact]
     public void AnItemIsFoundAcrossPagesWithHqCountedSeparately()
     {
         var snapshot = Snapshot(
@@ -78,6 +112,79 @@ public class ChestContentsTests
         Assert.Contains("\"itemId\":36165", json);
         Assert.Contains("\"qty\":3,\"hq\":true", json);
         Assert.Contains("\"ageMinutes\":5", json);
+    }
+
+    /// <summary>
+    /// The live bug (2026-11-03): the chest was read the instant it opened, every page came back empty, and that
+    /// overwrote a full chest. An empty read must never replace a page that has stacks.
+    /// </summary>
+    [Fact]
+    public void AnEmptyReadNeverWipesAStoredPage()
+    {
+        var stored = new[] { Page(1, (36165, 20, false)), Page(2, (5825, 5, true)) };
+        var read = new[] { Page(1), Page(2), Page(3), Page(4), Page(5) };
+
+        var (pages, changed) = ChestContents.Merge(stored, read);
+
+        Assert.False(changed);
+        Assert.Equal(2, pages.Count);
+        Assert.Equal(20, pages[0].Units);
+        Assert.Equal(5, pages[1].Units);
+    }
+
+    [Fact]
+    public void AReadWithStacksReplacesThatPageOnly()
+    {
+        var stored = new[] { Page(1, (36165, 20, false)), Page(2, (5825, 5, true)) };
+        var read = new[] { Page(1, (36165, 7, false)), Page(2) };
+
+        var (pages, changed) = ChestContents.Merge(stored, read);
+
+        Assert.True(changed);
+        Assert.Equal(7, pages.Single(p => p.Page == 1).Units);
+        Assert.Equal(5, pages.Single(p => p.Page == 2).Units);
+    }
+
+    /// <summary>Tabs fill one by one as their data arrives (or as they are clicked): each one joins the store.</summary>
+    [Fact]
+    public void PagesFillInAsTheyArrive()
+    {
+        var (first, firstChanged) = ChestContents.Merge(null, [Page(1, (36165, 20, false)), Page(2), Page(3)]);
+        var (second, secondChanged) = ChestContents.Merge(first, [Page(1, (36165, 20, false)), Page(2), Page(3, (9999, 1, false))]);
+
+        Assert.True(firstChanged);
+        Assert.True(secondChanged);
+        Assert.Equal([1, 3], second.Select(p => p.Page));
+    }
+
+    /// <summary>An empty read creates no page: unknown stays unknown, never "empty".</summary>
+    [Fact]
+    public void AnAllEmptyReadOfANewChestRecordsNothing()
+    {
+        var (pages, changed) = ChestContents.Merge(null, [Page(1), Page(2), Page(3), Page(4), Page(5)]);
+
+        Assert.Empty(pages);
+        Assert.False(changed);
+    }
+
+    /// <summary>Empty pages saved by older builds are the bug's output, so they are dropped as unknown.</summary>
+    [Fact]
+    public void StoredEmptyPagesAreDroppedAsUnknown()
+    {
+        var (pages, changed) = ChestContents.Merge([Page(1), Page(2, (5825, 1, false))], []);
+
+        Assert.True(changed);
+        Assert.Equal(2, pages.Single().Page);
+    }
+
+    /// <summary>Re-reading every couple of seconds must not save every couple of seconds: same stacks, no change.</summary>
+    [Fact]
+    public void TheSameContentsInAnotherSlotOrderAreNoChange()
+    {
+        var stored = new[] { Page(1, (36165, 20, false), (5825, 5, true)) };
+        var read = new[] { Page(1, (5825, 5, true), (36165, 20, false)), Page(2) };
+
+        Assert.False(ChestContents.Merge(stored, read).Changed);
     }
 
     /// <summary>

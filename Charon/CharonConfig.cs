@@ -621,6 +621,10 @@ public sealed class CharonConfig : IPluginConfiguration
     {
         public int Page { get; set; }
         public List<RetainerStack> Stacks { get; set; } = new();
+
+        /// <summary>When this page was last read with stacks. Absent (default) in files saved before pages kept
+        /// their own time: read as the chest's CapturedUtc.</summary>
+        public DateTime SeenUtc { get; set; }
     }
 
     /// <summary>

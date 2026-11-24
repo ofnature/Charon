@@ -6,8 +6,11 @@ using Charon.Features.Retainers;
 
 namespace Charon.Features.Containers;
 
-/// <summary>One page of the free company chest as last SEEN. HQ is its own stack, never folded in.</summary>
-public sealed record ChestPage(int Page, IReadOnlyList<RetainerStackCount> Stacks)
+/// <summary>
+/// One page of the free company chest as last SEEN, and when. HQ is its own stack, never folded in. SeenUtc is per
+/// page because pages are read at different times (a tab nobody clicked keeps what an earlier visit saw).
+/// </summary>
+public sealed record ChestPage(int Page, IReadOnlyList<RetainerStackCount> Stacks, DateTime SeenUtc = default)
 {
     public int Slots => Stacks.Count;
 
@@ -17,12 +20,14 @@ public sealed record ChestPage(int Page, IReadOnlyList<RetainerStackCount> Stack
 }
 
 /// <summary>
-/// The free company chest as a SNAPSHOT, with the time it was taken.
+/// The free company chest as a SNAPSHOT. CapturedUtc is the time its OLDEST page was seen (see
+/// <see cref="ChestContents.OldestSeen"/>), so a snapshot is never reported fresher than any page in it.
 ///
 /// The client hands over a chest page's contents only once that chest has been opened on this machine, so this is
 /// a question about LAST SEEN, never about now: a page nobody has looked at is UNKNOWN rather than empty, and
 /// "the guild's chest holds no crystals" is a very different answer from "nobody has opened the chest here".
-/// Empty pages that WERE read are empty and are recorded as such.
+/// Only pages read WITH stacks are recorded: the client shows a page as empty until its data arrives, so an empty
+/// read is not evidence of an empty page (see <see cref="ChestContents.Merge"/>).
 /// </summary>
 public sealed record ChestSnapshot(DateTime CapturedUtc, IReadOnlyList<ChestPage> Pages)
 {
@@ -54,6 +59,78 @@ public static class ChestContents
             .Where(x => x.Item2 > 0 || x.Item3 > 0)
             .ToList();
     }
+
+    /// <summary>
+    /// Folds a fresh read of the chest into the stored pages. A chest page reads EMPTY until its data arrives —
+    /// the container already says it is loaded — and a tab nobody has clicked stays empty for as long as the chest
+    /// is open, so an empty read cannot be told apart from "not here yet". Hence, per page: a read WITH stacks
+    /// replaces that page; an empty read leaves the stored page alone and never creates one. A stored page with no
+    /// stacks is dropped, since it can only have come from such a read (older builds saved them), so it is unknown,
+    /// not empty. Changed says whether the result differs from what was stored, which is what decides a save.
+    /// The cost: a page the player empties completely keeps its last contents until a read finds something there.
+    /// </summary>
+    public static (IReadOnlyList<ChestPage> Pages, bool Changed) Merge(
+        IReadOnlyList<ChestPage>? stored,
+        IReadOnlyList<ChestPage> read)
+    {
+        var merged = new SortedDictionary<int, ChestPage>();
+
+        foreach (var page in stored ?? [])
+        {
+            if (page.Stacks.Count > 0)
+                merged[page.Page] = page;
+        }
+
+        foreach (var page in read)
+        {
+            if (page.Stacks.Count > 0)
+                merged[page.Page] = page;
+        }
+
+        var pages = merged.Values.ToList();
+        return (pages, !SamePages(stored ?? [], pages));
+    }
+
+    /// <summary>
+    /// When the oldest of these pages was seen: the honest age of a snapshot whose pages were read at different
+    /// times. A page without its own time (saved by a build that kept one time for the whole chest) counts as
+    /// <paramref name="fallback"/>. No pages = the fallback.
+    /// </summary>
+    public static DateTime OldestSeen(IEnumerable<ChestPage> pages, DateTime fallback)
+    {
+        var oldest = DateTime.MaxValue;
+        foreach (var page in pages)
+        {
+            var seen = page.SeenUtc == default ? fallback : page.SeenUtc;
+            if (seen < oldest)
+                oldest = seen;
+        }
+
+        return oldest == DateTime.MaxValue ? fallback : oldest;
+    }
+
+    /// <summary>Same pages holding the same stacks. Slot order is ignored: sorting the chest changes nothing.</summary>
+    private static bool SamePages(IReadOnlyList<ChestPage> a, IReadOnlyList<ChestPage> b)
+    {
+        if (a.Count != b.Count)
+            return false;
+
+        var left = a.OrderBy(p => p.Page).ToList();
+        var right = b.OrderBy(p => p.Page).ToList();
+
+        for (var i = 0; i < left.Count; i++)
+        {
+            if (left[i].Page != right[i].Page || !SameStacks(left[i].Stacks, right[i].Stacks))
+                return false;
+        }
+
+        return true;
+    }
+
+    private static bool SameStacks(IReadOnlyList<RetainerStackCount> a, IReadOnlyList<RetainerStackCount> b) =>
+        a.Count == b.Count
+        && a.OrderBy(s => s.ItemId).ThenBy(s => s.Hq).ThenBy(s => s.Qty)
+            .SequenceEqual(b.OrderBy(s => s.ItemId).ThenBy(s => s.Hq).ThenBy(s => s.Qty));
 
     /// <summary>Everything the chest holds of this item, HQ counted separately.</summary>
     public static (int Nq, int Hq) Total(ChestSnapshot? snapshot, uint itemId)
@@ -113,6 +190,7 @@ public static class ChestContents
                 .Select(p => new
                 {
                     page = p.Page,
+                    seenUtc = (p.SeenUtc == default ? snapshot.CapturedUtc : p.SeenUtc).ToString("O"),
                     slots = p.Slots,
                     units = p.Units,
                     items = p.Stacks
