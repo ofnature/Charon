@@ -380,4 +380,37 @@ public sealed class FollowManagerTests
         Assert.Equal(FollowAction.Hold, d.Action);
         Assert.Contains("boss", d.Status, StringComparison.OrdinalIgnoreCase);
     }
+
+    // A step cancels a cast (2026-11-23: a follower's Big Burst cancelled by the follow fourteen times in seventeen).
+    [Fact]
+    public void Casting_HoldsInsteadOfWalking()
+    {
+        var m = Following();
+        var d = m.Evaluate(Far, Origin, false, false, false, casting: true);
+        Assert.Equal(FollowAction.Hold, d.Action);
+        Assert.Contains("casting", d.Status);
+    }
+
+    [Fact]
+    public void Casting_HoldsEvenWhenTheLeaderLeftTheCombatLeash()
+    {
+        var m = Following(Config(combatLeash: Leash));
+        var d = m.Evaluate(Far, Origin, inCombat: true, hasActiveModule: false, localBusy: false, casting: true);
+        Assert.Equal(FollowAction.Hold, d.Action);
+    }
+
+    [Fact]
+    public void CastOver_TheFollowMovesAgain()
+    {
+        var m = Following();
+        Assert.Equal(FollowAction.Hold, m.Evaluate(Far, Origin, false, false, false, casting: true).Action);
+        Assert.Equal(FollowAction.Move, m.Evaluate(Far, Origin, false, false, false, casting: false).Action);
+    }
+
+    [Fact]
+    public void Casting_NotFollowing_IsStillIdle()
+    {
+        var m = new FollowManager(Config());
+        Assert.Equal(FollowAction.Idle, m.Evaluate(Far, Origin, false, false, false, casting: true).Action);
+    }
 }

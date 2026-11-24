@@ -155,14 +155,22 @@ public sealed class FollowManager
     /// is punishing movement outright (Minerva's MustNotMove). The caller names the provider.</param>
     /// <param name="localBusy">Local player can't be driven right now (dead, cutscene, zoning, being carried, pillion-boarding).</param>
     /// <param name="leaderReachable">Navmesh says we can actually walk there (false = portal/disconnected island).</param>
+    /// <param name="casting">Local player has a cast bar up.</param>
     public FollowDecision Evaluate(Vector3? leaderPos, Vector3 selfPos, bool inCombat, bool hasActiveModule,
-        bool localBusy, bool leaderReachable = true)
+        bool localBusy, bool leaderReachable = true, bool casting = false)
     {
         if (!Following)
             return new FollowDecision(FollowAction.Idle, default, "idle");
 
         if (localBusy)
             return new FollowDecision(FollowAction.Hold, default, "paused");
+
+        // A step cancels a cast, and a tight follow of a moving leader steps every half second. Pilgrim's Traverse,
+        // 2026-11-23: a follower turned into a bomb started Big Burst (1.5s) seventeen times and finished three,
+        // each cast begun in the pause between two follow walks and cancelled by the next. The cast ends by itself,
+        // so this never holds for long; the rotation does not start another while the follow is walking.
+        if (casting)
+            return new FollowDecision(FollowAction.Hold, default, "holding — casting (a step would cancel it)");
 
         // The one hard gate: in an actual boss fight, hand movement to the boss AI.
         if (_config.StopInBossFight && inCombat && hasActiveModule)

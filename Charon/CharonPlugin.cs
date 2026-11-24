@@ -30,7 +30,7 @@ namespace Charon;
 
 public sealed class CharonPlugin : IDalamudPlugin
 {
-    public const string PluginVersion = "0.1.68";
+    public const string PluginVersion = "0.1.69";
     private const string CommandName = "/charon";
 
     /// <summary>
@@ -1847,7 +1847,8 @@ public sealed class CharonPlugin : IDalamudPlugin
 
         var decision = _followManager.Evaluate(
             leaderPos, local.Position,
-            _condition[ConditionFlag.InCombat], _bossAi.MovementHandedOver, localBusy, _leaderReachable);
+            _condition[ConditionFlag.InCombat], _bossAi.MovementHandedOver, localBusy, _leaderReachable,
+            casting: local.IsCasting);
         _followFleetStatus = decision.Status;
 
         // Leader ported somewhere we can't walk (raid arena transition): take the same portal
