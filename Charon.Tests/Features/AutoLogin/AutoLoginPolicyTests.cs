@@ -85,6 +85,61 @@ public sealed class AutoLoginPolicyTests
         Assert.Equal(LoginAction.PressStart, policy.Next(LoginScreen.Title, false, t.AddSeconds(16)).Action);
     }
 
+    /// <summary>Korha, 2026-11-25: lobby error 13001 every ~4s for two hours, each box closed at once.</summary>
+    [Fact]
+    public void ErrorBoxesThatKeepComingBack_AreLeftUpLonger_ThenLeftAlone()
+    {
+        Assert.Equal(TimeSpan.Zero, AutoLoginPolicy.RepeatWait(2));
+        Assert.Equal(TimeSpan.FromSeconds(15), AutoLoginPolicy.RepeatWait(3));
+        Assert.Equal(TimeSpan.FromSeconds(30), AutoLoginPolicy.RepeatWait(4));
+
+        var policy = Armed();
+        var t = T0;
+        Assert.Equal(LoginAction.DismissError, policy.Next(LoginScreen.Error, false, t).Action);     // box 1
+        policy.Next(LoginScreen.Other, false, t = t.AddSeconds(1));                                   // the game tries again
+        Assert.Equal(LoginAction.DismissError, policy.Next(LoginScreen.Error, false, t = t.AddSeconds(3)).Action); // box 2: at once
+        policy.Next(LoginScreen.Other, false, t = t.AddSeconds(1));
+
+        // Box 3: left up 15s.
+        Assert.Equal(LoginAction.None, policy.Next(LoginScreen.Error, false, t = t.AddSeconds(3)).Action);
+        Assert.Contains("stays up", policy.Next(LoginScreen.Error, false, t.AddSeconds(14)).Reason);
+        Assert.Equal(LoginAction.DismissError, policy.Next(LoginScreen.Error, false, t = t.AddSeconds(15.1)).Action);
+        Assert.Equal(1, policy.Errors); // still one error: the title never came back
+
+        // Boxes 4 to 6, each closed once its wait is over.
+        for (var box = 4; box <= AutoLoginPolicy.MaxErrorBoxesInARow; box++)
+        {
+            policy.Next(LoginScreen.Other, false, t = t.AddSeconds(1));
+            Assert.Equal(LoginAction.None, policy.Next(LoginScreen.Error, false, t = t.AddSeconds(3)).Action);
+            t += AutoLoginPolicy.RepeatWait(box) + TimeSpan.FromSeconds(0.1);
+            Assert.Equal(LoginAction.DismissError, policy.Next(LoginScreen.Error, false, t).Action);
+        }
+
+        // One more: the run stops and the box stays where it is.
+        policy.Next(LoginScreen.Other, false, t = t.AddSeconds(1));
+        var step = policy.Next(LoginScreen.Error, false, t = t.AddSeconds(3));
+        Assert.Equal(LoginAction.GaveUp, step.Action);
+        Assert.Contains("lobby", step.Reason);
+        Assert.False(policy.Armed);
+        Assert.Equal(LoginAction.None, policy.Next(LoginScreen.Error, false, t.AddMinutes(5)).Action);
+    }
+
+    [Fact]
+    public void TheTitleScreenBetweenBoxes_StartsTheCountAgain()
+    {
+        var policy = Armed();
+        var t = T0;
+        for (var round = 0; round < 10; round++)
+        {
+            Assert.Equal(LoginAction.DismissError, policy.Next(LoginScreen.Error, false, t).Action);
+            policy.Next(LoginScreen.Title, false, t = t.AddSeconds(1)); // back at the title: an ordinary retry
+            t = t.AddMinutes(3);
+        }
+
+        Assert.True(policy.Armed);
+        Assert.Equal(10, policy.Errors);
+    }
+
     [Fact]
     public void ACharacterMissingFromTheList_StopsTheRun_RatherThanLoggingInElsewhere()
     {

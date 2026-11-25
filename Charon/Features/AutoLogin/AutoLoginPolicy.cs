@@ -90,6 +90,15 @@ public sealed class AutoLoginPolicy
     /// </summary>
     public const int MaxUnansweredPresses = 4;
 
+    /// <summary>
+    /// How many error boxes may come up in a row, with no title screen between them, before the run
+    /// stops closing them. Seen on 2026-11-25 (Korha's client, lobby error 13001 "The lobby server
+    /// connection has encountered an error."): each close made the game try the lobby again at once,
+    /// and fail, so a new box came up every four seconds for two hours and the screen flickered the
+    /// whole time. The other client on the same PC logged in normally that minute, so the server was up.
+    /// </summary>
+    public const int MaxErrorBoxesInARow = 6;
+
     private static readonly TimeSpan ErrorPace = TimeSpan.FromSeconds(1);
     private static readonly TimeSpan StartPace = TimeSpan.FromSeconds(5);
     private static readonly TimeSpan CharacterPace = TimeSpan.FromSeconds(3);
@@ -101,6 +110,9 @@ public sealed class AutoLoginPolicy
     private DateTime? _listSinceUtc;
     private DateTime? _confirmedUtc;
     private bool _inErrorEpisode;
+    private int _boxesInRow;
+    private DateTime _dismissNotBeforeUtc;
+    private LoginScreen _lastScreen;
     private int _startPresses;
     private int _characterPresses;
     private int _noticePresses;
@@ -124,6 +136,14 @@ public sealed class AutoLoginPolicy
     public static TimeSpan Backoff(int errors) =>
         errors <= 1 ? TimeSpan.FromSeconds(5) : TimeSpan.FromSeconds(Math.Min(15 * (errors - 1), 120));
 
+    /// <summary>
+    /// How long the n-th error box in a row (no title screen between) stays up before it is closed.
+    /// The first two are closed at once (a disconnect raises two boxes); from the third on, closing
+    /// one only makes the game try again and fail, so each is left up longer: 15s, 30s, 45s, ...
+    /// </summary>
+    public static TimeSpan RepeatWait(int boxesInRow) =>
+        boxesInRow <= 2 ? TimeSpan.Zero : Backoff(boxesInRow - 1);
+
     public void Arm(DateTime nowUtc)
     {
         Armed = true;
@@ -133,6 +153,9 @@ public sealed class AutoLoginPolicy
         _listSinceUtc = null;
         _confirmedUtc = null;
         _inErrorEpisode = false;
+        _boxesInRow = 0;
+        _dismissNotBeforeUtc = nowUtc;
+        _lastScreen = LoginScreen.Other;
         _startPresses = _characterPresses = _noticePresses = 0;
         Stalls = 0;
     }
@@ -157,6 +180,9 @@ public sealed class AutoLoginPolicy
             return new LoginStep(LoginAction.GaveUp, $"gave up after {GiveUpAfter.TotalHours:0} hours of trying");
         }
 
+        var previous = _lastScreen;
+        _lastScreen = screen;
+
         if (screen != LoginScreen.CharacterSelect)
         {
             _listSinceUtc = null;
@@ -177,12 +203,33 @@ public sealed class AutoLoginPolicy
                     _inErrorEpisode = true;
                     Errors++;
                     _retryNotBeforeUtc = nowUtc + Backoff(Errors);
+                    _boxesInRow = 1;
                 }
+                else if (previous != LoginScreen.Error)
+                {
+                    // A NEW box, and the title screen never came back since the last one.
+                    _boxesInRow++;
+                    if (_boxesInRow > MaxErrorBoxesInARow)
+                    {
+                        Armed = false;
+                        return new LoginStep(LoginAction.GaveUp,
+                            $"the game kept failing to reach the lobby ({MaxErrorBoxesInARow} error boxes in a row, never back at the title screen) - "
+                            + "Charon has stopped closing them; restarting the client is the likely fix");
+                    }
+
+                    _dismissNotBeforeUtc = nowUtc + RepeatWait(_boxesInRow);
+                }
+
+                if (nowUtc < _dismissNotBeforeUtc)
+                    return new LoginStep(LoginAction.None,
+                        $"error box {_boxesInRow} in a row with no title screen between - closing it makes the game try again, "
+                        + $"so it stays up {(_dismissNotBeforeUtc - nowUtc).TotalSeconds:0}s more");
 
                 return Paced(LoginAction.DismissError, ErrorPace, nowUtc, $"dismissing error #{Errors}");
 
             case LoginScreen.Title:
                 _inErrorEpisode = false;
+                _boxesInRow = 0;
                 _confirmedUtc = null;
                 if (nowUtc < _retryNotBeforeUtc)
                     return Waiting(nowUtc);
@@ -196,6 +243,7 @@ public sealed class AutoLoginPolicy
 
             case LoginScreen.CharacterSelect:
                 _inErrorEpisode = false;
+                _boxesInRow = 0;
                 if (_confirmedUtc is { } confirmed && nowUtc - confirmed < LoginWait)
                     return new LoginStep(LoginAction.None, "confirmed — waiting for the game to log in");
                 if (characterListed)
